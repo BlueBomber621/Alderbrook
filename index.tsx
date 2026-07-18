@@ -1759,6 +1759,17 @@ const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 // The model every AI call runs on. Change it here to swap models globally.
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 
+// Persist the key on its own so it survives reloads and pre-fills the title
+// screen — independent of any save file. Stored on this device only.
+const API_KEY_STORE = "alderbrook_api_key";
+const persistApiKey = (k) => {
+  try { k ? localStorage.setItem(API_KEY_STORE, k) : localStorage.removeItem(API_KEY_STORE); }
+  catch (e) { /* private mode / no storage — the in-memory key still works this session */ }
+};
+const loadPersistedApiKey = () => {
+  try { return localStorage.getItem(API_KEY_STORE) || ""; } catch (e) { return ""; }
+};
+
 async function callClaude(prompt, maxTokens) {
   // Standalone / GitHub Pages build: every AI call is authenticated with the
   // player's own Anthropic key. The CORS-unlock header lets the browser reach
@@ -2255,7 +2266,7 @@ export default function Alderbrook() {
       opening: null, interviewBans: {}, interview: null, // the job market: today's HIRING post + cooldowns
       crimeAlert: null,                                 // player-witnessed theft {thiefId, bId}
       playerReport: null,                               // player's committed citizen arrest
-      settings: { difficulty: difficultyChoice || "normal", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6 },  // 99 = unlimited
+      settings: { difficulty: difficultyChoice || "normal", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6, apiKey: USER_API_KEY || "" },  // 99 = unlimited; carry any key set on the title screen
     };
   }, []);
 
@@ -2407,6 +2418,8 @@ export default function Alderbrook() {
       try { const r = await window.storage?.get(CFG.SAVE_KEY); if (r?.value) setSaveFound(true); }
       catch (e) { /* no save */ }
     })();
+    const savedKey = loadPersistedApiKey();   // pre-fill the title-screen key from this device
+    if (savedKey) { setUserApiKey(savedKey); setApiKeyInput(savedKey); }
   }, []);
 
   const wipeSave = async () => {
@@ -7918,6 +7931,31 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
              difficulty === "normal" ? "Death can be survived — at a price." :
              "The graveyard takes hardcore players personally. Save is wiped."}
           </p>
+          <div style={{ textAlign: "left", background: "#f1e9d6", border: "1px solid #e0d4b8", borderRadius: 12, padding: "10px 12px", margin: "6px 0 2px" }}>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+              🔑 Anthropic API key {USER_API_KEY
+                ? <span style={{ color: "#3f7d4a", fontWeight: 600 }}>· AI ready</span>
+                : <span style={{ opacity: 0.55, fontWeight: 400 }}>· AI off until set</span>}
+            </div>
+            <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 6, lineHeight: 1.35 }}>
+              Set your key before starting — building a new town makes AI calls right away. Sent only to Anthropic, stored on this device.
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="password" value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)}
+                placeholder="sk-ant-…"
+                style={{ flex: 1, minWidth: 0, padding: "7px 9px", borderRadius: 8, border: "1px solid #cdbf9f", background: "#fff", fontSize: 13, color: "#2a2620", boxSizing: "border-box" }} />
+              <button style={{ ...S.diffBtn, whiteSpace: "nowrap" }}
+                onClick={() => { const k = apiKeyInput.trim(); setApiKeyInput(k); setUserApiKey(k); persistApiKey(k); if (simRef.current) simRef.current.settings.apiKey = k; bump(); }}>
+                {USER_API_KEY ? "Update" : "Set key"}
+              </button>
+              {apiKeyInput && (
+                <button style={{ ...S.diffBtn, background: "#8a5a5a", color: "#fff", whiteSpace: "nowrap" }}
+                  onClick={() => { setApiKeyInput(""); setUserApiKey(""); persistApiKey(""); if (simRef.current) simRef.current.settings.apiKey = ""; bump(); }}>
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
           <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
             <button style={S.deviceBtn} onClick={() => start(true, false)}>📱<br />Phone</button>
             <button style={S.deviceBtn} onClick={() => start(false, false)}>🖥️<br />Computer</button>
@@ -8267,8 +8305,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   placeholder="sk-ant-… (stored on this device only if you save)"
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" }} />
                 <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                  <button style={{ ...S.smallBtn, flex: 1 }} onClick={() => { setUserApiKey(apiKeyInput); sim.settings.apiKey = apiKeyInput; showToast(apiKeyInput ? "🔑 API key set." : "Key cleared — AI paused."); bump(); saveGame(); }}>Apply key</button>
-                  {apiKeyInput && <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => { setApiKeyInput(""); setUserApiKey(""); sim.settings.apiKey = ""; showToast("Key cleared."); bump(); saveGame(); }}>Clear</button>}
+                  <button style={{ ...S.smallBtn, flex: 1 }} onClick={() => { const k = apiKeyInput.trim(); setApiKeyInput(k); setUserApiKey(k); sim.settings.apiKey = k; persistApiKey(k); showToast(k ? "🔑 API key set." : "Key cleared — AI paused."); bump(); saveGame(); }}>Apply key</button>
+                  {apiKeyInput && <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => { setApiKeyInput(""); setUserApiKey(""); sim.settings.apiKey = ""; persistApiKey(""); showToast("Key cleared."); bump(); saveGame(); }}>Clear</button>}
                 </div>
               </div>
               <div style={S.folkCard}>
