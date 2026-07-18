@@ -70,6 +70,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 /* ===== CONFIG ===== */
 const CFG = {
   TILE: 32,
+  ZOOM: { min: 1, max: 3, step: 0.25 },   // 1 = fit the whole map on screen (the classic view); >1 = a camera that follows you
   MINUTES_PER_SEC: 2.5,
   PLAYER_SPEED: 4.2, NPC_SPEED: 2.0,
   DECAY: { hunger: 5.5, thirst: 7.5, energy: 4.0 },
@@ -104,6 +105,8 @@ const CFG = {
     mossford:   { alderbrook: { c: 4, min: 30 }, stonecross: { c: 5, min: 35 }, ferndale: { c: 6, min: 40 } },
     stonecross: { alderbrook: { c: 7, min: 45 }, mossford: { c: 5, min: 35 }, ferndale: { c: 8, min: 50 } },
     ferndale:   { alderbrook: { c: 5, min: 35 }, mossford: { c: 6, min: 40 }, stonecross: { c: 8, min: 50 } },
+    outlands: {},   // Mo does NOT drive out there. The shady route is on foot.
+    hills: {},      // no bus up the hill either — the walk is the point
   },
   WAGE_PER_HOUR: 2,
   PAY: { office: 5, food: 5, mailPer: 2, mailBonus: 3, dish: 4, restock: 5, clean: 3 },   // balance: menial cluster ~12c/hr
@@ -122,7 +125,7 @@ const CFG = {
   BILLS: {                                       // business upkeep, drawn from the OWNER's pocket (debt allowed)
     cycle: 3,                                    // charged every N days (fires on day % cycle === 0)
     kind: { office: 6, eatery: 5, retail: 3 },   // per-cycle rates: electricity bleeds offices, utilities bleed kitchens
-    kindOf: { office: "office", cafe: "eatery", fastfood: "eatery", diner: "eatery", inn: "eatery", store_f: "retail", grill_f: "eatery",
+    kindOf: { office: "office", cafe: "eatery", fastfood: "eatery", diner: "eatery", inn: "eatery", store_f: "retail", grill_f: "eatery", blackmarket_o: "retail", grill_o: "eatery", market_s: "retail", store_m: "retail", workshop_s: "retail",
               market: "retail", store: "retail", mart: "retail", furn: "retail" },
     // medical buildings pay nothing (civic) — Stage 6 hands the mayor a law that can flip this
   },
@@ -131,7 +134,80 @@ const CFG = {
   WEALTH_TAX: { base: 3, per: 2, bracket: 30, floor: 15 },   // Stage 6: adults holding ≥floor pay base + per×⌊coins/bracket⌋ weekly (the hoard drain)
   COUNCIL: { weekday: 0, tokens: 140 },          // Stage 6: weekly Council Call — the mayor reviews a town (rotating) and may fund an upgrade
   HEIST: { everyDays: 4, startDay: 7, tokens: 180, minLoot: 20 },   // Stage 7: planned burglaries — start after week 1 so the job market absorbs newcomers first
-  WATCH_PLAN: { weekday: 5, tokens: 200, dwellMin: 300 },  // Pass 3: Cole plans the week's patrol routes for the Juniors (CFG.PATROL is the old cadence key)
+  WATCH_PLAN: { weekday: 5, tokens: 200, dwellMin: 300 },
+  TRADE: { tokens: 110, noteMax: 120, maxCoins: 30 },   // trade offers: coins/items both ways + an optional favor note
+  CRAFT: {   // v7 Stage 5: the workshop. tier: easy (1 drag, 1 button) / medium (2 drags, 2 buttons)
+    // / hard (BALANCE pre-stage + 3 drags + 3 buttons). tools = required in inventory. furn = output
+    // is furniture, not an item. Craft at the workshop bench, or at home with a Workbench placed.
+    recipes: {   // "many different crafts, like a lot" — every recipe is self-craft OR commission
+      toy:       { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
+      frame:     { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
+      whistle:   { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
+      club:      { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
+      broom:     { tier: "easy",   mats: { wood: 1, fiber: 1 }, tools: ["saw"] },
+      arrow:     { tier: "easy",   mats: { wood: 1 },           tools: ["saw"], out: 3 },
+      bat:       { tier: "easy",   mats: { wood: 2 },           tools: ["saw"] },
+      knife:     { tier: "medium", mats: { wood: 1, ore: 1 },   tools: ["saw", "hammer"] },
+      hatchet:   { tier: "medium", mats: { wood: 1, ore: 2 },   tools: ["hammer"] },
+      slingshot: { tier: "medium", mats: { wood: 1, fiber: 1 }, tools: ["saw"] },
+      bolt:      { tier: "medium", mats: { ore: 1 },            tools: ["hammer"], out: 3 },
+      birdhouse: { tier: "medium", mats: { wood: 2 },           tools: ["saw", "hammer"] },
+      drum:      { tier: "medium", mats: { wood: 1, fiber: 1 }, tools: ["saw", "hammer"] },
+      pipe:      { tier: "easy",   mats: { ore: 1 },            tools: ["hammer"] },
+      nozzle:    { tier: "medium", mats: { ore: 1, fiber: 1 },  tools: ["screwdriver"] },
+      heatcoil:  { tier: "medium", mats: { ore: 2 },            tools: ["hammer", "screwdriver"] },
+      bow:       { tier: "hard",   mats: { wood: 2, fiber: 1 }, tools: ["saw", "screwdriver"] },
+      hardware:  { tier: "hard",   mats: { ore: 2, fiber: 1 },  tools: ["screwdriver", "hammer"] },
+      chair:     { tier: "hard",   mats: { wood: 2, ore: 1 },   tools: ["saw", "hammer", "screwdriver"], furn: true },
+    },
+    /* the balance scale, graded by tier. easy: ±1 counts. medium: exact, both ends shown.
+       hard: LARGER range and you only see the MIN — the max is yours to find. Ranges always
+       overlap (mins cap below maxes' floor), so a common middle value ALWAYS exists. */
+    balance: {
+      easy:   { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 1, showMax: true },
+      medium: { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 0, showMax: true },
+      hard:   { minLo: 1, minHi: 15, maxLo: 45, maxHi: 60, tol: 0, showMax: false },
+    },
+    labor: { easy: 8, medium: 14, hard: 24 },  // commission labor on top of material value
+    daysByTier: { easy: 1, medium: 2, hard: 3 },
+    letterFee: 2,                              // Garrick posts you a note when it's ready
+    smelt: { rocks: 3, fee: 3 },               // the owner turns 3 round rocks into 1 iron bits (fee waived if YOU own it)
+    holdMs: 1000,                              // per SCREW — held one at a time, like actually screwing something in
+    chopPerTree: 2,                            // GLOBAL daily cap per tree — across everyone
+  },
+  CHAIR: { perMark: 3, markMin: 12, maxMarks: 5 },   // 3 energy per FULL 12-min mark, an hour tops, REAL time — no skip
+  HILLS: { price: 500, trailAlder: { x: 32, y: 1 }, trailHills: { x: 2, y: 9 }, walkMin: 15 },   // the capstone: the house above your first town
+  REPAIR: {   // v7 Stage 5c: appliances BREAK — and the mechanic trade is born
+    baseChance: 0.02, perUse: 0.01,          // 2% first use, +1% per use — slow, but there are a LOT of appliances
+    parts: { wash: "pipe", stove: "heatcoil", grill: "heatcoil", drinks: "nozzle" },   // station kind → the part it takes
+    fee: { wash: 18, stove: 24, grill: 24, drinks: 20 },   // paid by the owner — good profit for anyone with the part
+    playerMin: 40,                            // the job skips 40 game-min for the player (the rest was the minigame)
+    npcMin: 100, npcEnergy: 25,               // NPCs sit on it for a couple of hours — hefty time, hefty energy
+  },
+  INTERRO_OFFLINE: {                             // the no-API interrogation: tactics, dice, and a detective's nose
+    /* Monte-Carlo tuned (6k runs/cell). Charge rates — innocent: 0% clean, ~20% @1 evidence,
+       ~73% @3; guilty: ~53% @1, ~96% @3. Truth always confesses guilt and always clears
+       innocence. Silence never clears you. Evidence and the detective's skill both bite. */
+    base: 30, perEvidence: 10,                   // starting suspicion (0-100); ≥70 at the end = charged
+    edgeBase: 30, detSkillW: 6, evidW: 4,        // the bar your nerve roll (d100) must beat
+    guiltPenalty: 22, truthSwing: 28,            // guilt shakes the nerve; truth is absolute
+    tactics: {                                   // risk = swing on a failed roll, reward = on a clean one
+      deny:    { label: "🙅 Flat denial",       risk: 12, reward: -10, blurb: "Say nothing useful. Cheap, but they've heard it." },
+      alibi:   { label: "🗺️ Offer an alibi",    risk: 18, reward: -20, blurb: "Name a place and a time. If it holds, it holds." },
+      deflect: { label: "🎭 Point elsewhere",   risk: 22, reward: -18, blurb: "Give them a better suspect. Bold. Memorable." },
+      silence: { label: "🤐 Say nothing",       risk: 8,  reward: -4,  blurb: "Nothing to catch. Also nothing to clear you." },
+      truth:   { label: "🕊️ Tell the truth",    risk: 0,  reward: 0,   blurb: "Whatever that's worth in here." },
+    },
+  },
+  OUTLANDS: {                                    // v7 Stage 4: the lawless frontier
+    trailStone: { x: 28, y: 16 }, trailOut: { x: 2, y: 12 },   // the shady route's two ends (Stonecross SE corner ↔ the rotted sign)
+    walkMin: 25,                                 // on foot, both ways — Mo won't drive it
+    ambushTravel: 0.30, ambushLinger: 0.06,      // jumped on the road / per-hour while hanging around
+    wealthDiv: 250,                              // + coins/250 to the roll: fat purses draw eyes
+    marketMult: 2,                               // contraband economics: double price, no questions
+    stewRisk: 0.15, stewHit: 12, stewHeal: 8,    // the Mystery Stew: usually wonderful
+    tradeBase: 14, tradeVar: 12,                 // overnight runners: the camp's only outside income (14-25c/shop/day)
+  },  // Pass 3: Cole plans the week's patrol routes for the Juniors (CFG.PATROL is the old cadence key)
   APPROVAL: {                                    // Stage 8: how each town feels about the mayor (0-100)
     start: 65, revertTo: 60, revertStep: 1,      // weekly drift back toward a wary baseline
     taxHit: 2, upgradeBoost: 8, noFundHit: 1,    // taxes sting; visible spending soothes
@@ -139,7 +215,7 @@ const CFG = {
     riotBelow: 30, riotVent: 12, riotCleanup: 10, riotMess: 25,   // unrest boils over; venting resets some anger
   },
   SHIPPING: {                                    // Pete's truck: 1c per 20 miles out of the Alderbrook depot
-    perMileChunk: 20, miles: { alderbrook: 5, mossford: 20, stonecross: 40, ferndale: 30 },
+    perMileChunk: 20, miles: { alderbrook: 5, mossford: 20, stonecross: 40, ferndale: 30, outlands: 60, hills: 15 },   // frontier freight costs
   },
   MEDICAL: {                                     // Stage 3: civic medicine
     stipendHours: [9, 12, 15, 18],               // the treasury pays each doctor 1c at these hours (if the safe can)
@@ -164,7 +240,11 @@ const CFG = {
   },
   COUCH: { regenPerHr: 25, npcRestAt: 40, npcRestUntil: 70 },   // staff couch: one seat, employees only
   OUTLAW: {                                      // Stage 3.5: the career criminal's dials (see Sable)
-    heistChance: 0.02,                           // per-decide roll (doubled at night)
+    heistChance: 0.035,                          // per-decide roll (doubled at night) — diagnosis: 0.02 = 2 attempts in 9 DAYS
+    spreeDays: 2, spreeBoost: 3,                 // post-jailbreak rampage: bolder, ignores the Watch
+    jailbreakChance: 0.12,                       // per-day roll for a jailed outlaw
+    reformBase: 0.30, reformPer: 0.15,           // released: chance they go straight (grows with stints served)
+    watchDeter: 0.65,                            // an officer in town deters MOST attempts — not all (cat needs mice)
     heistCoinCap: 25,                            // flush enough → lie idle, spend, look normal
     layLowHours: 20,                             // how long she stays scarce after skipping town
   },
@@ -173,7 +253,7 @@ const CFG = {
      4: attempted murder · 5: murder — life, assets seized, active pursuit */
   WANTED: { arrestAt: 2, finePerLevel: 6, stealFineMult: 3,
     jailHours: { 2: 6, 3: 24, 4: 48 }, debtFine: { 3: 15, 4: 30 } },
-  DYING_WINDOW_MIN: 25,            // lethal wounds: found fast, or not at all
+  DYING_WINDOW_MIN: 32,            // lethal wounds: found fast, or not at all (32: drag at 12 + cries-carry need real margin under v7 crime volume)
   SICK: { baseHr: 0.0008, lowNeedHr: 0.018, hygieneMult: 3, contam: 0.06,
           burn: 0.35, burnBad: 0.2, mildEnergyMult: 1.5, badHealthHr: 1.5,
           sleepCure: 0.3, medFee: 4 },                     // medFee: doctor's illness visit
@@ -244,7 +324,7 @@ const CFG = {
     expertRenown: 6, masterRenown: 20,       // how much renown the milestone confers
   },
   JOBS: {                           // the contract every employer offers
-    employers: ["office", "cafe", "fastfood", "diner", "mart", "inn", "post", "store_f", "grill_f"],   // post: Pete can hire delivery couriers; Ferndale hires too
+    employers: ["office", "cafe", "fastfood", "diner", "mart", "inn", "post", "store_f", "grill_f", "market_s", "store_m", "workshop_s"],   // post: Pete can hire delivery couriers; the new quarters hire too
     days: [1, 2, 3, 4, 5],          // day-of-week (day % 7) — 6 and 0 are the weekend
     shift: [9, 17],
     interviewHour: 10, interviewWindow: 2,               // show up 10:00-12:00 on opening day
@@ -305,7 +385,7 @@ const CFG = {
      Logistics is special (fee/distance based), handled at its call sites. */
   TASKXP: {
     fibTier: [1, 2, 4, 7],              // Entry / Simple / Hard / Extreme multiplier (steeper: harder work, real reward)
-    base: { kitchen: 1.75, office: 1.4, service: 1, fishing: 1, healthcare: 1 },   // per-category entry base
+    base: { kitchen: 1.75, office: 1.4, service: 1, fishing: 1, healthcare: 1, foraging: 1 },   // per-category entry base
     letterLocal: 1, letterMossford: 2, letterStonecross: 3,   // letter XP by destination
   },
   /* Stage 6 — PLAYER task difficulty scales with skill-vs-tier GAP (same idea as NPC tierSuccess):
@@ -411,6 +491,7 @@ const ITEMS = {
   fruit:        { name: "Fresh Fruit",    emoji: "🍎", price: 2,  cat: "food",   eat: { hunger: 14, thirst: 10 } },  // Stage 3.6: light, refreshing
   combo:        { name: "Crispy Combo",   emoji: "🍔", price: 4,  cat: "food",   eat: { hunger: 45, thirst: 15 } },
   stew:         { name: "Stew",           emoji: "🥘", price: 3,  cat: "food",   eat: { hunger: 50 } },
+  mystery_stew: { name: "Mystery Stew",   emoji: "🍲", price: 2,  cat: "food",   eat: { hunger: 85 } },   // Howl's special. Cheap. Enormous. Usually fine.
   chocolate:    { name: "Chocolate",      emoji: "🍫", price: 3,  cat: "food",   eat: { hunger: 15, energy: 8 } },
   water:        { name: "Bottled Water",  emoji: "🧴", price: 1,  cat: "drink",  eat: { thirst: 40 } },
   coffee:       { name: "Coffee",         emoji: "☕", price: 2,  cat: "drink",  eat: { energy: 14, thirst: 10 } },   // Stage 3.8: nerfed (mocha is the energy king now)
@@ -455,6 +536,24 @@ const ITEMS = {
   /* gifts & tools */
   flowers:      { name: "Flowers",        emoji: "💐", price: 3,  cat: "gift" },
   rock:         { name: "Round Rock",     emoji: "🪨", price: 1,  cat: "gift" },
+  /* v7 Stage 5: the workshop economy — tools enable recipes, materials feed them */
+  saw:          { name: "Saw",            emoji: "🪚", price: 26, cat: "tool" },
+  hammer:       { name: "Hammer",         emoji: "🔨", price: 22, cat: "tool" },
+  screwdriver:  { name: "Screwdriver",    emoji: "🪛", price: 18, cat: "tool" },
+  hatchet:      { name: "Hatchet",        emoji: "🪓", price: 34, cat: "tool" },   // craftable; also the wood-chopping tool
+  wood:         { name: "Cut Wood",       emoji: "🪵", price: 4,  cat: "gift" },
+  ore:          { name: "Iron Bits",      emoji: "🔩", price: 6,  cat: "gift" },   // smelted from 3 round rocks
+  toy:          { name: "Wooden Toy",     emoji: "🧸", price: 9,  cat: "gift" },
+  bat:          { name: "Club Bat",       emoji: "🏏", price: 14, cat: "gift", dmg: [10, 20] },
+  hardware:     { name: "Hardware Parts", emoji: "🔌", price: 22, cat: "gift" },   // hard-tier assembly; fiddly, valuable
+  birdhouse:    { name: "Birdhouse",      emoji: "🐦", price: 16, cat: "gift" },
+  frame:        { name: "Picture Frame",  emoji: "🖼️", price: 11, cat: "gift" },
+  whistle:      { name: "Reed Whistle",   emoji: "🪈", price: 8,  cat: "gift" },
+  drum:         { name: "Toy Drum",       emoji: "🥁", price: 18, cat: "gift" },
+  /* repair parts — crafted at the workshop, or bought there. Broken town = busy wright. */
+  pipe:         { name: "Pipe",           emoji: "🚰", price: 10, cat: "gift" },
+  heatcoil:     { name: "Heat Coil",      emoji: "🌡️", price: 14, cat: "gift" },
+  nozzle:       { name: "Nozzle",         emoji: "🚿", price: 12, cat: "gift" },
   tie:          { name: "Silk Tie",       emoji: "👔", price: 8,  cat: "gift" },
   paint:        { name: "Paint Set",      emoji: "🎨", price: 6,  cat: "gift" },
   stamp:        { name: "Rare Stamp",     emoji: "📮", price: 5,  cat: "gift" },
@@ -467,6 +566,15 @@ const ITEMS = {
   /* weapons — enforcement carries batons free; the mart sells one under the counter */
   club:         { name: "Walking Club",   emoji: "🏏", price: 10, cat: "weapon", dmg: [12, 22] },
   knife:        { name: "Boning Knife",   emoji: "🔪", price: 14, cat: "weapon", dmg: [18, 30], lethal: true },  // will NOT stop at incapacitation
+  /* v7 Stage 2 — the ranged ladder: range = engagement tiles, ammo gates the opening shot */
+  slingshot:    { name: "Slingshot",      emoji: "🪃", price: 10,  cat: "weapon", dmg: [8, 16],  range: 4, ammo: "rock" },
+  bow:          { name: "Hunting Bow",    emoji: "🏹", price: 42,  cat: "weapon", dmg: [16, 28], range: 6, ammo: "arrow" },
+  crossbow:     { name: "Crossbow",       emoji: "🎯", price: 200, cat: "weapon", dmg: [26, 40], range: 7, ammo: "bolt", lethal: true },   // the world's status weapon — Watch-issue or black market only
+  arrow:        { name: "Arrow",          emoji: "🪶", price: 2,   cat: "gift" },
+  bolt:         { name: "Crossbow Bolt",  emoji: "🔩", price: 4,   cat: "gift" },
+  fiber:        { name: "Grass Bundle",   emoji: "🌾", price: 1,   cat: "gift" },
+  herb:         { name: "Wild Herb",      emoji: "🌿", price: 3,   cat: "gift", heal: 6 },
+  ring:         { name: "Tarnished Ring", emoji: "💍", price: 8,   cat: "gift" },
   baton:        { name: "Watch Baton",    emoji: "🪃", price: 0,  cat: "weapon", dmg: [10, 18] },
 };
 
@@ -512,17 +620,22 @@ const SHOP_STOCK = {
   cafe_s:   ["coffee", "tea", "cookies"],
   store_f:  ["bread", "water", "veg", "flour"],
   grill_f:  ["stew", "bread", "coffee"],
+  market_s: ["bread", "veg", "fruit", "water", "milk"],
+  workshop_s: ["saw", "hammer", "screwdriver", "wood", "rock", "pipe", "heatcoil", "nozzle"],   // tools, materials, and REPAIR PARTS: the owner's extra sales
+  store_m:  ["bread", "water", "snack", "candle", "rock"],
+  blackmarket_o: ["crossbow", "bolt", "arrow", "knife", "club", "water"],
+  grill_o:  ["mystery_stew", "stew", "coffee", "water"],
   market:   ["snack", "water", "bread", "chocolate", "rock", "flowers", "flour", "veg", "sugar", "fruit", "milk"],
   fastfood: ["combo", "pizza"],
   diner:    ["stew", "cider", "tea", "grilled_fish"],
   inn:      ["stew", "cider", "tea"],
   furn:     ["candle", "broom", "paint"],   // Stage 4: only small homewares stock here; furniture is fixed-catalog (FURNITURE)
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk"],
-  mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife"],   // Stage 3.6: cake/pie now come from eateries, not the mart shelf
+  mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],   // Stage 3.6: cake/pie now come from eateries, not the mart shelf
 };
-const SHOP_STATION = { cafe: "counter", market: "shop", fastfood: "counter", diner: "counter", store: "shop", mart: "shop", inn: "inn", furn: "shop", cafe_s: "counter", store_f: "shop", grill_f: "counter" };
+const SHOP_STATION = { cafe: "counter", market: "shop", fastfood: "counter", diner: "counter", store: "shop", mart: "shop", inn: "inn", furn: "shop", cafe_s: "counter", store_f: "shop", grill_f: "counter", blackmarket_o: "shop", grill_o: "counter", market_s: "shop", store_m: "shop", workshop_s: "shop" };
 /* where the sick go: local walk-in clinics, or Mercy itself in Stonecross */
-const TOWN_CLINIC = { alderbrook: "clinic_a", mossford: "clinic_m", stonecross: "hospital", ferndale: "clinic_f" };
+const TOWN_CLINIC = { alderbrook: "clinic_a", mossford: "clinic_m", stonecross: "hospital", ferndale: "clinic_f", outlands: "hospital", hills: "clinic_a" };   // the Outlands wounded ride to Mercy — if anyone hauls them
 /* Stage 3: civic medicine — the practicing doctor of each facility. Care fees
    flow to them (heavy bills may be covered by a friend), the treasury tops
    them up on CFG.MEDICAL.stipendHours, and their restock goods arrive free —
@@ -530,7 +643,7 @@ const TOWN_CLINIC = { alderbrook: "clinic_a", mossford: "clinic_m", stonecross: 
 const FACILITY_DOCTOR = { hospital: "amara", clinic_a: "reyes", clinic_m: "noor", clinic_f: "sana" };
 /* Stage 2.3: each town's Watch building that holds cells. Jailing routes to the
    convict's local lockup; overflow spills toward Stonecross (the main lockup). */
-const TOWN_LOCKUP = { alderbrook: "watchpost_a", mossford: "watchpost_m", stonecross: "hq", ferndale: "hq" };   // Ferndale convicts ride to the main lockup
+const TOWN_LOCKUP = { alderbrook: "watchpost_a", mossford: "watchpost_m", stonecross: "hq", ferndale: "hq", outlands: "hq", hills: "watchpost_a" };   // frontier convicts ride to the main lockup
 const LOCKUP_ORDER = ["hq", "watchpost_m", "watchpost_a"];   // overflow preference: main lockup first
 /* what venues buy back from the player, and for how much */
 const SELLABLE = { fish: 2, grilled_fish: 6, fresh_bread: 4, veg_soup: 3, hearty_stew: 7 };
@@ -542,6 +655,8 @@ const SELLABLE = { fish: 2, grilled_fish: 6, fresh_bread: 4, veg_soup: 3, hearty
 const FURNITURE = {
   piggy:    { name: "Piggy Bank",     emoji: "🐷", price: 25, store: 40,  secure: 2, anchor: { x: 1, y: 3 } },
   safe:     { name: "Indoor Safe",    emoji: "🔒", price: 90, store: 250, secure: 3, anchor: { x: 7, y: 3 } },
+  workbench:{ name: "Workbench",      emoji: "🛠️", price: 320, craftAt: true, anchor: { x: 8, y: 1 } },   // hefty — it's a LOT: craft at home
+  chair:    { name: "Easy Chair",     emoji: "🪑", price: 95, chairRest: true, anchor: { x: 2, y: 1 } },   // 15 energy/hr, real-time, 3 per 12-min mark
   bedup:    { name: "Feather Bed",    emoji: "🛏️", price: 50, restEase: 0.5, anchor: { x: 1, y: 2 } },   // slows morning energy decay
   fridge:   { name: "Fridge",         emoji: "🧊", price: 42, upkeep: 2, foodStore: true, anchor: { x: 6, y: 1 } },
   fountain: { name: "Home Fountain",  emoji: "⛲", price: 33, upkeep: 1, grants: "drink", anchor: { x: 3, y: 3 } },
@@ -562,11 +677,16 @@ const SHOP_CANDIDATES = {
   diner:    ["stew", "grilled_fish", "veg_soup", "hearty_stew", "fish_sticks", "noodles", "sushi", "cider", "tea", "salad"],
   inn:      ["stew", "salad", "cider", "tea", "bread", "milk"],
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk", "bread", "chocolate", "broom", "paint"],
-  mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife"],
+  mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],
   furn:     ["piggy", "safe", "bedup", "fridge", "fountain", "chest", "oven", "drinkbar", "table", "candle", "broom", "paint"],   // Stage 4: furniture (fixed-price) + small homewares (menu)
   cafe_s:   ["coffee", "tea", "milk", "choco_milk", "hot_choc", "milkshake", "lemonade", "mocha", "trop_shake", "nutrient", "cookies", "bread", "fresh_bread", "croissant"],   // Stage 3.8
   store_f:  ["bread", "water", "veg", "flour", "milk", "chocolate", "candle"],
   grill_f:  ["stew", "bread", "coffee", "tea", "grilled_fish", "meal"],
+  market_s: ["bread", "veg", "fruit", "water", "milk", "flour", "sugar", "chocolate"],
+  workshop_s: ["saw", "hammer", "screwdriver", "wood", "rock", "club", "bat", "toy", "pipe", "heatcoil", "nozzle"],
+  store_m:  ["bread", "water", "snack", "candle", "rock", "tea", "coffee", "flowers"],
+  blackmarket_o: ["crossbow", "bolt", "arrow", "knife", "club", "rock", "slingshot", "bow", "water"],
+  grill_o:  ["mystery_stew", "stew", "coffee", "bread", "water"],
 };
 /* which candidate items are "baked/cooked" — plain stores may carry at most a couple */
 const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
@@ -577,6 +697,8 @@ const OWNERS = { cafe: "marge", market: "theo", office: "bruno", fastfood: "rosa
                  furn: "juniper",                              // Hearth & Holt — full furniture catalog lands in Stage 4
                  cafe_s: "juno",                               // Stage 3.8: The Grindstone
                  store_f: "hazel", grill_f: "yusuf", clinic_f: null, townhall_f: null,   // Ferndale
+                 blackmarket_o: "mara", grill_o: "howl", shack_o1: null, shack_o2: null,   // the Outlands
+                 market_s: "delia", store_m: "briggs", workshop_s: "garrick",   // the new quarters
                  townhall_a: null, townhall_m: null, townhall_s: null,
                  watchpost_a: null, watchpost_m: null, clinic_a: null, clinic_m: null };
 /* meals each kitchen produces IN-HOUSE (owners cook these into shop stock;
@@ -588,10 +710,13 @@ const KITCHEN = {   // Stage 3.6: what each eatery's chef can produce at the sto
   inn:      ["stew", "salad", "bread"],
   cafe_s:   ["cookies", "bread", "fresh_bread", "croissant", "choco_milk", "hot_choc", "milkshake", "lemonade", "mocha", "trop_shake", "nutrient"],   // Stage 3.8: drinks + light bakes, no full meals
   grill_f:  ["stew", "bread", "grilled_fish"],   // Ferndale: mill-town comfort food
+  grill_o:  ["stew", "mystery_stew"],   // the Outlands: don't ask what's in the pot
 };
-const EATERY_MEAL = { cafe: "meal", diner: "stew", inn: "stew", cafe_s: "coffee", grill_f: "stew" };    // what a seated NPC consumes
+const EATERY_MEAL = { cafe: "meal", diner: "stew", inn: "stew", cafe_s: "coffee", grill_f: "stew", grill_o: "stew" };    // what a seated NPC consumes
 /* five trades; every paid task grants xp in exactly one of them */
-const SKILL_TRACKS = { office: "Clerical", kitchen: "Cooking", service: "Service", stock: "Logistics", fishing: "Fishing" };
+const SKILL_TRACKS = {
+  crafting: "Crafting",
+  mechanic: "Mechanic", office: "Clerical", kitchen: "Cooking", service: "Service", stock: "Logistics", fishing: "Fishing", healthcare: "Medicine", foraging: "Foraging" };   // healthcare was missing (Pass 4 toast bug); foraging is v7 Stage 3
 /* Stage 3.7c: DOMAINS — specialties WITHIN a track. Raw track XP helps a little everywhere;
    domain EXPERTISE (earned by repetition, or seeded for veterans) is the big near-guarantee,
    and ONLY in that domain. "Good at something" means good AT SOMETHING, not everything. */
@@ -635,6 +760,8 @@ const JOB_CATEGORY = {
   hospital: "civic", hq: "civic", post: "trade", furn: "trade", cafe_s: "service",
   clinic_a: "civic", clinic_m: "civic", watchpost_a: "civic", watchpost_m: "civic",   // Stage 2.3
   store_f: "trade", grill_f: "service", clinic_f: "civic", townhall_f: "civic",   // Ferndale
+  blackmarket_o: "trade", grill_o: "service",   // the Outlands
+  market_s: "trade", store_m: "trade", workshop_s: "trade",   // the new quarters
   townhall_a: "civic", townhall_m: "civic", townhall_s: "civic",
 };
 /* which skill track governs advancement at each employer (falls back to the
@@ -645,6 +772,8 @@ const JOB_TRACK = {
   hospital: "service", hq: "service", post: "stock", furn: "stock", cafe_s: "service",
   clinic_a: "service", clinic_m: "service", watchpost_a: "service", watchpost_m: "service",   // Stage 2.3
   store_f: "stock", grill_f: "service", clinic_f: "service", townhall_f: "service",   // Ferndale
+  blackmarket_o: "stock", grill_o: "service",   // the Outlands
+  market_s: "stock", store_m: "stock", workshop_s: "stock",   // the new quarters
   townhall_a: "office", townhall_m: "office", townhall_s: "office",
 };
 /* module-level so it's usable at NPC construction (before component-scope
@@ -714,28 +843,53 @@ const TOWN_DEFS = {
     spots: { plaza: { x: 12, y: 7 }, park: { x: 20, y: 15 }, fountain: { x: 20, y: 14 },
              homerow: { x: 13, y: 11 }, townhall: { x: 12, y: 7 }, bench: { x: 21, y: 15 } },
   },
+  hills: {   // v7 Stage 5 capstone: the hills above Alderbrook. One house. One view. No neighbors.
+    name: "The Hills", w: 18, h: 11,
+    roadRows: [8], roadCols: [2],
+    park: { x: 10, y: 8, w: 4, h: 2 },
+    drink: { x: 11, y: 8, label: "spring" },
+    busStop: { x: 2, y: 9 },   // nothing stops here — legs-safety coord only
+    trees: [[3, 2], [7, 1], [12, 2], [15, 4], [5, 6], [14, 7], [9, 3], [16, 9]],
+    spots: { plaza: { x: 8, y: 8 }, park: { x: 11, y: 9 }, fountain: { x: 11, y: 8 },
+             homerow: { x: 8, y: 8 }, townhall: { x: 8, y: 8 }, bench: { x: 12, y: 9 } },
+  },
+  outlands: {   // v7 Stage 4: NOT a town — a lawless camp past the tree line. No hall, no
+    // Watch, no bus. Absent from approval/treasury-civic/council/patrol maps BY DESIGN.
+    name: "The Outlands", w: 24, h: 14,
+    roadRows: [7], roadCols: [3, 20],
+    park: { x: 9, y: 10, w: 5, h: 2 },
+    drink: { x: 10, y: 10, label: "creek" },
+    busStop: { x: 2, y: 12 },   // a rotted sign — no fares route here (legs-safety coord only)
+    trees: [[1, 1], [5, 2], [9, 1], [14, 2], [18, 1], [22, 3], [1, 5], [6, 5], [16, 5], [21, 6], [2, 9], [6, 11], [15, 11], [19, 10], [22, 12], [12, 5]],
+    spots: { plaza: { x: 11, y: 8 }, park: { x: 10, y: 11 }, fountain: { x: 10, y: 10 },
+             homerow: { x: 17, y: 8 }, townhall: { x: 11, y: 8 }, bench: { x: 12, y: 11 } },
+  },
   mossford: {
-    name: "Mossford", w: 28, h: 17,
-    roadRows: [2, 8, 13], roadCols: [1, 10, 19, 26],
+    name: "Mossford", w: 36, h: 22,   // the river town spreads: the old bank (unchanged), a river walk east, cottages south
+    roadRows: [2, 8, 13, 18], roadCols: [1, 10, 19, 26, 33],
     park: { x: 5, y: 14, w: 3, h: 2 },
     water: { x: 23, y: 14, w: 4, h: 2 },
+    water2: { x: 29, y: 17, w: 6, h: 4 },              // the wide bend — the real river, and the far dock
     grave: { x: 15, y: 14, w: 3, h: 2 },
     drink: { x: 12, y: 15, label: "well" },
     busStop: { x: 3, y: 13 },
-    trees: [[18, 3], [9, 14], [2, 15], [27, 10]],
+    trees: [[18, 3], [9, 14], [2, 15], [27, 10], [30, 3], [34, 7], [28, 12], [33, 13], [4, 19], [11, 20], [17, 19], [22, 21], [25, 18], [7, 17]],
     spots: { plaza: { x: 10, y: 8 }, park: { x: 5, y: 14 }, dock: { x: 22, y: 14 }, diner: { x: 4, y: 7 },
+             riverwalk: { x: 31, y: 12 }, fardock: { x: 31, y: 16 }, cottages: { x: 14, y: 18 },
              well: { x: 12, y: 15 }, furn: { x: 21, y: 7 }, graveyard: { x: 16, y: 15 }, bench: { x: 6, y: 15 } },
   },
   stonecross: {
-    name: "Stonecross", w: 30, h: 18,
-    roadRows: [2, 8, 14], roadCols: [1, 11, 20, 28],
+    name: "Stonecross", w: 40, h: 24,   // the capital sprawls: the old core (unchanged) + an east quarter and a south commons
+    roadRows: [2, 8, 14, 20], roadCols: [1, 11, 20, 28, 37],
     park: { x: 22, y: 15, w: 4, h: 2 },
     grave: { x: 22, y: 9, w: 6, h: 5 },                // the big yard — the government town buries with ceremony
+    water: { x: 33, y: 19, w: 5, h: 3 },               // the reservoir: the capital's water, and a second dock
     drink: { x: 10, y: 15, label: "old pump" },
     busStop: { x: 4, y: 15 },
-    trees: [[26, 4], [27, 16], [6, 15], [10, 9]],
+    trees: [[26, 4], [27, 16], [6, 15], [10, 9], [31, 3], [36, 6], [33, 11], [38, 15], [3, 20], [9, 21], [15, 20], [20, 22], [29, 22], [24, 19]],
     spots: { plaza: { x: 11, y: 8 }, graveyard: { x: 24, y: 11 }, hospital: { x: 3, y: 7 }, pump: { x: 10, y: 15 },
-             watch: { x: 8, y: 7 }, townhall: { x: 18, y: 7 }, park: { x: 23, y: 15 }, bench: { x: 23, y: 16 } },
+             watch: { x: 8, y: 7 }, townhall: { x: 18, y: 7 }, park: { x: 23, y: 15 }, bench: { x: 23, y: 16 },
+             eastgate: { x: 34, y: 8 }, commons: { x: 12, y: 20 }, reservoir: { x: 34, y: 18 }, dock: { x: 33, y: 18 } },
   },
 };
 
@@ -756,6 +910,25 @@ const BUILDINGS = [
   { id: "diner",       town: "mossford",   name: "Rustpan Diner",    x: 2,  y: 3,  w: 4, h: 3, door: { x: 3,  y: 6 },  color: "#b05e50", roof: "#7d3f34", enterable: true },
   { id: "store",       town: "mossford",   name: "Nadia's Goods",    x: 7,  y: 3,  w: 3, h: 3, door: { x: 8,  y: 6 },  color: "#5e7ab0", roof: "#40547d", enterable: true },
   { id: "mart",        town: "mossford",   name: "Bigway Mart",      x: 12, y: 3,  w: 4, h: 3, door: { x: 13, y: 6 },  color: "#4a8ab0", roof: "#31607d", enterable: true },
+  /* ---- Stonecross: the east quarter + south commons (the v7 expansion) ---- */
+  { id: "market_s",   town: "stonecross", name: "Eastgate Market",  x: 31, y: 3,  w: 4, h: 3, door: { x: 32, y: 6 },  color: "#5a8a6a", roof: "#3e6048", enterable: true },
+  { id: "home_s1",    town: "stonecross", name: "Eastgate Row 1",   x: 31, y: 10, w: 2, h: 2, door: { x: 31, y: 12 }, color: "#9a8a7a", roof: "#6e6254", enterable: true },
+  { id: "home_s2",    town: "stonecross", name: "Eastgate Row 2",   x: 35, y: 10, w: 2, h: 2, door: { x: 35, y: 12 }, color: "#7a8a9a", roof: "#54626e", enterable: true },
+  { id: "home_s3",    town: "stonecross", name: "Commons Cottage",  x: 6,  y: 17, w: 2, h: 2, door: { x: 6,  y: 19 }, color: "#8a9a7a", roof: "#626e54", enterable: true },
+  { id: "home_s4",    town: "stonecross", name: "Old Mill House",   x: 17, y: 16, w: 3, h: 3, door: { x: 18, y: 19 }, color: "#9a7a6a", roof: "#6e5648", enterable: true },
+  /* ---- Mossford: the river walk + south cottages (the v7 expansion) ---- */
+  { id: "store_m",    town: "mossford",   name: "Riverwalk Goods",  x: 29, y: 3,  w: 4, h: 3, door: { x: 30, y: 6 },  color: "#5a7a9a", roof: "#3e5670", enterable: true },
+  { id: "home_m1",    town: "mossford",   name: "Riverwalk Flat",   x: 29, y: 9,  w: 2, h: 2, door: { x: 29, y: 11 }, color: "#7a9a8a", roof: "#546e62", enterable: true },
+  { id: "home_m2",    town: "mossford",   name: "Bend Cottage",     x: 33, y: 9,  w: 2, h: 2, door: { x: 33, y: 11 }, color: "#9a8a5a", roof: "#6e6240", enterable: true },
+  { id: "home_m3",    town: "mossford",   name: "South Cottage",    x: 8,  y: 16, w: 2, h: 2, door: { x: 8,  y: 18 }, color: "#8a7a9a", roof: "#62566e", enterable: true },
+  { id: "home_m4",    town: "mossford",   name: "Willow House",     x: 20, y: 16, w: 3, h: 3, door: { x: 21, y: 19 }, color: "#7a9a6a", roof: "#546e48", enterable: true },
+  { id: "hillhouse",   town: "hills",      name: "Hillcrest Manor",  x: 6,  y: 3,  w: 6, h: 4, door: { x: 8,  y: 7 },  color: "#8a7a5a", roof: "#5e5240", enterable: true },
+  { id: "workshop_s",  town: "stonecross", name: "Garrick's Works",  x: 11, y: 16, w: 4, h: 3, door: { x: 12, y: 19 }, color: "#7a6a4a", roof: "#564a32", enterable: true },
+  /* ---- The Outlands: the lawless camp ---- */
+  { id: "blackmarket_o", town: "outlands", name: "The Exchange",  x: 5,  y: 3,  w: 4, h: 3, door: { x: 6,  y: 6 },  color: "#4a4040", roof: "#2e2828", enterable: true },
+  { id: "grill_o",       town: "outlands", name: "The Last Pot",  x: 15, y: 3,  w: 4, h: 3, door: { x: 16, y: 6 },  color: "#5a4a3a", roof: "#3a3028", enterable: true },
+  { id: "shack_o1",      town: "outlands", name: "Mara's Shack",  x: 5,  y: 9,  w: 2, h: 2, door: { x: 5,  y: 11 }, color: "#5a5248", roof: "#3a352e", enterable: true },
+  { id: "shack_o2",      town: "outlands", name: "Howl's Shack",  x: 17, y: 9,  w: 2, h: 2, door: { x: 17, y: 11 }, color: "#4a5248", roof: "#2e352e", enterable: true },
   /* ---- Ferndale: the mill town ---- */
   { id: "townhall_f",  town: "ferndale",   name: "Ferndale Hall",    x: 11, y: 3,  w: 4, h: 3, door: { x: 12, y: 6 },  color: "#b0a080", roof: "#7d7058", enterable: true },
   { id: "clinic_f",    town: "ferndale",   name: "Ferndale Clinic",  x: 19, y: 3,  w: 4, h: 3, door: { x: 20, y: 6 },  color: "#a8c0b8", roof: "#70908a", enterable: true },
@@ -964,12 +1137,40 @@ const INTERIOR_DEFS = {
   },
 };
 /* which wash station an NPC in each town heads for when they get ripe */
+/* Hillcrest Manor — the biggest interior in the game: a bed, a hearth, and ROOM */
+INTERIOR_DEFS.hillhouse = {
+  rows: ["###########", "#.........#", "#.B......K#", "#.........#", "#....T....#", "#.........#", "#####D#####"],
+  stations: { bed: { x: 2, y: 3, label: "The big bed" }, hearth: { x: 9, y: 3, label: "Hearth" }, table: { x: 5, y: 5, label: "Oak table" } },   // on the floor BESIDE the furniture glyphs
+  seats: [], floor: "#e0d4bc", wall: "#4a3e2e",
+};
+
+/* The workshop interior — explicit (not a clone): it needs a WORKBENCH station */
+INTERIOR_DEFS.workshop_s = {
+  rows: ["#########", "#.......#", "#.KK.KK.#", "#.......#", "#T.T.T.T#", "#.......#", "####D####"],
+  stations: { staff: { x: 4, y: 1 }, shop: { x: 4, y: 3, label: "Workshop counter" }, bench: { x: 2, y: 5, label: "Workbench" }, couch: { x: 6, y: 5, label: "Staff couch" } },
+  seats: [], floor: "#d8d0bc", wall: "#4a4232",
+};
+
+/* Expansion interiors — the new quarters, cloned from proven templates */
+for (const [nid, tpl] of [["market_s","market"],["store_m","mart"],
+                          ["home_s1","home_w"],["home_s2","home_w"],["home_s3","home_w"],["home_s4","home_w"],
+                          ["home_m1","home_w"],["home_m2","home_w"],["home_m3","home_w"],["home_m4","home_w"]])
+  INTERIOR_DEFS[nid] = { ...INTERIOR_DEFS[tpl] };
+
+/* Outlands interiors — cloned; the camp is scrappy but functional */
+for (const [nid, tpl] of [["blackmarket_o","mart"],["grill_o","diner"],["shack_o1","home_w"],["shack_o2","home_w"]])
+  INTERIOR_DEFS[nid] = { ...INTERIOR_DEFS[tpl] };
+
 /* Ferndale interiors — cloned from proven templates (same rows/stations/seats) */
 for (const [nid, tpl] of [["home_f1","home_w"],["home_f2","home_w"],["home_f3","home_w"],["home_f4","home_w"],["home_f5","home_w"],["home_f6","home_w"],
                           ["store_f","mart"],["grill_f","diner"],["clinic_f","clinic_a"],["townhall_f","townhall_a"]])
   INTERIOR_DEFS[nid] = { ...INTERIOR_DEFS[tpl] };
 
-const TOWN_WASH = { alderbrook: { bId: "cafe", st: "wash" }, mossford: { bId: "diner", st: "wash" }, stonecross: { bId: "inn", st: "wash" }, ferndale: { bId: "grill_f", st: "wash" } };
+const TOWN_WASH = { alderbrook: { bId: "cafe", st: "wash" }, mossford: { bId: "diner", st: "wash" }, stonecross: { bId: "inn", st: "wash" }, ferndale: { bId: "grill_f", st: "wash" }, outlands: { bId: "grill_o", st: "wash" }, hills: { bId: "cafe", st: "wash" } };
+/* Where a hungry local sits down to eat. This WAS a hardcoded 3-town ternary that silently
+   sent Ferndale and Outlands residents to the Stonecross inn — a town they'd never reach.
+   They starved with food in the shops. Every new town MUST land here. */
+const TOWN_EATERY = { alderbrook: "cafe", mossford: "diner", stonecross: "inn", ferndale: "grill_f", outlands: "grill_o", hills: "cafe" };   // the hills eat down in Alderbrook
 
 /* ===== NPC ROSTER =====
    New in v4: hygiene/health seeds, and roles — thief (Dex: the night
@@ -1121,7 +1322,7 @@ const NPC_DEFS = [
   { id: "cole", name: "Cole", town: "stonecross", color: "#48628a", home: "home_h", enforcer: true,
     desc: "the 50-year-old captain of the Stonecross Watch", personality: "by-the-book but fair, believes most crime is hunger wearing a mask, never raises his voice",
     work: { bId: "hq", station: "duty" }, schedule: [7, 19],
-    coins: 24, startInv: { baton: 1 }, fame: 15, renown: 32,
+    coins: 24, startInv: { baton: 1, crossbow: 1, bolt: 12 }, fame: 15, renown: 32,   // v7: the senior officer carries the Watch crossbow
     likes: ["order", "second chances", "a quiet ledger of a town"], dislikes: ["repeat offenders", "excuses"],
     rel: { tessa: "friend", amara: "likes", dex: "dislikes" },
     greets: ["All quiet. Keep it that way.", "The Watch sees more than you'd think.", "Stay fed, stay honest."] },
@@ -1153,7 +1354,7 @@ const NPC_DEFS = [
   /* Stage 3.5: the career criminal. No home (bench-sleeper — Stage 3 loop), no job
      (canSeekWork skips outlaws), a professional theft cadence via thiefTick, and an
      evasion brain: heat in this town means work in the next one. */
-  { id: "vik", name: "Vik", town: "ferndale", color: "#6a5a4a", home: null, outlaw: true,
+  { id: "vik", name: "Vik", town: "ferndale", color: "#6a5a4a", home: null,   // a FENCE, not a burglar: heist-pool candidate (broke+jobless), no autonomous theft cadence
     desc: "a 36-year-old fence who moves what others lift", personality: "affable, patient, never touches the merchandise twice, keeps every favor on a mental ledger",
     coins: 4, startInv: {}, fame: 3, renown: 1,
     likes: ["back doors", "cash buyers", "people who don't count"], dislikes: ["receipts", "the Watch", "loose talk"],
@@ -1186,22 +1387,99 @@ const NPC_DEFS = [
     likes: ["quiet corners", "well-kept grass", "being unremarkable"], dislikes: ["questions about the old days", "uniforms"],
     rel: { hollis: "likes", cole: "dislikes", tessa: "dislikes" },
     greets: ["Nobody's buried here. I like it that way.", "Just keeping the grass honest.", "...You didn't see me. Kidding. Mostly."] },
+  /* ---- The new quarters: Stonecross east/south + Mossford riverwalk/south ---- */
+  { id: "garrick", name: "Garrick", town: "stonecross", color: "#7a6a4a", home: "home_s4",
+    desc: "the 41-year-old wright who opened a workshop off the commons", personality: "measures twice, speaks once, quietly proud of clean joints",
+    work: { bId: "workshop_s", station: "shop" }, schedule: [9, 17],
+    coins: 30, startInv: { saw: 1, hammer: 1, wood: 3 }, fame: 5, renown: 12,
+    likes: ["square corners", "sharp tools"], dislikes: ["warped boards", "rushed work"],
+    rel: { wendell: "friend" }, greets: ["Mind the sawdust.", "Tools are on the wall. Prices are on the tools."] },
+  { id: "delia", name: "Delia", town: "stonecross", color: "#5a8a6a", home: "home_s1",
+    desc: "the 44-year-old who runs Eastgate Market", personality: "sharp with numbers, warmer than she lets on, knows every regular's order",
+    work: { bId: "market_s", station: "shop" }, schedule: [9, 17],
+    coins: 28, startInv: { veg: 2, fruit: 1 }, fame: 7, renown: 16, cooks: ["bread"],
+    likes: ["fresh stock", "early risers"], dislikes: ["bruised fruit", "credit"],
+    rel: {}, greets: ["Fresh in this morning.", "What do you need, then?"] },
+  { id: "briggs", name: "Briggs", town: "mossford", color: "#5a7a9a", home: "home_m1",
+    desc: "the 49-year-old keeper of Riverwalk Goods", personality: "slow-talking, endlessly patient, has an opinion on every fishing rod ever made",
+    work: { bId: "store_m", station: "shop" }, schedule: [9, 17],
+    coins: 26, startInv: { bread: 1, water: 2 }, fame: 6, renown: 15,
+    likes: ["the river at dawn", "honest weights"], dislikes: ["rushing", "haggling"],
+    rel: {}, greets: ["Take your time.", "River's high today."] },
+  { id: "posy", name: "Posy", town: "stonecross", color: "#9a7a8a", home: "home_s2",
+    desc: "a 26-year-old looking for steady work in the east quarter", personality: "bright, tireless, applies for everything",
+    coins: 7, startInv: { bread: 1 }, fame: 2, renown: 4,
+    likes: ["first days", "full shifts"], dislikes: ["waiting lists", "no"],
+    rel: {}, greets: ["Anyone hiring out east?", "I'm quick, I promise."] },
+  { id: "edgar", name: "Edgar", town: "stonecross", color: "#7a8a9a", home: "home_s2",
+    desc: "a 34-year-old rooming with Posy, between things", personality: "wry, sleeps late, means to fix that",
+    coins: 4, startInv: {}, fame: 2, renown: 3,
+    likes: ["late mornings", "borrowed time"], dislikes: ["rent day", "alarms"],
+    rel: { posy: "likes" }, greets: ["Posy's the ambitious one.", "I'm between things. Long between."] },
+  { id: "tilda", name: "Tilda", town: "stonecross", color: "#8a9a7a", home: "home_s3",
+    desc: "a 52-year-old who keeps the commons tidy and everyone's business", personality: "brisk, nosy in a kindly way, misses nothing",
+    coins: 16, startInv: { bread: 1 }, fame: 5, renown: 11, cooks: ["stew"],
+    likes: ["swept paths", "a good rumor"], dislikes: ["litter", "secrets"],
+    rel: {}, greets: ["Heard about the Council?", "Mind the path, I just swept."] },
+  { id: "wendell", name: "Wendell", town: "stonecross", color: "#9a7a6a", home: "home_s4",
+    desc: "a 61-year-old retired mill foreman in the Old Mill House", personality: "gruff, generous, tells the same three stories",
+    coins: 34, startInv: { stew: 1 }, fame: 6, renown: 19, cooks: ["stew"],
+    likes: ["a full pot", "young workers"], dislikes: ["idleness", "new machines"],
+    rel: { tilda: "friend" }, greets: ["Sit down, I'll tell you about the mill.", "Work's honest. Mostly."] },
+  { id: "nell", name: "Nell", town: "mossford", color: "#9a8a5a", home: "home_m2",
+    desc: "a 30-year-old taking work along the river walk", personality: "steady, saving hard, dreams about a boat",
+    coins: 11, startInv: { water: 1 }, fame: 3, renown: 6,
+    likes: ["payday", "the far dock"], dislikes: ["debts", "rain on wash day"],
+    rel: {}, greets: ["Morning. Cold one.", "Saving for a boat. Slowly."] },
+  { id: "gideon", name: "Gideon", town: "mossford", color: "#7a9a6a", home: "home_m4",
+    desc: "a 38-year-old who fishes the bend and sells the surplus", personality: "quiet, contented, up before everyone",
+    coins: 19, startInv: { fish: 2 }, fame: 4, renown: 9, cooks: ["grilled_fish"],
+    likes: ["the bend at dawn", "a full net"], dislikes: ["crowds", "empty water"],
+    rel: { briggs: "likes" }, greets: ["Bend's good this week.", "Fish? I've plenty."] },
+  { id: "orla", name: "Orla", town: "mossford", color: "#8a7a9a", home: "home_m3",
+    desc: "a 24-year-old rooming south of the river, new in town", personality: "eager, homesick, trying hard to belong",
+    coins: 5, startInv: {}, fame: 1, renown: 3,
+    likes: ["invitations", "learning names"], dislikes: ["being new", "quiet nights"],
+    rel: { nell: "likes" }, greets: ["I'm new — Orla.", "Still learning where everything is."] },
+  /* ---- The Outlands: the lawless camp ---- */
+  { id: "mara", name: "Mara", town: "outlands", color: "#4a4040", home: "shack_o1",
+    desc: "the 50-year-old who runs The Exchange — everything's for sale, nothing's questioned", personality: "flat-voiced, fair to a fault by her own code, keeps a club under the counter",
+    work: { bId: "blackmarket_o", station: "shop" }, schedule: [10, 18],
+    coins: 45, startInv: { club: 1, crossbow: 1, bolt: 8 }, fame: 6, renown: 4,   // she SELLS crossbows — of course she keeps one loaded
+    likes: ["exact change", "quiet customers"], dislikes: ["haggling", "the Watch"],
+    rel: {}, greets: ["Buy or leave.", "Double price. That's the discount for no questions."] },
+  { id: "howl", name: "Howl", town: "outlands", color: "#5a4a3a", home: "shack_o2",
+    desc: "the cook at The Last Pot — nobody has ever seen a delivery arrive", personality: "cheerful in an unsettling way, generous portions, evasive about ingredients",
+    work: { bId: "grill_o", station: "staff" }, schedule: [9, 17],
+    coins: 12, startInv: { stew: 2, knife: 1 }, fame: 5, renown: 3, cooks: ["stew", "mystery_stew"],   // light purse, sharp knife: a bad mark
+    likes: ["clean bowls", "no questions"], dislikes: ["recipe talk", "food inspectors"],
+    rel: {}, greets: ["Pot's full. Sit.", "It's stew. Mostly.", "Everyone asks. Nobody really wants to know."] },
+  { id: "cutter", name: "Cutter", town: "outlands", color: "#3a3a44", home: null, outlaw: true,
+    desc: "a 33-year-old who takes what he wants and dares you to mind", personality: "coiled, direct, respects nerve and nothing else",
+    coins: 6, startInv: { knife: 1 }, fame: 4, renown: 1,
+    likes: ["easy marks", "the tree line"], dislikes: ["locks", "witnesses"],
+    rel: { sable: "likes", vik: "likes" }, greets: ["Wrong road, friend.", "Toll's whatever you're carrying."] },
+  { id: "sly", name: "Sly", town: "outlands", color: "#44503a", home: null,
+    desc: "a 27-year-old drifter who watches the shady route like a hawk", personality: "grinning, patient, never the first to swing but always the first to run",
+    coins: 3, startInv: {}, fame: 2, renown: 1,
+    likes: ["fat wallets walking", "the creek at dawn"], dislikes: ["dogs", "crossbows"],
+    rel: { cutter: "friend" }, greets: ["Lost? Everyone here is.", "Nice coin purse. Heavy-looking."] },
   /* ---- Ferndale: the mill town — mostly ordinary folks ---- */
   { id: "hazel", name: "Hazel", town: "ferndale", color: "#8a9a5a", home: "home_f1",
     desc: "the 45-year-old who runs Mill Supply Co.", personality: "practical, keeps a ledger in her head, soft spot for strays",
-    work: { bId: "store_f", station: "shop" }, schedule: [8, 18],
+    work: { bId: "store_f", station: "shop" }, schedule: [9, 17],
     coins: 26, startInv: { bread: 2, water: 2 }, fame: 8, renown: 18, cooks: ["bread"],
     likes: ["full shelves", "prompt payment"], dislikes: ["haggling", "dust"],
     rel: {}, greets: ["Shelves are stocked. Mostly.", "Need supplies?"] },
   { id: "yusuf", name: "Yusuf", town: "ferndale", color: "#b07a4a", home: "home_f2",
     desc: "the 52-year-old cook who runs The Millstone", personality: "steady hands, big laugh, feeds anyone who looks thin",
-    work: { bId: "grill_f", station: "staff" }, schedule: [7, 19],
+    work: { bId: "grill_f", station: "staff" }, schedule: [8, 16],
     coins: 24, startInv: { stew: 2 }, fame: 10, renown: 22, cooks: ["stew", "grilled_fish"],
     likes: ["a full room", "morning prep"], dislikes: ["waste", "cold stew"],
     rel: {}, greets: ["Sit, eat. Talk after.", "Stew's fresh."] },
   { id: "sana", name: "Dr. Sana", town: "ferndale", color: "#a8c0b8", home: "home_f3", doctor: true,
     desc: "the 38-year-old physician at Ferndale Clinic", personality: "calm under pressure, blunt diagnoses, gentle hands",
-    work: { bId: "clinic_f", station: "treat" }, schedule: [8, 18],
+    work: { bId: "clinic_f", station: "treat" }, schedule: [9, 17],
     coins: 30, startInv: { bandage: 2, medicine: 1 }, fame: 10, renown: 26,
     likes: ["quiet shifts", "honest patients"], dislikes: ["self-diagnosis", "mill accidents"],
     rel: {}, greets: ["Sit. Where does it hurt?", "You look... fine, actually."] },
@@ -1319,6 +1597,15 @@ const findShop = (itemId, town) =>
   BUILDINGS.find(b => b.town === town && SHOP_STOCK[b.id]?.includes(itemId))?.id || null;
 const keeperOf = (sim, bId) => sim.npcs.find(n => n.alive && n.work?.bId === bId) || null;
 /* best weapon in an inventory (by average damage); bare fists otherwise */
+/* v7 Stage 5: the endgame ladder — every private business has a price. Civic buildings and
+   Pete's post are NOT for sale. Ownership overrides persist and reapply on load. */
+const BUSINESS_PRICE = { cafe: 180, market: 200, fastfood: 160, diner: 190, mart: 240, inn: 260,
+  store: 170, furn: 200, cafe_s: 150, store_f: 150, grill_f: 160, grill_o: 120, blackmarket_o: 350,
+  market_s: 175, store_m: 165, workshop_s: 300 };
+
+/* v7 Stage 3: bushes grow beside every tree — derived, not authored, so all towns have them */
+const bushSpots = (town) => town.trees.map(([x, y]) => [x + 1, y]).filter(([x, y]) => x < town.w - 1 && y < town.h - 1);
+
 const bestWeapon = (ent) => {
   let best = null;
   for (const [id, c] of Object.entries(ent.inv)) {
@@ -1469,21 +1756,45 @@ const TOWN_UPGRADES = {
 let USER_API_KEY = "";
 const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 
+// The model every AI call runs on. Change it here to swap models globally.
+const CLAUDE_MODEL = "claude-sonnet-4-6";
+
 async function callClaude(prompt, maxTokens) {
-  const headers = { "Content-Type": "application/json" };
-  if (USER_API_KEY) {   // standalone webpage: authenticate with the player's own key
-    headers["x-api-key"] = USER_API_KEY;
-    headers["anthropic-version"] = "2023-06-01";
-    headers["anthropic-dangerous-direct-browser-access"] = "true";
+  // Standalone / GitHub Pages build: every AI call is authenticated with the
+  // player's own Anthropic key. The CORS-unlock header lets the browser reach
+  // the API directly, so no server or proxy is needed.
+  if (!USER_API_KEY) {
+    throw new Error("No Anthropic API key set — open ⚙️ Settings and paste your key to power the AI features.");
   }
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
-  });
+  const headers = {
+    "Content-Type": "application/json",
+    "x-api-key": USER_API_KEY,
+    "anthropic-version": "2023-06-01",
+    "anthropic-dangerous-direct-browser-access": "true",
+  };
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
+    });
+  } catch (e) {
+    throw new Error("Couldn't reach the Anthropic API (network/CORS). Check your connection and key.");
+  }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { const err = await res.json(); detail = err?.error?.message || detail; } catch (e) { /* non-JSON body */ }
+    if (res.status === 401) detail = "Invalid or missing API key — re-check it in ⚙️ Settings.";
+    throw new Error(`Claude API error: ${detail}`);
+  }
   const data = await res.json();
   const text = (data.content || []).map(b => b.text || "").join("");
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
+  try {
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
+  } catch (e) {
+    throw new Error("Claude returned a response that couldn't be parsed as JSON.");
+  }
 }
 
 /* Stage 2.2 — the skill-check adjudicator. The LEANEST call in the game: a
@@ -1724,6 +2035,21 @@ Return ONLY JSON: {"tessa":["<town>","<town>"],"briar":["<town>","<town>"],"brie
   return (out && Array.isArray(out.tessa) && Array.isArray(out.briar)) ? out : null;
 }
 
+/* Trade offers — the receiving side decides via one tiny call (local value-compare fallback).
+   A trade can carry a NOTE ("I'll pay you to fix my fence") that lands in the acceptor's
+   memory — and memories feed the pulses, so a paid favor can genuinely be acted on. */
+async function tradeConsider(decider, offererName, rel, t) {
+  const giveStr = [t.give.coins ? `${t.give.coins} coins` : "", t.give.item ? `${t.give.qty}× ${ITEMS[t.give.item]?.name || t.give.item}` : ""].filter(Boolean).join(" + ") || "nothing";
+  const askStr = [t.ask.coins ? `${t.ask.coins} coins` : "", t.ask.item ? `${t.ask.qty}× ${ITEMS[t.ask.item]?.name || t.ask.item}` : ""].filter(Boolean).join(" + ") || "nothing";
+  const prompt =
+`${decider.name} — ${decider.personality}. ${offererName} (${rel} to you) proposes a trade:
+THEY GIVE you: ${giveStr}. THEY ASK from you: ${askStr}.${t.note ? ` They add: "${t.note}"` : ""}
+You hold ${Math.floor(decider.coins)} coins. Accept only if it serves you — fair value, a friend's ask, or a favor that suits your character.
+Return ONLY JSON: {"accept":true,"say":"<one short in-character line>"}.`;
+  const out = await callClaude(prompt, CFG.TRADE.tokens);
+  return (out && typeof out.accept === "boolean") ? out : null;
+}
+
 async function microNudge(town, npcs, dayLog, npcsById, playerTier) {
   const roster = npcs.map(n =>
     `- ${n.id} (${n.name}): mood ${n.mood}, ${Math.floor(n.coins)} coins, needs h${Math.round(n.hunger)}/t${Math.round(n.thirst)}, ${provisionLine(n)}, carries ${invLine(n)}. Feels: ${relLine(n, npcsById)}.`
@@ -1737,8 +2063,9 @@ Today so far: ${dayLog.join(". ")}.
 Item ids: ${Object.keys(ITEMS).join(", ")}. Spots: ${Object.keys(town.spots).join(", ")}.
 
 Respond ONLY with JSON, no markdown:
-{"nudges":[{"npc":"<id>","say":"one in-character line under 12 words","do":"goto|buy|gift_coins|gift_item|visit|send_letter|throw_party","spot":"<spot>|null","item":"<itemId>|null","amount":<1-15>|null,"target":"<npcId>|player|null"}]}
+{"nudges":[{"npc":"<id>","say":"one in-character line under 12 words","do":"goto|buy|gift_coins|gift_item|visit|send_letter|throw_party|trade","spot":"<spot>|null","item":"<itemId>|null","amount":<1-15>|null,"askItem":"<itemId>|null","askAmount":<coins>|null,"target":"<npcId>|player|null"}]}
 Actions must fit character, relationships, and what happened today. Gifts stay small.
+"trade" proposes a SWAP with target: item/amount = what they GIVE, askItem/askAmount = what they ASK back; say is the pitch and may include a favor ("I'll pay you to watch the shop") — the other side decides.
 "send_letter" needs target + say (the letter text). "throw_party" ONLY for someone with 30+ coins — they cater the WHOLE town. Max 3 nudges.
 SELF-CARE PRIORITY: if someone is ⚠LOW-SUPPLIES or has a need under 30, prefer a "buy" action (food or a drink to carry) for them over flavor — keeping a pocket buffer of meals and drinks is smart, in-character behavior worth nudging.`;
   return callClaude(prompt, CFG.NUDGE_MAX_TOKENS);
@@ -1790,6 +2117,13 @@ export default function Alderbrook() {
   const [speakOpen, setSpeakOpen] = useState(false);         // Stage 6: player "speak aloud" input
   const [speakText, setSpeakText] = useState("");
   const [castPanel, setCastPanel] = useState(false);         // Stage 6: fishing tier chooser
+  const [tradePanel, setTradePanel] = useState(null);        // player→NPC trade composer { npcId, ... }
+  const [picker, setPicker] = useState(null);                // frozen-time target picker { kind: gift|talk|trade|threaten|attack }
+  const zoomRef = useRef(1);                                 // camera zoom (outdoors only) — a ref: the canvas loop reads it, no re-render
+  const [craftPanel, setCraftPanel] = useState(null);        // v7 Stage 5: the crafting minigame { stage, recipeId, ... }
+  const [repairPanel, setRepairPanel] = useState(null);      // v7 Stage 5c: the mechanic minigames { bId, st, kind, ... }
+  const [zoomHud, setZoomHud] = useState(1);                 // mirror for the HUD buttons
+  const [tradeOffer, setTradeOffer] = useState(null);        // NPC→player incoming offer { fromId, give, ask, note }
   const [apiKeyInput, setApiKeyInput] = useState("");         // optional API key for standalone webpage builds
   const lastSpeechRef = useRef(0);                           // Stage 6: throttle on speech replies
   const saveFileInputRef = useRef(null);                     // hidden file input for save-file import
@@ -1823,7 +2157,7 @@ export default function Alderbrook() {
   const combatRef = useRef(null); combatRef.current = combat;
   const threatRef = useRef(null); threatRef.current = threat;
   const modalRef = useRef(false);
-  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel);
+  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker);
   const jailRef = useRef(false);
   jailRef.current = !!jailScreen;                        // Stage 3.5: jail time is REAL — the cell must not pause the sim
   const apiBusyRef = useRef(false);
@@ -1914,6 +2248,9 @@ export default function Alderbrook() {
       registers: {}, upgrades: {}, dishes: {},   // Stage 5: registers, owned upgrades, per-eatery dirty-dish counts
       ambientHour: -1, ambientCount: 0, forceChatter: null,   // Stage 6: per-hour cap + post-nudge guaranteed exchange
       townUpgrades: { alderbrook: {}, mossford: {}, stonecross: {}, ferndale: {} }, councilDay: -1,   // Stage 6: civic improvements + last Council day
+      tradeQueue: [],   // pending NPC↔NPC trade offers awaiting a considered decision
+      crime: { ticks: 0, blockedWatch: 0, blockedRoll: 0, blockedCap: 0, attempts: 0, arrests: 0 },   // the crime ledger (diagnosis + future town stats)
+      foragedAt: {},    // v7 Stage 3: bush cooldowns (`t:town:x,y` → last foraged day)
       approval: { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start },   // Stage 8
       opening: null, interviewBans: {}, interview: null, // the job market: today's HIRING post + cooldowns
       crimeAlert: null,                                 // player-witnessed theft {thiefId, bId}
@@ -1935,7 +2272,10 @@ export default function Alderbrook() {
       demand: sim.demand, lastRestockSweep: sim.lastRestockSweep,
       cases: sim.cases, ethics: sim.ethics, bodies: sim.bodies,
       registers: sim.registers, upgrades: sim.upgrades, dishes: sim.dishes,
-      townUpgrades: sim.townUpgrades, councilDay: sim.councilDay, approval: sim.approval,
+      townUpgrades: sim.townUpgrades, councilDay: sim.councilDay, approval: sim.approval, tradeQueue: sim.tradeQueue, foragedAt: sim.foragedAt,
+      ownerOverrides: sim.ownerOverrides || {},
+      treeChops: sim.treeChops || {}, playerFurniture: sim.playerFurniture || [], contracts: sim.contracts || [],
+      appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
       npcs: Object.fromEntries(sim.npcs.map(n => [n.id, {
@@ -1951,6 +2291,7 @@ export default function Alderbrook() {
         memories: n.memories, relationships: n.relationships, knownGossip: n.knownGossip,
         grossThisPeriod: n.grossThisPeriod || 0,   // Stage 4: the tax accumulator survives a save
         mayor: !!n.mayor, patrolRoute: n.patrolRoute || null,   // Pass 4: the chair + the beat survive too
+        timesJailed: n.timesJailed || 0, spreeUntil: n.spreeUntil || null,   // the criminal career survives too
       }])),
     };
   };
@@ -1984,6 +2325,15 @@ export default function Alderbrook() {
     sim.townUpgrades = { alderbrook: {}, mossford: {}, stonecross: {}, ferndale: {}, ...(data.townUpgrades || {}) };
     sim.councilDay = data.councilDay ?? -1;
     sim.approval = { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start, ...(data.approval || {}) };
+    sim.tradeQueue = data.tradeQueue || [];
+    sim.foragedAt = data.foragedAt || {};
+    sim.ownerOverrides = data.ownerOverrides || {};
+    for (const [ob, oo] of Object.entries(sim.ownerOverrides)) OWNERS[ob] = oo;   // v7 Stage 5: deeds survive the save
+    sim.treeChops = data.treeChops || {};
+    sim.playerFurniture = data.playerFurniture || [];
+    sim.contracts = data.contracts || [];
+    sim.appliances = data.appliances || {};
+    sim.ownsManor = !!data.ownsManor;
     if (!sim.treasury.ferndale) sim.treasury.ferndale = CFG.TREASURY_SEED;   // pre-Ferndale saves
     sim.opening = data.opening || null; sim.interviewBans = data.interviewBans || {};
     sim.interview = null;
@@ -2134,6 +2484,208 @@ export default function Alderbrook() {
     }
     return fresh;
   };
+  /* MECHANIC MINIGAME 1 — plumbing: slide each highlighted slider fully left→right, N times
+     each; it snaps back to the left when the next rep is up. Overcomplicated Simon says. */
+  const SliderGame = ({ reps, sliders, onDone }) => {
+    const [rep, setRep] = useState(0);            // total completed slides
+    const [v, setV] = useState(0);
+    const total = reps * sliders;
+    const active = rep % sliders;                 // alternate sliders
+    const onSlide = (nv) => {
+      setV(nv);
+      if (nv >= 100) { sfx.pop(); const nr = rep + 1; setRep(nr); setV(0); if (nr >= total) onDone(); }
+    };
+    return (
+      <div style={{ ...S.chatBody, gap: 14, alignItems: "center" }}>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>Flush the lines: slide the lit one all the way right. {rep}/{total}</div>
+        {Array.from({ length: sliders }).map((_, i) => (
+          <input key={i} type="range" min={0} max={100} value={i === active ? v : 0} disabled={i !== active}
+            onChange={e => i === active && onSlide(+e.target.value)}
+            style={{ width: 240, accentColor: i === active ? "#c9a84a" : "#555", opacity: i === active ? 1 : 0.4 }} />
+        ))}
+      </div>
+    );
+  };
+  /* MECHANIC MINIGAME 2 — the oven: press the labeled buttons in the prompted order; after
+     each press, route the center RED dot to the LEFT or RIGHT black dot as prompted. */
+  const ButtonGame = ({ steps, routing, onDone }) => {
+    const [plan] = useState(() => {
+      const labels = Array.from({ length: 4 }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26)) + Math.floor(Math.random() * 10));
+      const order = [...Array(4).keys()].sort(() => Math.random() - 0.5).slice(0, steps);
+      return { labels, order, routes: order.map(() => (Math.random() < 0.5 ? "L" : "R")) };
+    });
+    const [at, setAt] = useState(0);              // which step
+    const [phase, setPhase] = useState("press");  // press → route
+    const done = at >= steps;
+    const press = (i) => {
+      if (phase !== "press" || done) return;
+      if (i === plan.order[at]) { sfx.pop(); routing ? setPhase("route") : advance(); }
+      else { sfx.alert(); setAt(0); setPhase("press"); }   // wrong button: the sequence resets
+    };
+    const route = (side) => {
+      if (phase !== "route" || done) return;
+      if (side === plan.routes[at]) { sfx.pop(); advance(); }
+      else { sfx.alert(); setAt(0); setPhase("press"); }
+    };
+    const advance = () => { const n = at + 1; setAt(n); setPhase("press"); if (n >= steps) onDone(); };
+    return (
+      <div style={{ ...S.chatBody, gap: 12, alignItems: "center" }}>
+        <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center" }}>
+          Sequence: {plan.order.map((b, i) => `${plan.labels[b]}${routing ? (plan.routes[i] === "L" ? "◀" : "▶") : ""}`).join(" → ")}
+          <br /><b>{done ? "Done." : phase === "press" ? `Press ${plan.labels[plan.order[at]]}` : `Route the red dot ${plan.routes[at] === "L" ? "LEFT ◀" : "RIGHT ▶"}`}</b> · {at}/{steps}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {plan.labels.map((lb, i) => (
+            <button key={i} onClick={() => press(i)} style={{ width: 54, height: 44, borderRadius: 8, border: "none", fontWeight: 800, background: "#4a4d58", color: "#fff" }}>{lb}</button>
+          ))}
+        </div>
+        {routing && (
+          <div style={{ display: "flex", gap: 34, alignItems: "center", opacity: phase === "route" ? 1 : 0.35 }}>
+            <button onClick={() => route("L")} style={{ width: 26, height: 26, borderRadius: "50%", border: "none", background: "#181818" }} />
+            <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#c94a4a" }} />
+            <button onClick={() => route("R")} style={{ width: 26, height: 26, borderRadius: "50%", border: "none", background: "#181818" }} />
+          </div>
+        )}
+      </div>
+    );
+  };
+  /* MECHANIC MINIGAME 3 — the drink machine: a toggle switch + a knob. Spin the knob a full
+     turn and it only COUNTS if the switch is set right — and each counted spin re-rolls
+     which way the switch must sit. Ten of those. Overcomplicated Simon says, as ordered. */
+  const KnobGame = ({ spins, onDone }) => {
+    const [count, setCount] = useState(0);
+    const [need, setNeed] = useState(Math.random() < 0.5 ? "up" : "down");
+    const [sw, setSw] = useState("up");
+    const accRef = useRef(0); const lastRef = useRef(null); const knobRef = useRef(null);
+    const [ang, setAng] = useState(0);
+    const onMove = (e) => {
+      if (lastRef.current == null || !knobRef.current) return;
+      const r = knobRef.current.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const a = Math.atan2(e.clientY - cy, e.clientX - cx);
+      let d = a - lastRef.current;
+      if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
+      accRef.current += d; lastRef.current = a; setAng(g => g + d * 57.3);
+      if (Math.abs(accRef.current) >= 2 * Math.PI) {
+        accRef.current = 0;
+        if (sw === need) { sfx.pop(); const n = count + 1; setCount(n); setNeed(Math.random() < 0.5 ? "up" : "down"); if (n >= spins) onDone(); }
+        else sfx.alert();   // a wasted turn — the switch was wrong
+      }
+    };
+    return (
+      <div style={{ ...S.chatBody, gap: 12, alignItems: "center" }}>
+        <div style={{ fontSize: 12, opacity: 0.75 }}>Switch <b>{need.toUpperCase()}</b>, then a full turn of the knob. {count}/{spins}</div>
+        <div style={{ display: "flex", gap: 30, alignItems: "center" }}>
+          <button onClick={() => setSw(s => s === "up" ? "down" : "up")}
+            style={{ width: 44, height: 76, borderRadius: 10, border: "2px solid #666", background: "#2a2d36", color: "#fff", display: "flex", alignItems: sw === "up" ? "flex-start" : "flex-end", justifyContent: "center", padding: 5 }}>
+            <div style={{ width: 26, height: 26, borderRadius: 6, background: sw === need ? "#4a9a5a" : "#c9a84a" }} />
+          </button>
+          <div ref={knobRef}
+            onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); const r = e.currentTarget.getBoundingClientRect(); lastRef.current = Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)); }}
+            onPointerMove={onMove}
+            onPointerUp={() => { lastRef.current = null; }}
+            style={{ width: 96, height: 96, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #6a6d78, #3a3d46)", border: "3px solid #222",
+              display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none", cursor: "grab", transform: `rotate(${ang}deg)` }}>
+            <div style={{ width: 8, height: 30, borderRadius: 4, background: "#c9a84a", marginBottom: 50 }} />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* the crafting clamp meter: fills while ALL clamps are held; releasing resets it */
+  const HoldMeter = ({ holdT, ms, onDone }) => {
+    const [p, setP] = useState(0);
+    useEffect(() => {
+      if (!holdT) { setP(0); return; }
+      let raf;
+      const tick = () => {
+        const f = Math.min(1, (performance.now() - holdT) / ms);
+        setP(f);
+        if (f >= 1) onDone(); else raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }, [holdT]);
+    return (
+      <div style={{ height: 10, borderRadius: 5, background: "#2a2d36", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${p * 100}%`, background: p >= 1 ? "#4a9a5a" : "#c9a84a", transition: "width 0.05s linear" }} />
+      </div>
+    );
+  };
+
+  /* ===== the camera's pointer inputs: wheel to zoom, pinch to zoom ===== */
+  useEffect(() => {
+    const cv = canvasRef.current; if (!cv) return;
+    const onWheel = (e) => {
+      if (modalRef.current || !simRef.current?.player.scene.startsWith("t:")) return;
+      e.preventDefault();
+      nudgeZoom(e.deltaY < 0 ? CFG.ZOOM.step : -CFG.ZOOM.step);
+    };
+    let pinch0 = null, z0 = 1;
+    const gap = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onStart = (e) => { if (e.touches.length === 2) { pinch0 = gap(e.touches); z0 = zoomRef.current; } };
+    const onMove = (e) => {
+      if (e.touches.length !== 2 || !pinch0) return;
+      if (modalRef.current || !simRef.current?.player.scene.startsWith("t:")) return;
+      e.preventDefault();
+      setZoom(z0 * (gap(e.touches) / pinch0));
+    };
+    const onEnd = () => { pinch0 = null; };
+    cv.addEventListener("wheel", onWheel, { passive: false });
+    cv.addEventListener("touchstart", onStart, { passive: true });
+    cv.addEventListener("touchmove", onMove, { passive: false });
+    cv.addEventListener("touchend", onEnd);
+    return () => {
+      cv.removeEventListener("wheel", onWheel); cv.removeEventListener("touchstart", onStart);
+      cv.removeEventListener("touchmove", onMove); cv.removeEventListener("touchend", onEnd);
+    };
+  }, []);
+
+  /* ===== trade offers ===== */
+  const tradeValue = (t) => (t.coins || 0) + (t.item ? (ITEMS[t.item]?.price || 1) * (t.qty || 1) : 0);
+  const canFulfillTrade = (ent, t) => (t.coins || 0) <= ent.coins && (!t.item || (ent.inv[t.item] || 0) >= (t.qty || 1));
+  const tradeSummary = (give, ask) => {
+    const s = (t) => [t.coins ? `${t.coins}c` : "", t.item ? `${t.qty}× ${ITEMS[t.item]?.name || t.item}` : ""].filter(Boolean).join("+") || "nothing";
+    return `${s(give)} for ${s(ask)}`;
+  };
+  // both parties can be an NPC or the player. The NOTE lands in memory on BOTH sides — the
+  // acceptor remembers what they agreed to; the offerer remembers what they asked for.
+  const executeTrade = (sim, giver, taker, give, ask, note) => {
+    const xfer = (from, to, t) => {
+      if (t.coins) { from.coins -= t.coins; to.coins = Math.min(9999, to.coins + t.coins); }
+      if (t.item && t.qty) { from.inv[t.item] = (from.inv[t.item] || 0) - t.qty; if (from.inv[t.item] <= 0) delete from.inv[t.item]; to.inv[t.item] = (to.inv[t.item] || 0) + t.qty; }
+    };
+    xfer(giver, taker, give); xfer(taker, giver, ask);
+    const gName = giver.id ? giver.name : "the player", tName = taker.id ? taker.name : "the player";
+    const sum = tradeSummary(give, ask);
+    if (giver.id) giver.memories = [...giver.memories, `Traded with ${tName}: ${sum}${note ? ` (I asked: "${note}")` : ""}`].slice(-CFG.MAX_MEMORIES);
+    if (taker.id) taker.memories = [...taker.memories, `Traded with ${gName}: ${sum}${note ? ` — and agreed: "${note}"` : ""}`].slice(-CFG.MAX_MEMORIES);
+    sim.dayLog.push(`${gName} and ${tName} made a trade`);
+  };
+  // local fallback: fair value, softened for friends; never accept what you can't pay
+  const localTradeDecide = (decider, offerer, t) => {
+    if (!canFulfillTrade(decider, t.ask)) return false;
+    const rel = REL_ORDER.indexOf(decider.relationships?.[offerer.id || "player"] || "neutral");
+    const softness = rel >= REL_ORDER.indexOf("friend") ? 0.6 : 0.85;
+    return tradeValue(t.give) >= tradeValue(t.ask) * softness;
+  };
+  // NPC↔NPC offers queue here; one considered decision at a time, riding the shared latch
+  const processTrades = (sim) => {
+    if (!sim.tradeQueue?.length || apiBusyRef.current) return;
+    const t = sim.tradeQueue.shift();
+    const from = sim.npcs.find(n => n.id === t.fromId && n.alive), to = sim.npcs.find(n => n.id === t.toId && n.alive);
+    if (!from || !to) return;
+    const finish = (accept, say) => {
+      if (accept && canFulfillTrade(from, t.give) && canFulfillTrade(to, t.ask)) { executeTrade(sim, from, to, t.give, t.ask, t.note); sfx.coin(); }
+      to.bubble = { text: say || (accept ? "Deal." : "Pass."), until: performance.now() / 1000 + 3.5 };
+    };
+    apiBusyRef.current = true;
+    tradeConsider(to, from.name, to.relationships[from.id] || "neutral", t)
+      .then(out => out ? finish(out.accept, out.say) : finish(localTradeDecide(to, from, t), null))
+      .catch(() => finish(localTradeDecide(to, from, t), null))
+      .finally(() => { apiBusyRef.current = false; });
+  };
   const repEvent = (sim, ent, dFame, dRenown, note) => {
     ent.fame = clamp(ent.fame + dFame, -100, 100);
     ent.renown = clamp(ent.renown + dRenown, 0, 100);
@@ -2264,6 +2816,29 @@ export default function Alderbrook() {
         if (asleep) sleptMin += Math.min(30, toAbs - t);
       }
       if (!sleptMin) continue;
+      /* NOBODY SLEEPS THROUGH STARVATION. This fast-forward skips the needs AI for the whole
+         night, so a sleeper who crosses the critical line would drain to zero and die in
+         their sleep — with food in their pack (Dora, Mara, Ash all died exactly this way).
+         If they're critical and CAN self-feed, they wake, eat, and go back down. */
+      if (npc.hunger < CFG.STARVE.criticalNeed || npc.thirst < CFG.STARVE.criticalNeed) {
+        const food = Object.keys(npc.inv || {}).find(i => ITEMS[i]?.eat?.hunger && npc.inv[i] > 0);
+        const drink = Object.keys(npc.inv || {}).find(i => ITEMS[i]?.eat?.thirst && npc.inv[i] > 0);
+        if (npc.hunger < CFG.STARVE.criticalNeed && food) {
+          npc.hunger = clamp(npc.hunger + ITEMS[food].eat.hunger, 0, 100);
+          npc.inv[food]--; if (npc.inv[food] <= 0) delete npc.inv[food];
+        }
+        if (npc.thirst < CFG.STARVE.criticalNeed && drink) {
+          npc.thirst = clamp(npc.thirst + (ITEMS[drink].eat.thirst || 0), 0, 100);
+          npc.inv[drink]--; if (npc.inv[drink] <= 0) delete npc.inv[drink];
+        }
+        /* Nothing to consume: they can't sleep it off. Skip the fast-forward entirely so the
+           live needs AI (which preempts everything below criticalNeed) runs at dawn with
+           their night intact — awake, hungry, and hunting. A rough night, not a grave. */
+        if ((npc.hunger < CFG.STARVE.criticalNeed && !food) || (npc.thirst < CFG.STARVE.criticalNeed && !drink)) {
+          npc.activity = "up in the night, hungry";
+          continue;
+        }
+      }
       const hrs = sleptMin / 60, rough = !npc.home || npc.evicted;
       npc.energy = clamp(npc.energy + (rough ? 60 : 120) * hrs, 0, 100);
       npc.hygiene = clamp(npc.hygiene + (rough ? -20 : 30) * hrs, 0, 100);
@@ -2491,13 +3066,35 @@ export default function Alderbrook() {
   /* shelves are finite: every sale, theft, and meal comes out of these */
   const stockOf = (sim, bId, itemId) => sim.stock[bId]?.[itemId] ?? 0;
   const addStock = (sim, bId, itemId, n) => { if (sim.stock[bId]) sim.stock[bId][itemId] = Math.min(30, stockOf(sim, bId, itemId) + n); };
+  /* v7 Stage 5c: every appliance USE rolls against wear. One pipe: increments the counter,
+     rolls 2% + 1%/prior-use, and flips `broken`. Broken appliances refuse service until a
+     mechanic (player with part + minigame, or an NPC at dawn) puts them right. */
+  const applianceKey = (bId, st) => `${bId}:${st}`;
+  const applianceRec = (sim, bId, st) => (sim.appliances = sim.appliances || {})[applianceKey(bId, st)] ||= { uses: 0, broken: false };
+  const applianceBroken = (sim, bId, st) => !!sim.appliances?.[applianceKey(bId, st)]?.broken;
+  const useAppliance = (sim, bId, st) => {
+    const rec = applianceRec(sim, bId, st);
+    if (rec.broken) return false;
+    rec.uses++;
+    if (Math.random() < CFG.REPAIR.baseChance + CFG.REPAIR.perUse * (rec.uses - 1)) {
+      rec.broken = true;
+      sim.dayLog.push(`the ${st} at ${bld(bId)?.name || bId} broke down`);
+      if (townOfScene(worldRef.current, sim.player.scene) === bld(bId)?.town) { sfx.alert(); showToast(`🔧 The ${st === "wash" ? "bathroom" : st === "drinks" ? "drink machine" : "oven"} at ${bld(bId).name} just BROKE.`); }
+      return false;   // this use fails — it died mid-job
+    }
+    return true;
+  };
   const takeStock = (sim, bId, itemId, n = 1) => {
     if (stockOf(sim, bId, itemId) < n) return false;
     sim.stock[bId][itemId] -= n; return true;
   };
   /* wanted stars only ever escalate; convictions carry a fame cost */
   const convictStars = (sim, ent, stars, reason) => {
-    ent.wanted = Math.max(ent.wanted, stars);
+    if (sim.crime) sim.crime.starsGiven = (sim.crime.starsGiven || 0) + 1;   // crime ledger
+    // RECIDIVISM: a repeat offense at or below your current level ESCALATES it one star —
+    // career criminals climb the ladder (1★ shoplifter → 2★ warrant → the chase begins)
+    if (stars <= ent.wanted && ent.wanted < 5) ent.wanted++;
+    else ent.wanted = Math.max(ent.wanted, stars);
     repEvent(sim, ent, -stars * 2, stars, reason);
   };
   /* Stage 3.9: record who convicted whom, of what, and whether they were ACTUALLY
@@ -2747,6 +3344,17 @@ export default function Alderbrook() {
     ent.dying = null;
     hospitalize(sim, world, ent);
     ent.health = 5;                                       // barely
+    if (ent.id && (ent.wanted || 0) >= 5) {               // patched up enough — and sent straight down for life
+      const cTown = townOfScene(world, ent.scene) || "stonecross";
+      const cell = assignCell(sim, world, cTown, true);
+      if (cell) {
+        ent.bedrest = false; ent.incap = null;
+        ent.jailedUntil = Infinity; ent.scene = `i:${cell.bId}`; ent.x = cell.spot.x; ent.y = cell.spot.y;
+        ent.legs = []; ent.path = []; ent.goal = null; ent.activity = "serving a life sentence";
+        sim.dayLog.push(`${ent.name} was patched up at the hospital and sent straight to the cells — for life`);
+        seedGossip(sim, sim.npcs.filter(o => o.alive && o.town === cTown).slice(0, 5), { text: `${ent.name} got life — stitched up and sent down the same day`, subjectId: ent.id, bad: true });
+      }
+    }
     if (byId) {                                           // victim SURVIVED an attack → attempted murder
       const attacker = byId === "player" ? sim.player : sim.npcs.find(n => n.id === byId);
       if (attacker) {
@@ -2791,8 +3399,13 @@ export default function Alderbrook() {
     if (ent.id) {
       const hadWitness = [sim.player, ...sim.npcs].some(o => o !== ent && (o.id ? o.alive && !o.incap && !o.dying && !o.hidden : true) && o.scene === ent.scene);
       ent.alive = false; ent.incap = null; ent.dying = null; ent.hidden = true;
-      sim.bodies.push({ name: ent.name, npcId: ent.id, scene: ent.scene, x: ent.x, y: ent.y, day: sim.day, cause, killerId, discovered: false });
-      { const dt8 = townOfScene(worldRef.current, ent.scene); if (sim.approval?.[dt8] != null) sim.approval[dt8] = clamp(sim.approval[dt8] - CFG.APPROVAL.deathHit, 0, 100); }   // Stage 8: a death shakes the town
+      sim.bodies.push({ name: ent.name, npcId: ent.id, scene: ent.scene, x: ent.x, y: ent.y, day: sim.day, cause, killerId, discovered: false,
+        victimStars: ent.wanted || 0 });   // the DIRTY VIGILANTE test: what the victim was wanted for, at the moment they died
+      { // Stage 8: a death shakes the town — but a five-star outlaw's death barely dents it (relief cuts the grief)
+        const dt8 = townOfScene(worldRef.current, ent.scene);
+        const hit = (ent.wanted || 0) >= 5 ? 1 : CFG.APPROVAL.deathHit;
+        if (sim.approval?.[dt8] != null) sim.approval[dt8] = clamp(sim.approval[dt8] - hit, 0, 100);
+      }
       if (hadWitness || !killerId) discoverBody(sim, sim.bodies[sim.bodies.length - 1], null);   // seen or natural: known immediately
     } else {
       /* player death — difficulty decides how much it means */
@@ -2821,9 +3434,11 @@ export default function Alderbrook() {
     sim.buzz = { text: `${body.name}... is gone. ${body.cause}.`, day: sim.day };
     sim.dayLog = [...sim.dayLog, `${body.name}'s body was found (${body.cause})`].slice(-12);
     const town = townOfScene(worldRef.current, body.scene);
+    const wasWanted = (body.victimStars || 0) >= 5;
     for (const n of sim.npcs.filter(n => n.alive && n.town === town)) {
-      n.memories = [...n.memories, `We lost ${body.name}. ${body.cause}`].slice(-CFG.MAX_MEMORIES);
-      seedGossip(sim, [n], { text: `${body.name} died — ${body.cause}`, subjectId: null, bad: false });
+      // a dead outlaw isn't mourned the same way — the town is relieved, and unsettled
+      n.memories = [...n.memories, wasWanted ? `${body.name} the outlaw is dead. Someone took the law into their hands.` : `We lost ${body.name}. ${body.cause}`].slice(-CFG.MAX_MEMORIES);
+      seedGossip(sim, [n], { text: wasWanted ? `${body.name} the outlaw was put down — not arrested, PUT DOWN` : `${body.name} died — ${body.cause}`, subjectId: null, bad: false });
     }
     if (body.killerId) {
       const killer = body.killerId === "player" ? sim.player : sim.npcs.find(n => n.id === body.killerId);
@@ -2836,12 +3451,24 @@ export default function Alderbrook() {
       const armed = killer && bestWeapon(killer) && ITEMS[bestWeapon(killer)]?.lethal;
       const strongEvidence = atScene && armed;
       const openAndShut = witnessed || strongEvidence;
-      openCase(sim, "murder", { victim: body.name, scene: body.scene, x: body.x, y: body.y,
+      /* DIRTY VIGILANTE: the victim was a five-star outlaw. The town wanted them caught, not
+         executed — and you had the choice to carry them in. It's a lesser charge (4★, no life
+         sentence) but it IS a charge, and the town's opinion splits: rid of a menace, afraid
+         of you. The dilemma is the point. */
+      const vigilante = (body.victimStars || 0) >= 5;
+      openCase(sim, vigilante ? "vigilante" : "murder", { victim: body.name, scene: body.scene, x: body.x, y: body.y,
         killerId: body.killerId, suspectId: openAndShut ? body.killerId : null, state: openAndShut ? "solved" : "open",
         evidence: strongEvidence ? 3 : 0 });               // caught red-handed = max evidence on the record
       if (openAndShut && killer) {
-        const why = witnessed ? "was seen committing" : "was caught, weapon in hand, at the scene of";
-        convictStars(sim, killer, 5, `${body.killerId === "player" ? "the player" : killer.name} ${why} the murder of ${body.name}`);
+        const who = body.killerId === "player" ? "the player" : killer.name;
+        if (vigilante) {
+          convictStars(sim, killer, 4, `${who} left ${body.name}, a five-star outlaw, to die instead of hauling them in`);
+          repEvent(sim, killer, 4, 6, `${who} put down ${body.name} the hard way`);   // infamy AND standing: feared, not respected
+          if (body.killerId === "player") showToast("🩸 Dirty Vigilante. The town is safer. The town is also afraid of you.");
+        } else {
+          const why = witnessed ? "was seen committing" : "was caught, weapon in hand, at the scene of";
+          convictStars(sim, killer, 5, `${who} ${why} the murder of ${body.name}`);
+        }
         const hunter = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
         if (hunter) hunter.dispatch = { targetId: body.killerId };   // the pursuit starts NOW
       }
@@ -3074,7 +3701,10 @@ export default function Alderbrook() {
     winner.health = Math.max(1, hpA > 0 ? hpA : hpB); loser.health = 0;
     winner.bubble = { text: "*breathing hard* ...stay down.", until: now + 4 };
     const lethal = ITEMS[bestWeapon(winner) || ""]?.lethal;          // a knife doesn't stop at "down"
-    if (lethal) setDying(sim, loser, winner.id); else incapacitate(sim, loser);
+    // …but a burglar caught by a CIVILIAN mostly grabs and RUNS — the panic-stab is the
+    // exception (40%), not the rule. Criminals and the Watch get no such mercy.
+    const civilianLoser = !loser.outlaw && !loser.enforcer;
+    if (lethal && (!civilianLoser || Math.random() < 0.4)) setDying(sim, loser, winner.id); else incapacitate(sim, loser);
     if (winner === a) {
       transferCoins(sim, loser, winner, Math.floor(loser.coins * CFG.ROBBERY.take));
       convictStars(sim, winner, lethal ? 4 : 3, `${winner.name} ${lethal ? "gravely wounded" : "beat down"} ${loser.name}`);
@@ -3137,8 +3767,11 @@ export default function Alderbrook() {
           log.push(lethal ? `You land the finish (${pd}). ${foe.name} collapses — that blade cut DEEP.` : `You land the finish (${pd}). ${foe.name} goes down.`);
           if (lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);   // knives don't stop at down
           if (c.aggressor === "player") {
-            transferCoins(sim, foe, p, Math.floor(foe.coins * CFG.ROBBERY.take));
-            convictStars(sim, p, lethal ? 4 : 3, `the player ${lethal ? "gravely wounded" : "beat down"} ${foe.name}`);
+            if ((foe.wanted || 0) >= 5) repEvent(sim, p, 8, 6, `the player brought down ${foe.name}, the five-star outlaw`);   // a public service, not a crime
+            else {
+              transferCoins(sim, foe, p, Math.floor(foe.coins * CFG.ROBBERY.take));
+              convictStars(sim, p, lethal ? 4 : 3, `the player ${lethal ? "gravely wounded" : "beat down"} ${foe.name}`);
+            }
           } else repEvent(sim, p, 3, 2, `the player fought off ${foe.name}`);
           const enforcer = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
           if (enforcer && p.wanted > 0) enforcer.dispatch = { targetId: "player" };
@@ -3225,6 +3858,31 @@ export default function Alderbrook() {
       if (absTime >= npc.jailedUntil) { npc.jailedUntil = null; npc.goal = null; }
       else return;                                       // lifers never leave this branch
     }
+    if (npc.repairJob) {   // v7: mechanic work is a real errand — walk, kneel, fix, collect
+      const rj = npc.repairJob, stn = world.interiors[rj.bId]?.stations?.[rj.st];
+      const rec9 = sim.appliances?.[`${rj.bId}:${rj.st}`];
+      if (!stn || !rec9?.broken) { npc.repairJob = null; npc.goal = null; }   // fixed by someone else (or gone)
+      else if (npc.scene !== `i:${rj.bId}` || dist(npc, stn) > 1.4) {
+        npc.goal = { scene: `i:${rj.bId}`, x: stn.x, y: stn.y };
+        npc.activity = `heading to a repair job at ${bld(rj.bId).name}`;
+        return;
+      } else {
+        if (!rj.startedAt) rj.startedAt = absTime;
+        npc.activity = `fixing the ${rj.st === "wash" ? "bathroom" : rj.st === "drinks" ? "drink machine" : "oven"} at ${bld(rj.bId).name}`;
+        if (Math.random() < 0.05) npc.bubble = { text: rand(["*clank*", "Hold still, you.", "There's your problem.", "*tightens something*"]), until: now + 3 };
+        if (absTime - rj.startedAt >= CFG.REPAIR.npcMin) {   // the job is DONE — paid on the spot
+          const owner9 = sim.npcs.find(n => n.id === rj.ownerId && n.alive);
+          if (owner9) transferCoins(sim, owner9, npc, Math.min(rj.fee, owner9.coins));
+          npc.energy = clamp(npc.energy - CFG.REPAIR.npcEnergy, 0, 100);
+          npc.skills.mechanic = (npc.skills.mechanic || 0) + taskXp("mechanic", 0);
+          rec9.broken = false; rec9.uses = 0; delete rec9.waited; delete rec9.partReady; delete rec9.assigned;
+          sim.dayLog.push(`${npc.name} spent two hours fixing the ${rj.st} at ${bld(rj.bId).name} (+${rj.fee}c)`);
+          npc.bubble = { text: "Good as new. Mind the wet floor.", until: now + 4 };
+          npc.repairJob = null; npc.goal = null;
+        }
+        return;
+      }
+    }
     if (npc.bedrest) {
       if (npc.health >= CFG.HOSPITAL.dischargeHp) {
         npc.bedrest = false; npc.goal = null;
@@ -3264,7 +3922,7 @@ export default function Alderbrook() {
       : (hour >= npc.schedule[0] && hour < npc.schedule[1]));
     const asleepHours = overnight ? (hour >= 8 && hour < 16) : (hour >= 22 || hour < 6);
     const homeDoor = npc.home ? bld(npc.home).door : null;   // Stage 3: the homeless have no door
-    const eatery = hereTown === "alderbrook" ? "cafe" : hereTown === "mossford" ? "diner" : "inn";
+    const eatery = TOWN_EATERY[hereTown] || "cafe";   // every town feeds its own
     const cross = !!(npc.enforcer) || !!npc.visitPlan;   // Watch vehicles ride free; visitors pay fares in moveNPC
 
     let goal, activity, hide = false;
@@ -3336,7 +3994,9 @@ export default function Alderbrook() {
       goal = { scene: `i:${cl}`, x: st.x, y: st.y }; activity = "heading to the clinic before it worsens";
     } else if (npc.hygiene < CFG.HYGIENE.npcWashAt) {
       const w = TOWN_WASH[hereTown], st = world.interiors[w.bId].stations[w.st];
-      goal = { scene: `i:${w.bId}`, x: st.x, y: st.y }; activity = "washing up";
+      if (applianceBroken(sim, w.bId, w.st)) {   // broken bathroom: the wash is SKIPPED — hygiene grumbles, nobody dies of it
+        npc.bubble = { text: "Bathroom's BROKEN again…", until: now + 4 };
+      } else { goal = { scene: `i:${w.bId}`, x: st.x, y: st.y }; activity = "washing up"; }
     } else if (npc.thirst < 30) {
       goal = { scene: `t:${hereTown}`, x: town.drink.x, y: town.drink.y }; activity = `getting a drink at the ${town.drink.label}`;
     } else if (npc.hunger < CFG.SELFCARE.hungerBuyThreshold) {
@@ -3704,6 +4364,7 @@ export default function Alderbrook() {
           const dish = rand(npc.cooks);
           if (stockOf(sim, bId, dish) < CFG.STOCK.maxMeal) {
             const batch = CFG.STOCK.cookBatch + (hasUpgrade(sim, bId, "oven") ? Math.ceil(CFG.STOCK.cookBatch * 0.5) : 0);   // Stage 5: quality oven plates faster
+            if (!useAppliance(sim, bId, "stove")) { npc.bubble = { text: "The oven just DIED.", until: performance.now() / 1000 + 4 }; return; }
             addStock(sim, bId, dish, batch);
             npc.lastCook = now - (hasUpgrade(sim, bId, "oven") ? 3600 / CFG.MINUTES_PER_SEC / 60 : 0);   // oven shortens the next cooldown
             npc.bubble = { text: `*plates a fresh batch of ${ITEMS[dish].name.toLowerCase()}*`, until: now + 3 };
@@ -3871,7 +4532,16 @@ export default function Alderbrook() {
     else {
       const target = st.target === "player" ? sim.player : sim.npcs.find(n => n.id === st.target && n.alive);
       if (!target || target.scene !== npc.scene || dist(npc, target) > 1.8) return;
-      if (st.type === "gift_coins") receiveGift(sim, npc, target, { coins: clamp(st.amount || 2, 1, 15) });
+      if (st.type === "trade") {   // a walked-up trade offer: to the player it's a panel; NPC→NPC queues a considered decision
+        const give = { coins: clamp(st.amount || 0, 0, CFG.TRADE.maxCoins), item: st.item && ITEMS[st.item] ? st.item : null, qty: st.item && ITEMS[st.item] ? 1 : 0 };
+        const ask = { coins: clamp(st.askAmount || 0, 0, CFG.TRADE.maxCoins), item: st.askItem && ITEMS[st.askItem] ? st.askItem : null, qty: st.askItem && ITEMS[st.askItem] ? 1 : 0 };
+        const note = (st.say || "").slice(0, CFG.TRADE.noteMax);
+        if ((give.coins || give.item || ask.coins || ask.item) && canFulfillTrade(npc, give)) {
+          if (!target.id) { setTradeOffer({ fromId: npc.id, give, ask, note }); sfx.pop(); showToast(`🤝 ${npc.name} has an offer for you.`); }
+          else sim.tradeQueue.push({ fromId: npc.id, toId: target.id, give, ask, note });
+        }
+      }
+      else if (st.type === "gift_coins") receiveGift(sim, npc, target, { coins: clamp(st.amount || 2, 1, 15) });
       else if (st.type === "gift_item" && npc.inv[st.item] > 0) receiveGift(sim, npc, target, { itemId: st.item });
       else if (st.type === "visit" && target.id) {
         sim.dialogues.push({ aId: npc.id, bId: target.id, lines: [`${npc.name}: ${d.say}`, `${target.name}: ${rand(["Ha! Good one.", "Is that so?", "You came all this way to say that?"])}`], idx: 0, nextAt: now });
@@ -3913,15 +4583,26 @@ export default function Alderbrook() {
     if (!npc.thief || npc.crimePlan || npc.directive || npc.wanted >= CFG.WANTED.arrestAt) return;
     if (npc.layLowUntil) return;                          // Stage 3.5: lying low means LOW
     const hour = (sim.time / 60) % 24;
+    const onSpree = npc.spreeUntil && sim.day <= npc.spreeUntil;
     if (npc.outlaw) {                                     // Stage 3.5: Sable works a PROFESSIONAL cadence — any hour, night preferred
-      if (npc.coins >= CFG.OUTLAW.heistCoinCap || Math.random() > CFG.OUTLAW.heistChance * ((hour >= 21 || hour < 5) ? 2 : 1)) return;
+      sim.crime.ticks++;
+      if (npc.coins >= CFG.OUTLAW.heistCoinCap && !onSpree) { sim.crime.blockedCap++; return; }
+      const chance = CFG.OUTLAW.heistChance * ((hour >= 21 || hour < 5) ? 2 : 1)
+        * (onSpree ? CFG.OUTLAW.spreeBoost : 1) * (npc.coins < 5 ? 1.5 : 1);   // rampage + desperation
+      if (Math.random() > chance) { sim.crime.blockedRoll++; return; }
     } else if (npc.coins >= 12 || hour < 16 || hour > 21 || Math.random() > 0.004) return;
-    if (sim.npcs.some(e => e.alive && e.enforcer && townOfScene(world, e.scene) === npc.town)) return;   // the Watch CAR is parked in town — not tonight
-    const shops = BUILDINGS.filter(b => b.town === npc.town && SHOP_STOCK[b.id]);
+    if (!onSpree && Math.random() < CFG.OUTLAW.watchDeter &&
+        sim.npcs.some(e => e.alive && e.enforcer && townOfScene(world, e.scene) === npc.town)) { sim.crime.blockedWatch++; return; }
+    sim.crime.attempts++;
+    // v7 Stage 4: OUTLANDS raiders don't foul their own nest — you don't rob your fence or
+    // your cook. They pick a TOWN to raid and retreat past the tree line after. Danger
+    // radiates OUT of the frontier; the camp's keepers stay in business.
+    const crimeTown = npc.town === "outlands" ? rand(["alderbrook", "mossford", "stonecross", "ferndale"]) : npc.town;
+    const shops = BUILDINGS.filter(b => b.town === crimeTown && SHOP_STOCK[b.id]);
     const target = shops.find(b => { const k = keeperOf(sim, b.id); return !k || k.scene !== `i:${b.id}`; });
     /* Stage 4: weigh a HOME BURGLARY against the shop grab. A rich mark with an empty home is
        tempting — the wealthier the target, the likelier a burglar picks the house over the till. */
-    const marks = sim.npcs.filter(m => m.alive && m.home && m.id !== npc.id && bld(m.home).town === npc.town
+    const marks = sim.npcs.filter(m => m.alive && m.home && m.id !== npc.id && bld(m.home).town === crimeTown
       && (m.stored > 8 || m.coins > 12)
       && m.scene !== `i:${m.home}`);   // resident is out of the house
     // Stage 7: wealth-WEIGHTED pick — richer marks likelier, but not deterministically the same victim
@@ -4045,6 +4726,7 @@ export default function Alderbrook() {
         if (nd2.do === "goto" && town.spots[nd2.spot]) steps.push({ type: "goto", spot: nd2.spot });
         else if (nd2.do === "buy" && ITEMS[nd2.item] && findShop(nd2.item, townId)) steps.push({ type: "buy", item: nd2.item });
         else if (nd2.do === "gift_coins" && nd2.target) steps.push({ type: "gift_coins", target: nd2.target, amount: nd2.amount });
+        else if (nd2.do === "trade" && nd2.target) steps.push({ type: "trade", target: nd2.target, item: nd2.item, amount: nd2.amount, askItem: nd2.askItem, askAmount: nd2.askAmount, say: nd2.say });
         else if (nd2.do === "gift_item" && ITEMS[nd2.item] && nd2.target) {
           if (!(npc.inv[nd2.item] > 0) && findShop(nd2.item, townId)) steps.push({ type: "buy", item: nd2.item });
           steps.push({ type: "gift_item", target: nd2.target, item: nd2.item });
@@ -4161,6 +4843,7 @@ export default function Alderbrook() {
     // the premium menu; this is the safety floor for the base meal only).
     for (const [bId, meal] of Object.entries(EATERY_MEAL)) {
       if (stockOf(sim, bId, meal) <= 2 && !sim.npcs.some(n => n.alive && n.work?.bId === bId && n.activity?.includes("plating")))
+        if (!useAppliance(sim, bId, "stove")) return;
         addStock(sim, bId, meal, 6);
     }
     // Stage 3.7: visit every shop that has a menu OR recent demand — a brand-new shop with zero
@@ -4251,6 +4934,11 @@ export default function Alderbrook() {
       for (const [bId, kind] of Object.entries(CFG.BILLS.kindOf)) {
         const ownerId = OWNERS[bId]; if (!ownerId) continue;               // civic buildings are the treasury's problem
         const owner = sim.npcs.find(n => n.id === ownerId && n.alive); if (!owner) continue;
+        /* NO HALL, NO BILLS. sim.approval is the civic registry; the Outlands (and the hills)
+           are absent from it by design — no council, no treasury, no services. Billing them
+           weekly charged Mara into -1519 coins by day 14 (a void with no hall to receive it).
+           Lawless means lawless in BOTH directions. */
+        if (sim.approval?.[bld(bId).town] == null) continue;
         const due = CFG.BILLS.kind[kind] + furnitureUpkeep(bId);           // Stage 4: furniture upkeep surcharges the bill
         fineCoins(owner, due); payTreasury(sim, bld(bId).town, due);
         if (owner.coins < 0) sim.dayLog.push(`${owner.name} is underwater on the ${bld(bId).name} bills`);
@@ -4263,6 +4951,7 @@ export default function Alderbrook() {
       const taxed = new Set();
       for (const bId of Object.keys(OWNERS)) {
         const ownerId = OWNERS[bId]; if (!ownerId || taxed.has(ownerId)) continue;
+        if (sim.approval?.[bld(bId).town] == null) continue;   // no hall, no tax collector (the camp pays nobody)
         const ent = ownerEnt(simRef.current, bId); if (!ent) continue;
         taxed.add(ownerId);
         const gross = ent.grossThisPeriod || 0; if (gross <= 0) continue;
@@ -4272,6 +4961,103 @@ export default function Alderbrook() {
         if (ownerId === "player") showToast(`💸 Business tax: ${due}c on ${gross}c of takings.`);
         else sim.dayLog.push(`${ent.name} paid ${due}c business tax`);
       }
+    }
+    /* THE OUTLANDS TRADE (dawn): four residents selling to each other is not an economy.
+       Probed to day 16: Mara reached -9 coins by day 11 and the keepers slid into debt with
+       full shelves, because no outside money ever entered the camp. Now the route runs both
+       ways — runners come up the trail overnight, buy contraband and hot food, and leave
+       coin. Scaled to what's actually on the shelf, so the camp still has to run its shops. */
+    if (sim.day > 1) {
+      for (const [bId9, kind9] of [["blackmarket_o", "contraband"], ["grill_o", "hot food"]]) {
+        const keeper = ownerEnt(sim, bId9);
+        if (!keeper?.alive || keeper.jailedUntil) continue;
+        const shelf = Object.values(sim.stock?.[bId9] || {}).reduce((s, v) => s + v, 0);
+        if (shelf < 3) continue;                                    // empty shelf earns nothing
+        const take = CFG.OUTLANDS.tradeBase + Math.floor(Math.random() * CFG.OUTLANDS.tradeVar);
+        keeper.coins = Math.min(9999, keeper.coins + take);
+        keeper.grossThisPeriod = (keeper.grossThisPeriod || 0) + take;   // real income; the ledger sees it
+        for (const it of Object.keys(sim.stock[bId9] || {}))             // the runners take goods away
+          if (sim.stock[bId9][it] > 0 && Math.random() < 0.5) sim.stock[bId9][it]--;
+        if (Math.random() < 0.35) sim.dayLog.push(`runners came up the trail overnight — ${keeper.name} moved some ${kind9}`);
+      }
+    }
+    // v7 Stage 5c: MECHANIC WORK — any able NPC takes a broken appliance for good profit.
+    // Hefty time and energy (they're on it for a couple of hours); the part comes from the
+    // workshop's shelf when there is one — otherwise the job waits a day on the order.
+    /* v7: repairs are VISIBLE — dawn only ASSIGNS. The fixer collects the part at the
+       workshop shelf (reserved here as rec.partReady, so a save/load can't double-bill),
+       then WALKS to the appliance and works it for real (the repairJob branch in decideNPC:
+       stand at the station ~100 game-min, "fixing the oven at…", then paid on the spot). */
+    for (const [key, rec] of Object.entries(sim.appliances || {})) {
+      if (!rec.broken || rec.playerJob || rec.assigned) continue;
+      const [bId9] = key.split(":"), st9 = key.split(":")[1];
+      const ownerId = OWNERS[bId9];
+      if (ownerId === "player") continue;                       // your shop, your problem
+      const owner = sim.npcs.find(n => n.id === ownerId && n.alive);
+      const fee = CFG.REPAIR.fee[st9] || 20;
+      if (!owner || owner.coins < fee) continue;                // broke owners live with it
+      const fixer = sim.npcs.find(n => n.alive && !n.jailedUntil && !n.incap && !n.dying && !n.repairJob && n.id !== ownerId && !n.enforcer && n.energy > 40 && n.town === bld(bId9)?.town);
+      if (!fixer) continue;
+      const part = CFG.REPAIR.parts[st9];
+      if (!rec.partReady) {
+        if (stockOf(sim, "workshop_s", part) > 0) {
+          sim.stock.workshop_s[part]--;                         // the workshop sells the part — this is the POINT
+          creditOwner(sim, "workshop_s", ITEMS[part].price);
+          rec.partReady = true;
+        } else if (!rec.waited) { rec.waited = true; sim.dayLog.push(`the ${st9} repair at ${bld(bId9).name} waits on a part from the workshop`); continue; }
+        else continue;
+      }
+      rec.assigned = true;
+      fixer.repairJob = { bId: bId9, st: st9, fee, ownerId, startedAt: null };
+      sim.dayLog.push(`${fixer.name} took the ${st9} repair job at ${bld(bId9).name}`);
+    }
+    // the wright's letters: paid-for notes go out the morning a commission is ready
+    for (const c of (sim.contracts || [])) {
+      if (c.letter && !c.letterSent && sim.day >= c.readyDay) {
+        c.letterSent = true;
+        const r = CFG.CRAFT.recipes[c.recipeId], thing = r?.furn ? FURNITURE[c.recipeId] : ITEMS[c.recipeId];
+        showToast(`📬 A letter from Garrick's Works: your ${thing?.name || c.recipeId} is ready.`);
+        sfx.pop();
+      }
+    }
+    // THE CAT-AND-MOUSE CYCLE (dawn): warrants chase stars, the jailed plot escapes,
+    // and the released either go straight or come out MEANER.
+    for (const n of sim.npcs) {
+      if (!n.alive) { n._wasJailed = false; continue; }
+      // (a) reform-on-release: detect the jailed→free transition wherever release happens
+      if (n._wasJailed && !n.jailedUntil) {
+        n.timesJailed = (n.timesJailed || 0) + 1;
+        if (n.outlaw && Math.random() < CFG.OUTLAW.reformBase + CFG.OUTLAW.reformPer * (n.timesJailed - 1)) {
+          n.outlaw = false; n.wanted = 0;
+          n.memories = [...n.memories, "That cell changed me. Never again."].slice(-CFG.MAX_MEMORIES);
+          sim.dayLog.push(`${n.name} walked out of the cells swearing to go straight`);
+        } else if (n.outlaw) {
+          n.spreeUntil = sim.day + 1;   // bitter, and right back to it
+          n.memories = [...n.memories, "They caged me. They'll pay for that."].slice(-CFG.MAX_MEMORIES);
+          sim.dayLog.push(`${n.name} is back on the street — and doesn't look reformed`);
+        }
+      }
+      // (b) jailbreak: a caged outlaw rolls the dice every dawn
+      if (n.jailedUntil && n.outlaw && Math.random() < CFG.OUTLAW.jailbreakChance) {
+        const cellB = n.scene?.startsWith("i:") ? bld(n.scene.slice(2)) : null;
+        if (cellB?.door) {
+          n.jailedUntil = null; n.wanted = Math.min(5, (n.wanted || 0) + 1);
+          n.spreeUntil = sim.day + CFG.OUTLAW.spreeDays;
+          n.scene = `t:${cellB.town}`; n.x = cellB.door.x; n.y = cellB.door.y;
+          n.legs = []; n.path = []; n.goal = null; n.activity = "on the run";
+          n.bubble = { text: rand(["Can't hold ME.", "Sloppy locks.", "Tell Cole I said hi."]), until: performance.now() / 1000 + 5 };
+          seedGossip(sim, sim.npcs.filter(o => o.alive && o.town === cellB.town).slice(0, 5), { text: `${n.name} BROKE OUT of the ${cellB.name} cells`, subjectId: n.id, bad: true });
+          sim.dayLog.push(`${n.name} broke out of the cells — the Watch is furious`);
+          sim.crime.jailbreaks = (sim.crime.jailbreaks || 0) + 1;
+          if (townOfScene(worldRef.current, sim.player.scene) === cellB.town) { sfx.alert(); showToast(`🚨 ${n.name} has broken out of the cells!`); }
+        }
+      }
+      // (c) warrants: stars ≥ 2 put a hunter on you (the pursuit the ledger was missing)
+      if (!n.jailedUntil && (n.wanted || 0) >= 2) {
+        const hunter = sim.npcs.find(e => e.alive && e.enforcer && !e.dispatch && e.id !== n.id);
+        if (hunter) { hunter.dispatch = { targetId: n.id }; sim.crime.warrants = (sim.crime.warrants || 0) + 1; }
+      }
+      n._wasJailed = !!n.jailedUntil;
     }
     // Pass 4: a seated mayor — on a fresh file (or after a mayor's death) a plausible
     // candidate takes the chair. More citizens = a deeper bench. Odell is A candidate, not THE mayor.
@@ -4315,7 +5101,8 @@ export default function Alderbrook() {
     if (sim.day >= CFG.HEIST.startDay && sim.day % CFG.HEIST.everyDays === 3 && incidentBudget(sim)) {
       const perps = sim.npcs.filter(n => n.alive && !n.jailedUntil && !n.burglaryPlan && !n.enforcer && !n.mayor && !n.minor
         && (n.outlaw || (n.coins < 5 && !n.occupation?.bId)));
-      const marks = sim.npcs.filter(m => m.alive && m.home && (m.stored + m.coins) >= CFG.HEIST.minLoot)
+      const marks = sim.npcs.filter(m => m.alive && m.home && (m.stored + m.coins) >= CFG.HEIST.minLoot
+        && bld(m.home).town !== "outlands")   // nobody plans a job in Cutter's backyard
         .sort((a, b) => (b.stored + b.coins) - (a.stored + a.coins)).slice(0, 4);
       if (perps.length && marks.length) {
         const applyHeist = (perpId, markId, night, say) => {
@@ -4324,8 +5111,10 @@ export default function Alderbrook() {
           perp.burglaryPlan = { homeId: mark.home, markId: mark.id, afterHour: night ? 21 : undefined };
           if (say) perp.bubble = { text: say, until: performance.now() / 1000 + 4 };
         };
-        const localHeist = () => {   // fallback: brokest perp, fattest score — hit a worker's EMPTY daytime house
-          const perp = perps.sort((a, b) => a.coins - b.coins)[0], mark = marks.find(m => m.id !== perp.id);
+        const localHeist = () => {   // fallback: brokest perp, fattest EMPLOYED mark — an empty daytime house
+          // beats a night job on someone asleep at home (that's how residents end up bleeding out)
+          const perp = perps.sort((a, b) => a.coins - b.coins)[0];
+          const mark = marks.find(m => m.id !== perp.id && m.occupation?.bId) || marks.find(m => m.id !== perp.id);
           if (mark) applyHeist(perp.id, mark.id, !mark.occupation?.bId, "*eyes the place from across the street*");
         };
         if (!apiBusyRef.current) {
@@ -4540,8 +5329,16 @@ export default function Alderbrook() {
     for (const n of sim.npcs) {
       n.visitPlan = null;                                 // trips (party invites included) don't outlive the day
       if (!n.alive || n.jailedUntil || n.coins < CFG.VISIT.budget || Math.random() > CFG.VISIT.dailyChance) continue;
+      /* NO BUS, NO TRIP. CFG.FARES has no routes for the Outlands or the hills — an NPC given a
+         visitPlan from there walks out on foot and can't ride home, ending up broke in
+         another town, eating at the inn, sleeping on benches. (Probed to day 16: Mara and
+         Howl both died this way, "eating at Quiet Lantern Inn" two towns from their shops.)
+         Keepers with a business to run don't wander either. */
+      if (!Object.keys(CFG.FARES[n.town] || {}).length) continue;
+      if (n.work?.bId && OWNERS[n.work.bId] === n.id) continue;   // your shop doesn't run itself
       const far = Object.entries(n.relationships).find(([id, st]) =>
-        (st === "friend" || st === "likes") && sim.npcs.some(o => o.id === id && o.alive && o.town !== n.town));
+        (st === "friend" || st === "likes") && sim.npcs.some(o => o.id === id && o.alive && o.town !== n.town
+          && Object.keys(CFG.FARES[o.town] || {}).length));   // and nobody buses OUT to the camp either
       if (far) n.visitPlan = { targetId: far[0], phase: "go" };
     }
     if (sim.day % CFG.ETHICS.everyDays === 0) sim.inspectDue = true;   // the ledger gets its look
@@ -4783,6 +5580,9 @@ export default function Alderbrook() {
 
         /* --- player movement (blocked while bedridden or down) --- */
         const k = keysRef.current;
+        if (sim.player.sitting && (k.up || k.down || k.left || k.right)) {   // standing early: the partial 12-min stretch is forfeit
+          sim.player.sitting = null; showToast("🪑 You stand. Any unfinished stretch doesn't count.");
+        }
         let dx = 0, dy = 0;
         if (!p.bedrest && !p.incap && !p.jailedUntil) {   // Stage 3.5: the dying CRAWL (below); the jailed sit
           dx = (k.right ? 1 : 0) - (k.left ? 1 : 0); dy = (k.down ? 1 : 0) - (k.up ? 1 : 0);
@@ -4845,8 +5645,24 @@ export default function Alderbrook() {
           const elapsed = absTime - state.since;
           // candidate rescuers present in the scene (conscious, not hidden, not the victim)
           const rescuers = [p, ...sim.npcs].filter(o => o !== ent &&
-            (o.id ? o.alive && !o.incap && !o.dying && !o.hidden : !o.incap && !o.dying) && o.scene === ent.scene);
+            (o.id ? o.alive && !o.incap && !o.dying && !o.hidden : !o.incap && !o.dying) &&
+            (o.scene === ent.scene ||
+              // a DRAGGED victim is crying for help at a doorstep — people inside that town's
+              // buildings can hear it (quiet-town streets are empty at midday and midnight)
+              (state.dragged && ent.scene.startsWith("t:") && o.scene.startsWith("i:") && bld(o.scene.slice(2))?.town === ent.scene.slice(2))));
           const found = rescuers.length > 0;
+          // Nobody walks into a private room: after 20 unfound minutes INSIDE, the wounded
+          // drag themselves to the doorstep — where street traffic can actually find them.
+          // (Fixes the repeat pattern of burglary-confrontation losers bleeding out unseen.)
+          if (!found && ent.scene?.startsWith("i:") && absTime - state.since > 12 && !state.dragged) {
+            const db = bld(ent.scene.slice(2));
+            if (db?.door) {
+              ent.scene = `t:${db.town}`; ent.x = db.door.x; ent.y = db.door.y;
+              state.dragged = true;
+              sim.dayLog.push(`${ent.id ? ent.name : "you"} dragged ${ent.id ? "themselves" : "yourself"} into the street, badly hurt`);
+              continue;
+            }
+          }
           const windowMin = isDying ? CFG.DYING_WINDOW_MIN : CFG.RESCUE_WINDOW_MIN;
           if (found && elapsed > (isDying ? 4 : 10)) {
             // pick the most capable rescuer present (doctor > highest service skill)
@@ -4963,6 +5779,23 @@ export default function Alderbrook() {
           npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
           // Stage 3.5: survival damage — same rules as the player, nobody is exempt
           if (npc.jailedUntil) { npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor); npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor); }
+          /* CUSTODY SAFETY NET: anyone inside a Watch building who ISN'T serving a sentence is
+             being held informally (questioning, a stalled pursuit, a cell-full fallback). They
+             can't shop, cook, or reach a pump from in there — so the Watch feeds them, and if
+             they've been sat there over an hour, they're turned loose. Without this they quietly
+             starve in custody (diagnosed: Sable at 0/0 thirst/hunger "getting a drink at the old
+             pump" while standing in i:hq). */
+          if (!npc.jailedUntil && LOCKUP_ORDER.includes(npc.scene?.slice(2))) {
+            npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor);
+            npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor);
+            npc.heldSince = npc.heldSince || (sim.day * 1440 + sim.time);
+            if (sim.day * 1440 + sim.time - npc.heldSince > 60) {
+              const hb = bld(npc.scene.slice(2));
+              npc.scene = `t:${hb.town}`; npc.x = hb.door.x; npc.y = hb.door.y;
+              npc.legs = []; npc.path = []; npc.goal = null; npc.heldSince = null;
+              npc.activity = "walking out of the Watch house";
+            }
+          } else if (npc.heldSince) npc.heldSince = null;
           if (npc.thirst <= 0) { npc.thirstAcc = (npc.thirstAcc || 0) + dt; if (npc.thirstAcc > CFG.STARVE.graceThirstSec) npc.health = clamp(npc.health - CFG.STARVE.thirstDps * dt, 0, 100); } else npc.thirstAcc = 0;
           if (npc.hunger <= 0) { npc.hungerAcc = (npc.hungerAcc || 0) + dt; if (npc.hungerAcc > CFG.STARVE.graceHungerSec) npc.health = clamp(npc.health - CFG.STARVE.hungerDps * dt, 0, 100); } else npc.hungerAcc = 0;
           if (npc.sick?.level === "bad") { npc.sickAcc = (npc.sickAcc || 0) + dt; if (npc.sickAcc >= CFG.STARVE.sickEverySec) { npc.sickAcc = 0; npc.health = clamp(npc.health - sickDmg(npc.health), 0, 100); } }
@@ -5043,6 +5876,54 @@ export default function Alderbrook() {
 
         if (sim.crimeAlert && now > sim.crimeAlert.until) sim.crimeAlert = null;
         rollChatter(sim, world, now);
+        { // the easy chair: energy lands only at each FULL 12-min mark; standing early forfeits the partial
+          const pp = sim.player;
+          if (pp.sitting) {
+            const absNow = sim.day * 1440 + sim.time;
+            const marks = Math.min(CFG.CHAIR.maxMarks, Math.floor((absNow - pp.sitting.sinceAbs) / CFG.CHAIR.markMin));
+            if (marks > pp.sitting.marks) {
+              pp.energy = clamp(pp.energy + CFG.CHAIR.perMark * (marks - pp.sitting.marks), 0, 100);
+              pp.sitting.marks = marks; sfx.pop();
+              showToast(`🪑 +${CFG.CHAIR.perMark} energy (${marks}/${CFG.CHAIR.maxMarks} marks)`);
+            }
+            if (marks >= CFG.CHAIR.maxMarks) { pp.sitting = null; showToast("🪑 An hour well sat. You feel better."); }
+          }
+        }
+        // v7 Stage 1: DRAWN STEEL makes the street react — nerves, and the Watch's patience
+        {
+          const pp = sim.player;
+          if (pp.unsheathed && !modalRef.current && Math.floor(sim.time / 2) !== sim._steelTick) {
+            sim._steelTick = Math.floor(sim.time / 2);   // check every ~2 game-min
+            const nearFolk = sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.scene === pp.scene && !n.hidden && dist(n, pp) < 3.5 && !n.activity.includes("sleep"));
+            const civ = nearFolk.find(n => !n.enforcer && !n.outlaw && Math.random() < 0.25);
+            if (civ && !civ.bubble) civ.bubble = { text: rand(["Is that a—?!", "Easy. EASY, friend.", "Put that away, would you?", "*backs off, hands up*"]), until: performance.now() / 1000 + 4 };
+            const officer = nearFolk.find(n => n.enforcer);
+            if (officer) {
+              const absNow = sim.time + sim.day * 1440;
+              if (!pp._steelWarned) {
+                pp._steelWarned = true; pp.unsheathedAt = absNow;   // the clock starts at the warning
+                officer.bubble = { text: rand(["Sheathe it. NOW.", "That comes out again, you come with me.", "Steel away. Last word."]), until: performance.now() / 1000 + 5 };
+                sfx.alert(); showToast(`🛡️ ${officer.name}: put the weapon away.`);
+              } else if (absNow - (pp.unsheathedAt || 0) > 60) {   // warned an hour ago, still waving it around
+                convictStars(sim, pp, 1, "the player kept brandishing steel after a Watch warning");
+                pp._steelWarned = false;
+                showToast("⭐ Brandishing. The Watch has had enough of the display.");
+              }
+            }
+          }
+        }
+        // v7 Stage 4: hang around the Outlands and eventually someone sizes you up
+        {
+          const hr9 = Math.floor(sim.time / 60);
+          if (sim.player.scene === "t:outlands" && hr9 !== sim._ambHr && !modalRef.current) {
+            sim._ambHr = hr9;
+            if (Math.random() < CFG.OUTLANDS.ambushLinger + sim.player.coins / (CFG.OUTLANDS.wealthDiv * 4)) {
+              const thug9 = sim.npcs.find(n => n.alive && n.town === "outlands" && !n.jailedUntil && !n.incap && !n.dying && (n.outlaw || !n.home) && n.scene === sim.player.scene);
+              if (thug9) { thug9.x = clamp(sim.player.x + 1, 0, 99); thug9.y = sim.player.y; thug9.legs = []; thug9.path = []; thug9.goal = null; thug9.steelUntil = performance.now() / 1000 + 90; sfx.alert(); setThreat({ robberId: thug9.id }); }
+            }
+          } else if (sim.player.scene !== "t:outlands") sim._ambHr = hr9;
+        }
+        processTrades(sim);
         playDialogues(sim, now);
 
         saveTimerRef.current += dt;
@@ -5093,12 +5974,73 @@ export default function Alderbrook() {
         out.push({ id: "discharge", label: `🚪 Check out (pay ${p.hospitalBill}c)` });
       return out;
     }
+    if (p.scene.startsWith("t:") && (p.inv.hatchet || 0) > 0) {   // v7 Stage 5: wood, if you brought the hatchet
+      const twn = world.towns[p.scene.slice(2)];
+      const tr = (twn.trees || []).find(([tx, ty]) => Math.abs(tx - p.x) < 1.6 && Math.abs(ty - p.y) < 1.6);
+      if (tr) {
+        const key = `${p.scene.slice(2)}:${tr[0]},${tr[1]}`;
+        const rec = (sim.treeChops = sim.treeChops || {})[key];
+        const used = rec?.day === sim.day ? rec.n : 0;
+        if (used < CFG.CRAFT.chopPerTree) out.push({ id: "chopwood", label: `🪓 Chop wood (${CFG.CRAFT.chopPerTree - used} left today)`, chopKey: key });
+      }
+    }
+    { // v7 Stage 5: the hill path — Alderbrook's NE corner up to the manor gate
+      const HC = CFG.HILLS;
+      if (p.scene === "t:alderbrook" && dist({ x: HC.trailAlder.x, y: HC.trailAlder.y }, p) < 2)
+        out.push({ id: "hillpath", label: "⛰️ Take the hill path", dest: "hills" });
+      if (p.scene === "t:hills" && dist({ x: HC.trailHills.x, y: HC.trailHills.y }, p) < 2)
+        out.push({ id: "hillpath", label: "⛰️ Head back down to Alderbrook", dest: "alderbrook" });
+    }
+    { // v7 Stage 4: the shady route — a foot trail between Stonecross's SE corner and the camp
+      const OC = CFG.OUTLANDS;
+      if (p.scene === "t:stonecross" && dist({ x: OC.trailStone.x, y: OC.trailStone.y }, p) < 2)
+        out.push({ id: "shadyroute", label: "🌲 Take the shady route", dest: "outlands" });
+      if (p.scene === "t:outlands" && dist({ x: OC.trailOut.x, y: OC.trailOut.y }, p) < 2)
+        out.push({ id: "shadyroute", label: "🌲 Slip back toward Stonecross", dest: "stonecross" });
+    }
+    if (p.scene.startsWith("i:")) {   // v7 Stage 5c: a broken appliance is a JOB for whoever holds the part
+      const bId9 = p.scene.slice(2);
+      for (const [st, part] of Object.entries(CFG.REPAIR.parts)) {
+        if (world.interiors[bId9]?.stations?.[st] && applianceBroken(sim, bId9, st)) {
+          const have = (p.inv[part] || 0) > 0;
+          out.push(have
+            ? { id: "repair", label: `🔧 Repair ${st === "wash" ? "bathroom" : st === "drinks" ? "drink machine" : "oven"} (${CFG.REPAIR.fee[st]}c fee)`, repairB: bId9, repairSt: st }
+            : { id: "noop", label: `🔧 Broken ${st === "wash" ? "bathroom" : st === "drinks" ? "drink machine" : "oven"} — needs ${ITEMS[part].emoji} ${ITEMS[part].name}` });
+        }
+      }
+    }
+    { // the DEED: 500c at the manor door. Inside: the best bed in the valley (owners only).
+      if (p.scene === "t:hills" && !sim.ownsManor) {
+        const hh = bld("hillhouse");
+        if (dist({ x: hh.door.x, y: hh.door.y }, p) < 2) out.push({ id: "buymanor", label: `🔑 Buy Hillcrest Manor (${CFG.HILLS.price}c)` });
+      }
+      if (p.scene === "i:hillhouse" && sim.ownsManor) {
+        const bedSt = world.interiors.hillhouse.stations.bed;
+        if (dist(bedSt, p) < 1.6) out.push({ id: "manorsleep", label: "🛏️ Sleep in the big bed" });
+      }
+    }
+    { // v7 Stage 5: crafting — at the workshop bench, or at home beside your own Workbench
+      const canHere = p.scene === "i:workshop_s"
+        || (p.scene === "i:home_p" && (sim.playerFurniture || []).includes("workbench"));
+      if (canHere) out.push({ id: "craft", label: "🛠️ Craft…" });
+      // the easy chair: real-time rest, 3 energy per full 12-min mark, anyone welcome
+      if (p.scene === "i:home_p" && (sim.playerFurniture || []).includes("chair") && !p.sitting)
+        out.push({ id: "sitchair", label: "🪑 Sit in the easy chair" });
+    }
+    { // carry the wounded: any dying/downed NPC nearby can be hauled to care (five-stars go on to the cells)
+      const downed = sim.npcs.find(n => n.alive && (n.dying || n.incap) && n.scene === p.scene && dist(n, p) < 1.6);
+      if (downed) out.push({ id: "carry", label: `🏥 Carry ${downed.name} to hospital`, carry: downed.id });
+    }
+    if (p.scene.startsWith("t:")) {   // v7 Stage 3: forage a nearby bush (once per bush per day)
+      const fTown = worldRef.current.towns[p.scene.slice(2)];
+      const bush = fTown && bushSpots(fTown).find(([bx, by]) => dist({ x: bx, y: by }, p) < 1.4);
+      if (bush && sim.foragedAt?.[`${p.scene}:${bush[0]},${bush[1]}`] !== sim.day)
+        out.push({ id: "forage", label: "🌿 Forage", bush });
+    }
 
     for (const npc of sim.npcs)
       if (npc.alive && !npc.incap && !npc.jailedUntil && npc.scene === p.scene && !npc.hidden && dist(npc, p) < CFG.TALK_RADIUS && !npc.activity.includes("sleep")) {
-        out.push({ id: `talk_${npc.id}`, label: `💬 ${npc.name}`, npc: npc.id });
-        out.push({ id: `pay_${npc.id}`, label: `🎁 ${npc.name}`, pay: npc.id });
-        if (armed && !npc.enforcer) out.push({ id: `rob_${npc.id}`, label: `🗡 Threaten ${npc.name}`, threaten: npc.id });
+        // people actions moved to the LEFT STACK + target picker (G/T/H/B/Z) — no more per-NPC button spam
       }
 
     if (sim.crimeAlert && p.scene === `i:${sim.crimeAlert.bId}` && !sim.playerReport) {
@@ -5141,6 +6083,19 @@ export default function Alderbrook() {
       if (SHOP_STOCK[bId] && at(shopStn)) out.push({ id: "browse", label: `🛒 Browse ${bld(bId).name}`, browse: bId });
       // Stage 5: at your OWN counter → manage the business (registers + upgrades)
       if (at(shopStn) && OWNERS[bId] === "player") out.push({ id: "manage", label: "⚙️ Manage business", manage: bId });
+      if (bId === "workshop_s" && at(shopStn)) {
+        const ready = (sim.contracts || []).filter(c => sim.day >= c.readyDay);
+        for (const c of ready.slice(0, 3)) {
+          const r = CFG.CRAFT.recipes[c.recipeId], thing = r.furn ? FURNITURE[c.recipeId] : ITEMS[c.recipeId];
+          out.push({ id: "pickup", label: `📦 Pick up: ${thing.emoji} ${thing.name}`, pickup: c.recipeId });
+        }
+      }
+      if (bId === "workshop_s" && at(shopStn) && (p.inv.rock || 0) >= CFG.CRAFT.smelt.rocks
+          && (OWNERS[bId] === "player" || sim.npcs.find(n => n.id === OWNERS[bId] && n.alive && n.scene === `i:${bId}`)))
+        out.push({ id: "smelt", label: `🔩 Smelt ${CFG.CRAFT.smelt.rocks} rocks → iron bits${OWNERS[bId] === "player" ? "" : ` (${CFG.CRAFT.smelt.fee}c)`}` });
+      // v7 Stage 5: every private business has a price — if the owner's alive to take the coin
+      if (at(shopStn) && BUSINESS_PRICE[bId] && OWNERS[bId] && OWNERS[bId] !== "player" && sim.npcs.find(n => n.id === OWNERS[bId] && n.alive))
+        out.push({ id: "buybiz", label: `💼 Buy ${bld(bId).name} (${BUSINESS_PRICE[bId]}c)`, buybiz: bId });
       if (at("mayor")) out.push({ id: "cityledger", label: "📊 Town ledger" });   // Stage 8: approval + treasury at the mayor's desk
       // Stage 5: someone else's counter with a stocked register → rob it (confirmation-gated below)
       if (at(shopStn) && OWNERS[bId] && OWNERS[bId] !== "player" && sim.registers[bId]?.cash > 0) {
@@ -5239,6 +6194,7 @@ export default function Alderbrook() {
     sfx.click();
     const sim = simRef.current, world = worldRef.current, p = sim.player;
     const now = performance.now() / 1000;
+    if (a.trade) { setTradePanel({ npcId: a.trade, giveC: 0, giveItem: "", giveQty: 1, askC: 0, askItem: "", askQty: 1, note: "" }); return; }
     if (a.npc) return openChat(a.npc);
     if (a.pay) { setPayPanel({ npcId: a.pay }); setPayAmount(""); return; }
     if (a.threaten) return threatenNPC(a.threaten);
@@ -5315,6 +6271,7 @@ export default function Alderbrook() {
         break;
       }
       case "wash": {
+        if (!useAppliance(sim, p.scene.slice(2), "wash")) { showToast("🚿 …nothing but a sad gurgle. It's broken."); bump(); break; }
         p.hygiene = 100;
         sim.time += CFG.HYGIENE.washMin;
         showToast("Scrubbed and human again.");
@@ -5459,6 +6416,135 @@ export default function Alderbrook() {
       }
       case "dish":   setMinigame({ type: "dish", plate: 0, step: 0 }); break;
       case "castmenu": setCastPanel(true); break;
+      case "buymanor": {   // the wealth capstone: the house on the hill above your first town
+        if (!spend(p, CFG.HILLS.price)) { showToast(`You need ${CFG.HILLS.price}c. The view isn't going anywhere.`); break; }
+        sim.ownsManor = true;
+        repEvent(sim, p, 12, 8, "the player bought Hillcrest Manor");
+        for (const t9 of ["alderbrook", "mossford", "stonecross", "ferndale"])
+          seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === t9).slice(0, 3), { text: "someone BOUGHT the house on the hill", subjectId: null, bad: false });
+        sim.dayLog.push("the player bought Hillcrest Manor — the house on the hill");
+        sfx.coin(); showToast("🔑 Hillcrest Manor is YOURS. The whole valley, out the window.");
+        bump(); break;
+      }
+      case "manorsleep": {   // the best sleep in the game — the manor earns its price nightly
+        const fromAbs = sim.day * 1440 + sim.time;
+        const target = 7 * 60;
+        if (sim.time >= target) sim.day++;
+        sim.time = target;
+        fastForwardNight(sim, worldRef.current, fromAbs, sim.day * 1440 + sim.time);
+        p.energy = 100; p.hygiene = clamp(p.hygiene + 60, 0, 100);
+        p.hunger = clamp(p.hunger - 8, 0, 100); p.thirst = clamp(p.thirst - 8, 0, 100);
+        p.health = clamp(p.health + 35, 0, 100);   // hill air: better than any bed in the valley
+        saveGame();
+        showToast("🛏️ You sleep like a landowner. Because you are one.");
+        break;
+      }
+      case "hillpath": {
+        const HC = CFG.HILLS, spot = a.dest === "hills" ? HC.trailHills : HC.trailAlder;
+        sim.time += HC.walkMin;
+        p.scene = `t:${a.dest}`; p.x = spot.x; p.y = spot.y;
+        setTransition(a.dest === "hills" ? "The path climbs. The towns shrink behind you…" : "Downhill, with the whole valley in view…");
+        bump(); break;
+      }
+      case "noop": break;
+      case "repair": setRepairPanel({ bId: a.repairB, st: a.repairSt, stage: "game", kind: a.repairSt === "wash" ? "sliders" : a.repairSt === "drinks" ? "knob" : "buttons" }); break;
+      case "pickup": {   // the commission comes home
+        const idx = (sim.contracts || []).findIndex(c => c.recipeId === a.pickup && sim.day >= c.readyDay);
+        if (idx < 0) break;
+        sim.contracts.splice(idx, 1);
+        const r = CFG.CRAFT.recipes[a.pickup];
+        if (r.furn) { (sim.playerFurniture = sim.playerFurniture || []).push(a.pickup); showToast(`🪑 ${FURNITURE[a.pickup].name} — delivered and set up at home.`); }
+        else { p.inv[a.pickup] = (p.inv[a.pickup] || 0) + (r.out || 1); showToast(`📦 ${ITEMS[a.pickup].emoji} ${ITEMS[a.pickup].name}${r.out ? ` ×${r.out}` : ""} — nice work, honestly.`); }
+        sfx.coin(); bump(); break;
+      }
+      case "craft": setCraftPanel({ stage: "pick" }); break;
+      case "sitchair": {
+        p.sitting = { sinceAbs: sim.day * 1440 + sim.time, marks: 0 };
+        showToast("🪑 You settle in. (+3 energy per full 12 minutes — leave early and the last stretch is lost.)");
+        bump(); break;
+      }
+      case "smelt": {   // the owner works the little furnace: 3 round rocks in, iron bits out
+        const own = OWNERS.workshop_s === "player";
+        if ((p.inv.rock || 0) < CFG.CRAFT.smelt.rocks) break;
+        if (!own && !spend(p, CFG.CRAFT.smelt.fee)) { showToast(`You need ${CFG.CRAFT.smelt.fee}c for the smelting fee.`); break; }
+        if (!own) creditOwner(sim, "workshop_s", CFG.CRAFT.smelt.fee);
+        p.inv.rock -= CFG.CRAFT.smelt.rocks; if (p.inv.rock <= 0) delete p.inv.rock;
+        p.inv.ore = (p.inv.ore || 0) + 1;
+        sim.time += 10; sfx.pop(); showToast("🔩 Three rocks in, one handful of iron bits out.");
+        bump(); break;
+      }
+      case "chopwood": {   // 1-2 pieces; the tree keeps 2 harvests a day TOTAL, across everyone. It survives. Game logic.
+        const rec = (sim.treeChops = sim.treeChops || {})[a.chopKey];
+        const used = rec?.day === sim.day ? rec.n : 0;
+        if (used >= CFG.CRAFT.chopPerTree) { showToast("This tree's given all it has today."); break; }
+        sim.treeChops[a.chopKey] = { day: sim.day, n: used + 1 };
+        const got = 1 + (Math.random() < 0.5 ? 1 : 0);
+        p.inv.wood = (p.inv.wood || 0) + got;
+        sim.time += 8; sfx.pop();
+        showToast(`🪵 ${got} cut wood. The tree, improbably, is fine.`);
+        bump(); break;
+      }
+      case "buybiz": {   // v7 Stage 5: the handshake — coins to the owner, keys to you
+        const bId = a.buybiz, price = BUSINESS_PRICE[bId];
+        const seller = sim.npcs.find(n => n.id === OWNERS[bId] && n.alive);
+        if (!seller || !spend(p, price)) { showToast(seller ? `You need ${price}c.` : "No one to sell it."); break; }
+        seller.coins = Math.min(9999, seller.coins + price);
+        seller.memories = [...seller.memories, `Sold ${bld(bId).name} to the player. Retirement money at last.`].slice(-CFG.MAX_MEMORIES);
+        if (seller.occupation?.bId === bId) seller.occupation = null;   // a rich retiree — may seek new work
+        OWNERS[bId] = "player";
+        (sim.ownerOverrides = sim.ownerOverrides || {})[bId] = "player";
+        repEvent(sim, p, 6, 4, `the player bought ${bld(bId).name}`);
+        seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === bld(bId).town).slice(0, 5), { text: `the newcomer BOUGHT ${bld(bId).name} off ${seller.name}`, subjectId: null, bad: false });
+        sim.dayLog.push(`the player bought ${bld(bId).name} from ${seller.name}`);
+        sfx.coin(); showToast(`💼 ${bld(bId).name} is YOURS. (Manage it at the counter.)`);
+        bump(); break;
+      }
+      case "shadyroute": {   // v7 Stage 4: 25 minutes through the trees — and maybe company
+        const OC = CFG.OUTLANDS;
+        const dest = a.dest, spot = dest === "outlands" ? OC.trailOut : OC.trailStone;
+        sim.time += OC.walkMin;
+        p.scene = `t:${dest}`; p.x = spot.x; p.y = spot.y;
+        setTransition(dest === "outlands" ? "You slip past the tree line. The road forgets you…" : "You follow the trail back toward streetlights…");
+        const heat = OC.ambushTravel + p.coins / OC.wealthDiv;   // fat purses draw eyes
+        const thug = sim.npcs.find(n => n.alive && n.town === "outlands" && !n.jailedUntil && !n.incap && !n.dying && (n.outlaw || !n.home));
+        if (thug && Math.random() < heat) {
+          thug.scene = p.scene; thug.x = clamp(p.x + 1, 0, 99); thug.y = p.y;
+          thug.legs = []; thug.path = []; thug.goal = null;
+          thug.steelUntil = performance.now() / 1000 + 90;   // v7 Stage 1: the blade comes OUT
+          sfx.alert(); setThreat({ robberId: thug.id });   // the classic: "nice coin purse"
+        }
+        bump(); break;
+      }
+      case "carry": {   // haul the wounded in: half an hour of your day, renown if they make it
+        const downed = sim.npcs.find(n => n.id === a.carry && n.alive); if (!downed) break;
+        const wasFive = (downed.wanted || 0) >= 5;
+        const bounty = (downed.wanted || 0) >= 3 ? downed.wanted * 12 : 0;   // v7 Stage 5: live delivery pays
+        completeRescue(sim, world, downed, downed.dying?.byId || null);
+        sim.time += 30;
+        repEvent(sim, p, 2, wasFive ? 5 : 2, `the player carried ${downed.name} to the hospital`);
+        if (bounty) { p.coins += bounty; sfx.coin(); showToast(`📜 Bounty collected: ${bounty}c for ${downed.name}.`); }
+        showToast(wasFive ? `🏥 ${downed.name} patched up — and sent straight down for LIFE.` : `🏥 You haul ${downed.name} to the hospital.`);
+        bump(); break;
+      }
+      case "forage": {   // v7 Stage 3: the bush table — loot shifts up and bites shift down with skill
+        const [fx, fy] = a.bush;
+        (sim.foragedAt = sim.foragedAt || {})[`${p.scene}:${fx},${fy}`] = sim.day;
+        const lv = skillLevel(p, "foraging");
+        const before = lv;
+        p.skills.foraging = (p.skills.foraging || 0) + taskXp("foraging", 0);
+        const r = Math.random();
+        const bite = Math.max(0.04, 0.10 - lv * 0.015), snake = Math.max(0.02, 0.05 - lv * 0.008);
+        if (r < snake) { p.health = Math.max(1, p.health - 10); sfx.alert(); showToast("🐍 A lil snake gets you! (-10 hp)"); }
+        else if (r < snake + bite) { p.health = Math.max(1, p.health - 4); showToast("🐜 Something bites you. (-4 hp)"); }
+        else if (r < snake + bite + 0.30) { const q = 1 + (Math.random() < 0.4 ? 1 : 0); p.inv.rock = (p.inv.rock || 0) + q; showToast(`🪨 Found ${q} round rock${q > 1 ? "s" : ""}.`); }
+        else if (r < snake + bite + 0.48) { p.inv.fiber = (p.inv.fiber || 0) + 1; showToast("🌾 A tidy grass bundle."); }
+        else if (r < snake + bite + 0.62) { p.inv.herb = (p.inv.herb || 0) + 1; showToast("🌿 A wild herb — good for what ails you."); }
+        else if (r < snake + bite + 0.70) { const c = 1 + Math.floor(Math.random() * 3); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
+        else if (r < snake + bite + 0.72) { p.inv.ring = (p.inv.ring || 0) + 1; sfx.coin(); showToast("💍 A tarnished ring — someone lost this…"); }
+        else showToast("🍃 Nothing but leaves this time.");
+        if (skillLevel(p, "foraging") > before) showToast(`📈 ${SKILL_TRACKS.foraging} — now ${skillTierName(p, "foraging")}!`);
+        bump(); break;
+      }
       case "cityledger": {   // Stage 8: the hall's public numbers
         const lt = townOfScene(world, p.scene);
         const ups = Object.keys(sim.townUpgrades?.[lt] || {}).map(id => TOWN_UPGRADES[id]?.emoji).join(" ") || "none yet";
@@ -5534,7 +6620,7 @@ export default function Alderbrook() {
   const buyItem = (bId, itemId) => {
     const sim = simRef.current, p = sim.player;
     if (stockOf(sim, bId, itemId) <= 0) { showToast("Sold out. Deliveries come through the post office."); return; }
-    const px = priceOf(sim, bId, itemId);                                   // Stage 3.7: owner-set price
+    const px = priceOf(sim, bId, itemId) * (bId === "blackmarket_o" ? CFG.OUTLANDS.marketMult : 1);   // Stage 3.7 owner price; the Exchange charges double — that's the no-questions fee
     if (!spend(p, px)) return;
     takeStock(sim, bId, itemId);
     trackDemand(sim, bId, itemId);                                          // player buys count toward demand too
@@ -5727,12 +6813,69 @@ export default function Alderbrook() {
     }
     if (consumeItem(p, itemId)) {
       const msg = it.heal ? "patched up." : it.cure ? "feeling better already." : "that hit the spot.";
+      if (itemId === "mystery_stew") {   // v7 Stage 4: Howl's special — don't ask
+        if (Math.random() < CFG.OUTLANDS.stewRisk) { p.health = Math.max(1, p.health - CFG.OUTLANDS.stewHit); sfx.alert(); showToast("🍲 …you don't want to know what was in it. (-12 hp)"); }
+        else { p.health = Math.min(100, p.health + CFG.OUTLANDS.stewHeal); showToast("🍲 Unreasonably good. Suspiciously good."); }
+      }
       if (it.heal || it.cure) {   // Pass 4: field medicine teaches — a bandage or a dose is practice
         const before = skillLevel(p, "healthcare");
         p.skills.healthcare = (p.skills.healthcare || 0) + taskXp("healthcare", 0);
         if (skillLevel(p, "healthcare") > before) showToast(`📈 ${SKILL_TRACKS.healthcare} — now ${skillTierName(p, "healthcare")}!`);
       }
       showToast(`${it.emoji} ${it.name} — ${msg}`); bump();
+    }
+  };
+
+  /* v7 Stage 5b: THE COMMISSION. Garrick quotes a job in his own voice — the API plans the
+   price nudge, the timeline, and the line he says. If the call fails (no key, network),
+   the local quote stands: material value + labor by tier, days by tier. Same numbers the
+   API is anchored to, so offline isn't a discount or a gouge — just quieter. */
+async function commissionCall(ownerName, personality, itemName, tier, baseCost, baseDays, playerRep) {
+  const prompt =
+`You are ${ownerName}, ${personality} — a workshop owner in a life-sim quoting a commission.
+Job: make "${itemName}" (${tier} difficulty). Baseline: ${baseCost} coins, ${baseDays} day(s). Customer reputation: ${playerRep}.
+Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; rush jobs cost). Respond ONLY with JSON:
+{"price": <int>, "days": <int>, "line": "<one short in-character sentence quoting the job>"}`;
+  return callClaude(prompt, 120);
+}
+
+/* THE OFFLINE INTERROGATION. No API? The duel still happens — as dice. The detective's
+     office skill and evidence set the bar; your TACTIC each round is the play. Suspicion
+     climbs or falls; ≥70 when the questions run out means charges. Guilt matters: telling
+     the truth when you're innocent is strong, and lying when they hold evidence is fragile. */
+  const offlineQuestion = (det, kase, q) => {
+    const lines = [
+      [`Walk me through your evening. Slowly.`, `Where were you when it happened?`, `Start at the beginning. I have time.`],
+      [`That's not quite what I heard. Care to try again?`, `Someone puts you near the scene. Comment?`, `Your story has a gap in it. Fill it.`],
+      [`Last chance to explain this properly.`, `I'm about to make a decision. Help me make the right one.`, `Anything else, before I write this up?`],
+    ];
+    return rand(lines[Math.min(q, lines.length - 1)]);
+  };
+  const offlineTactic = (tacticId, guilty) => {
+    const sim = simRef.current, iv = interro;
+    const det = sim.npcs.find(n => n.id === iv.detId);
+    const t = CFG.INTERRO_OFFLINE.tactics[tacticId];
+    const C = CFG.INTERRO_OFFLINE;
+    const detSkill = skillLevel(det, "office");
+    // the roll: your nerve (d100) vs their nose (skill + evidence). Guilt shakes the hand.
+    const detEdge = C.edgeBase + detSkill * C.detSkillW + (iv.evidence || 0) * C.evidW;
+    let swing;
+    if (tacticId === "truth") swing = guilty ? C.truthSwing : -C.truthSwing;   // confession, or the ring of truth
+    else {
+      const nerve = Math.random() * 100 - (guilty ? C.guiltPenalty : 0);       // the lie holds together, or it doesn't
+      swing = nerve > detEdge ? t.reward : t.risk;
+    }
+    const hist = [...iv.history, { who: "sus", text: t.label.replace(/^\S+\s/, "") }];
+    const susp = clamp((iv.susp ?? CFG.INTERRO_OFFLINE.base) + swing, 0, 100);
+    const nextQ = iv.q + 1;
+    const done = nextQ > CFG.SKILLCHECK.interrogateQuestions;
+    if (done) {
+      const accuse = susp >= 70;
+      setInterro({ ...iv, history: [...hist, { who: "det", text: accuse ? rand(["That's enough. You're coming with me.", "I've heard what I need."]) : rand(["...Fine. You're free to go.", "I don't like it. But I've got nothing."]) }],
+        susp, q: nextQ, concluded: true, verdict: accuse ? "accuse" : "clear", busy: false });
+    } else {
+      const react = swing > 8 ? rand(["*writes something down*", "*leans in*", "Hm."]) : swing < -8 ? rand(["*sits back*", "...I see.", "*frowns at the file*"]) : "*says nothing*";
+      setInterro({ ...iv, history: [...hist, { who: "det", text: `${react} ${offlineQuestion(det, null, nextQ)}` }], susp, q: nextQ, busy: false });
     }
   };
 
@@ -5751,7 +6894,11 @@ export default function Alderbrook() {
       const skillDesc = skillLabel(det, "office");
       detectiveMove(det.name, skillDesc, "the player", kase.evidence, 1, CFG.SKILLCHECK.interrogateQuestions, [], false)
         .then(move => setInterro(s => s && { ...s, busy: false, history: [{ who: "det", text: move.say }], q: 1, concluded: move.action === "conclude", verdict: move.action === "conclude" ? move.verdict : null }))
-        .catch(() => setInterro(s => s && { ...s, busy: false, history: [{ who: "det", text: "Never mind. You're free to go." }], concluded: true, verdict: "clear" }));
+        .catch(() => {   // no API (or it failed): the interrogation becomes a dice duel, not a freebie
+          const det2 = simRef.current.npcs.find(n => n.id === iv.detId);
+          setInterro(s => s && { ...s, offline: true, busy: false, susp: CFG.INTERRO_OFFLINE.base + (kase.evidence || 0) * CFG.INTERRO_OFFLINE.perEvidence,
+            evidence: kase.evidence || 0, history: [{ who: "det", text: offlineQuestion(det2, kase, 0) }], q: 1 });
+        });
     }
   }, [simRef.current?.interrogation, interro]);
 
@@ -5766,6 +6913,9 @@ export default function Alderbrook() {
     setInterro(s => ({ ...s, history: hist, busy: true }));
     const mustConclude = interro.q >= CFG.SKILLCHECK.interrogateQuestions;
     const skillDesc = skillLabel(det, "office");
+    const toOffline = () => setInterro(s => s && { ...s, offline: true, busy: false,
+      susp: CFG.INTERRO_OFFLINE.base + (kase.evidence || 0) * CFG.INTERRO_OFFLINE.perEvidence, evidence: kase.evidence || 0,
+      history: [...hist, { who: "det", text: offlineQuestion(det, kase, s.q) }] });
     detectiveMove(det.name, skillDesc, "the player", kase.evidence, interro.q + 1, CFG.SKILLCHECK.interrogateQuestions, hist, mustConclude)
       .then(move => {
         const h2 = [...hist, { who: "det", text: move.say }];
@@ -6105,6 +7255,125 @@ export default function Alderbrook() {
     drinkDeliver(mg.recipe, mg.bId, ok);
   };
 
+  // the camera's one entry point — every input path (keys, wheel, pinch, buttons) lands here
+  const setZoom = (v) => {
+    const nz = clamp(Math.round(v * 100) / 100, CFG.ZOOM.min, CFG.ZOOM.max);
+    zoomRef.current = nz; setZoomHud(nz);
+  };
+  const nudgeZoom = (d) => setZoom(zoomRef.current + d);
+
+  /* ===== the left action stack: one button per VERB, a frozen-time picker for WHO =====
+     Talk/Gift/Trade always; Threaten + Attack only with steel drawn (p.unsheathed). */
+  const nearbyPeople = (kind) => {
+    const sim = simRef.current, p = sim.player;
+    // v7 Stage 2: a loaded ranged weapon EXTENDS the threaten/attack radius to its range
+    const bw = bestWeapon(p);
+    const rr = bw && ITEMS[bw].range && (p.inv[ITEMS[bw].ammo] || 0) > 0;
+    const rad = (kind === "threaten" || kind === "attack") && rr ? ITEMS[bw].range : CFG.TALK_RADIUS;
+    return sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.scene === p.scene && !n.hidden
+      && dist(n, p) < rad && !n.activity.includes("sleep")
+      && ((kind !== "threaten" && kind !== "attack") || !n.enforcer));   // the Watch doesn't get menaced (yet)
+  };
+  const toggleSheathe = () => {
+    const p = simRef.current.player;
+    if (!bestWeapon(p)) { showToast("Nothing to draw."); return; }
+    p.unsheathed = !p.unsheathed;
+    p.unsheathedAt = p.unsheathed ? simRef.current.time + simRef.current.day * 1440 : null; p._steelWarned = false;
+    sfx.pop(); showToast(p.unsheathed ? "🗡 Steel drawn." : "Weapon sheathed.");
+  };
+  const openPicker = (kind) => {
+    if ((kind === "threaten" || kind === "attack") && !simRef.current.player.unsheathed) return;
+    if (!nearbyPeople(kind).length) { showToast("No one close enough."); return; }
+    setPicker({ kind });
+  };
+  const pickTarget = (npcId) => {
+    const kind = picker?.kind; setPicker(null);
+    if (!kind || !npcId) return;
+    if (kind === "talk") return openChat(npcId);
+    if (kind === "gift") { setPayPanel({ npcId }); setPayAmount(""); return; }
+    if (kind === "trade") { setTradePanel({ npcId, giveC: 0, giveItem: "", giveQty: 1, askC: 0, askItem: "", askQty: 1, note: "" }); return; }
+    if (kind === "threaten") { const tN = simRef.current.npcs.find(n => n.id === npcId); if (tN) tN.steelUntil = performance.now() / 1000 + 60; return threatenNPC(npcId); }
+    if (kind === "attack") {   // drawn steel skips the talk: straight to blows — the justice pipeline judges as usual
+      const sim = simRef.current, p = sim.player;
+      const foe = sim.npcs.find(n => n.id === npcId && n.alive); if (!foe) return;
+      const wid = bestWeapon(p), w = wid ? ITEMS[wid] : null;
+      { // being attacked is an INCIDENT: every witness reacts (API with local fallback, budget-gated)
+        const witnesses = sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.id !== npcId && !n.hidden && n.scene === p.scene && !n.activity.includes("sleep"));
+        if (witnesses.length && incidentBudget(sim) && !apiBusyRef.current) {
+          const byId = Object.fromEntries(sim.npcs.map(n => [n.id, n]));
+          const ctx = `the player just attacked ${foe.name} in the open`;
+          sim.incidents.count++;
+          apiBusyRef.current = true;
+          incidentCall("crime", witnesses, ctx, byId).then(out => {
+            for (const ww of witnesses) applyWitnessChoice(sim, ww, sim.player, out.choices?.[ww.id] || localWitnessChoice(ww, sim.player), performance.now() / 1000);
+          }).catch(() => {
+            for (const ww of witnesses) applyWitnessChoice(sim, ww, sim.player, localWitnessChoice(ww, sim.player), performance.now() / 1000);
+          }).finally(() => { apiBusyRef.current = false; });
+        }
+      }
+      if (w?.range && (p.inv[w.ammo] || 0) > 0) {   // v7 Stage 2: the OPENING SHOT — spend ammo, strike from range
+        p.inv[w.ammo]--; if (p.inv[w.ammo] <= 0) delete p.inv[w.ammo];
+        const dmg = randInt(w.dmg);
+        foe.health = Math.max(0, foe.health - dmg);
+        if (foe.health <= 5) {   // dropped at range — same justice as a won fight, minus the looting
+          if (w.lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);
+          if ((foe.wanted || 0) >= 5) {   // a FIVE-STAR takedown is a public service — haul them in for the reward
+            repEvent(sim, p, 8, 6, `the player brought down ${foe.name}, the five-star outlaw`);
+            showToast(`${w.emoji} ${foe.name} goes down (${dmg}). Get them to a hospital — the cells are waiting.`);
+          } else {
+            convictStars(sim, p, w.lethal ? 4 : 3, `the player shot ${foe.name} down`);
+            const enf = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
+            if (enf && p.wanted > 0) enf.dispatch = { targetId: "player" };
+            showToast(`${w.emoji} ${foe.name} goes down (${dmg}).`);
+          }
+        } else {
+          setCombat({ foeId: npcId, aggressor: "player", log: [`Your ${ITEMS[w.ammo].name.toLowerCase()} strikes from range (${dmg}). ${foe.name} closes in!`], over: false, won: null });
+        }
+        return;
+      }
+      setCombat({ foeId: npcId, aggressor: "player", log: ["You strike first."], over: false, won: null });
+    }
+  };
+
+  // Player→NPC trade: compose, then the NPC considers (API, local fallback) and answers in a bubble.
+  const doOfferTrade = () => {
+    const tp = tradePanel; if (!tp) return;
+    const sim = simRef.current, p = sim.player;
+    const npc = sim.npcs.find(n => n.id === tp.npcId && n.alive); if (!npc) { setTradePanel(null); return; }
+    const give = { coins: clamp(Number(tp.giveC) || 0, 0, CFG.TRADE.maxCoins), item: tp.giveItem || null, qty: tp.giveItem ? clamp(Number(tp.giveQty) || 1, 1, 20) : 0 };
+    const ask = { coins: clamp(Number(tp.askC) || 0, 0, CFG.TRADE.maxCoins), item: tp.askItem || null, qty: tp.askItem ? clamp(Number(tp.askQty) || 1, 1, 20) : 0 };
+    const note = (tp.note || "").trim().slice(0, CFG.TRADE.noteMax);
+    if (!give.coins && !give.item && !ask.coins && !ask.item) { showToast("Offer something — or ask for something."); return; }
+    if (!canFulfillTrade(p, give)) { showToast("You can't cover that offer."); return; }
+    setTradePanel(null);
+    const t = { give, ask, note };
+    const finish = (accept, say) => {
+      if (accept && canFulfillTrade(npc, ask)) { executeTrade(sim, p, npc, give, ask, note); sfx.coin(); showToast(`🤝 ${npc.name}: deal!`); }
+      else showToast(`${npc.name} ${accept ? "can't actually cover it." : "declines."}`);
+      npc.bubble = { text: say || (accept ? "Deal." : "Not this time."), until: performance.now() / 1000 + 3.5 };
+    };
+    if (apiBusyRef.current) { finish(localTradeDecide(npc, p, t), null); return; }
+    apiBusyRef.current = true;
+    tradeConsider(npc, "the player", npc.relationships.player || "neutral", t)
+      .then(out => out ? finish(out.accept, out.say) : finish(localTradeDecide(npc, p, t), null))
+      .catch(() => finish(localTradeDecide(npc, p, t), null))
+      .finally(() => { apiBusyRef.current = false; });
+  };
+  // NPC→player: accept or wave off an incoming offer
+  const answerOffer = (yes) => {
+    const off = tradeOffer; if (!off) return;
+    const sim = simRef.current, p = sim.player;
+    const npc = sim.npcs.find(n => n.id === off.fromId && n.alive);
+    setTradeOffer(null);
+    if (!npc) return;
+    if (yes) {
+      if (!canFulfillTrade(npc, off.give)) { showToast(`${npc.name} can't cover it anymore.`); return; }
+      if (!canFulfillTrade(p, off.ask)) { showToast("You can't cover their ask."); return; }
+      executeTrade(sim, npc, p, off.give, off.ask, off.note); sfx.coin();
+      showToast(`🤝 Deal with ${npc.name}!`);
+    } else npc.bubble = { text: "Fair enough.", until: performance.now() / 1000 + 3 };
+  };
+
   // Stage 6: the player speaks aloud — shows a bubble; a nearby NPC may reply if it's relevant.
   const doSpeak = (text) => {
     const said = (text || "").trim();
@@ -6345,6 +7614,18 @@ export default function Alderbrook() {
       if (modalRef.current) return;
       if (minigameRef.current?.type === "office") { const cats = minigameRef.current.cats || ["red", "green", "blue"]; const c = cats[Number(e.key) - 1]; if (c) { fileBin(c); return; } }
       // Stage 3.6: Computer players get the spacebar as the timing button (phone taps the on-screen button)
+      if (!modalRef.current) {   // camera: +/- zoom (repeat is welcome here — hold to glide)
+        if (e.key === "+" || e.key === "=") { nudgeZoom(CFG.ZOOM.step); return; }
+        if (e.key === "-" || e.key === "_") { nudgeZoom(-CFG.ZOOM.step); return; }
+      }
+      if (!modalRef.current && !e.repeat) {   // left-stack verbs: G gift, T talk, H trade, B threaten, Z attack
+        const k = e.key.toLowerCase();
+        if (k === "g") { openPicker("gift"); return; }
+        if (k === "t") { openPicker("talk"); return; }
+        if (k === "h") { openPicker("trade"); return; }
+        if (k === "b") { openPicker("threaten"); return; }
+        if (k === "z") { openPicker("attack"); return; }
+      }
       if (e.key === " " || e.code === "Space") {
         const mt = minigameRef.current?.type;
         if (mt === "fish" || mt === "fishhard") { e.preventDefault(); fishHook(); return; }
@@ -6411,9 +7692,19 @@ export default function Alderbrook() {
 
     const scene = sim.player.scene;
     const { w: gw, h: gh } = sceneGrid(world, scene);
-    const scale = Math.min(cw / (gw * CFG.TILE), ch / (gh * CFG.TILE));
+    /* THE CAMERA. zoom 1 = the whole map fits (exactly as it always has). Zoom past 1 and
+       the view follows the player, clamped so it never pans past the map's edges. Interiors
+       are single rooms — they stay fit-to-screen. Everything downstream reads px/py, so the
+       entire renderer inherits this for free. */
+    const outdoor = scene.startsWith("t:");
+    const z = outdoor ? clamp(zoomRef.current, CFG.ZOOM.min, CFG.ZOOM.max) : 1;
+    const fit = Math.min(cw / (gw * CFG.TILE), ch / (gh * CFG.TILE));
+    const scale = fit * z;
     const T = CFG.TILE * scale;
-    const ox = (cw - gw * T) / 2, oy = (ch - gh * T) / 2;
+    const mapW = gw * T, mapH = gh * T;
+    // centre when the map is smaller than the viewport; otherwise follow the player, clamped
+    const ox = mapW <= cw ? (cw - mapW) / 2 : clamp(cw / 2 - (sim.player.x + 0.5) * T, cw - mapW, 0);
+    const oy = mapH <= ch ? (ch - mapH) / 2 : clamp(ch / 2 - (sim.player.y + 0.5) * T, ch - mapH, 0);
     const px = (x) => ox + x * T, py = (y) => oy + y * T;
     const hour = (sim.time / 60) % 24;
     const night = hour < 6 || hour >= 19;
@@ -6500,6 +7791,10 @@ export default function Alderbrook() {
         ctx.fillText(g.name, px(gx) + T / 2, py(gy) + T * 1.05);
       });
     }
+    for (const [bx2, by2] of bushSpots(town)) {   // v7 Stage 3: forage bushes, low and light
+      ctx.fillStyle = "#5b8a3f";
+      ctx.beginPath(); ctx.arc(px(bx2) + T / 2, py(by2) + T / 2 + T * 0.12, T * 0.28, 0, 7); ctx.fill();
+    }
     for (const [tx, ty] of town.trees) {
       ctx.fillStyle = "#3f6b33";
       ctx.beginPath(); ctx.arc(px(tx) + T / 2, py(ty) + T / 2, T * 0.42, 0, 7); ctx.fill();
@@ -6581,6 +7876,10 @@ export default function Alderbrook() {
     ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.3, T * 0.12, 0, 0, 7); ctx.fill();
     ctx.fillStyle = e.color;
     ctx.beginPath(); ctx.arc(cx, cy, T * (e.kind === "player" ? 0.36 : 0.34), 0, 7); ctx.fill();
+    // v7 Stage 1: steel SHOWS — the player's drawn weapon, or an NPC mid-confrontation
+    const steel = e.kind === "player" ? (e.ref.unsheathed && bestWeapon(e.ref))
+      : (e.ref.steelUntil > performance.now() / 1000 && (bestWeapon(e.ref) || "knife"));
+    if (steel) { ctx.font = `${Math.floor(T * 0.5)}px sans-serif`; ctx.fillText(ITEMS[steel]?.emoji || "🗡", cx + T * 0.28, cy - T * 0.05); }
     ctx.fillStyle = "#f5deb8";
     ctx.beginPath(); ctx.arc(cx, cy - T * 0.12, T * 0.16, 0, 7); ctx.fill();
     if (e.kind === "player") { ctx.fillStyle = "#173a78"; ctx.fillRect(cx - T * 0.2, cy - T * 0.34, T * 0.4, T * 0.12); }
@@ -6934,7 +8233,7 @@ export default function Alderbrook() {
             <div /><button style={S.padBtn} {...padHold("down")}>▼</button><div />
           </div>
         )}
-        {!isPhone && <div style={S.hint}>WASD/arrows · 🎒 pack · 🎁 pay/gift · 🗡 needs a weapon · counters, stoves, docks, beds & bathrooms all have actions</div>}
+        {!isPhone && <div style={S.hint}>WASD/arrows · G gift · T talk · H trade · draw steel to B threaten / Z attack · counters, stoves, docks & beds all have actions</div>}
       </div>
 
       {/* ⚙️ settings — difficulty + AI budget */}
@@ -6960,15 +8259,15 @@ export default function Alderbrook() {
                 </div>
               </div>
               <div style={S.folkCard}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>🔑 API key <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span></div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>🔑 Anthropic API key <span style={{ fontWeight: 400, opacity: 0.6 }}>(required for AI)</span></div>
                 <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 6 }}>
-                  Leave blank inside Claude — calls are authenticated for you. For a standalone webpage build, paste your own Anthropic key to power the AI features.
+                  Paste your own Anthropic API key to power the AI features (NPC minds, pulses, chat). It's sent straight from your browser to Anthropic — never to any other server — and is stored on this device only when you save. Get one at console.anthropic.com. The town still runs without a key; the AI just stays quiet.
                 </div>
                 <input type="password" value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)}
-                  placeholder="sk-ant-… (stored only if you save)"
+                  placeholder="sk-ant-… (stored on this device only if you save)"
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" }} />
                 <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                  <button style={{ ...S.smallBtn, flex: 1 }} onClick={() => { setUserApiKey(apiKeyInput); sim.settings.apiKey = apiKeyInput; showToast(apiKeyInput ? "🔑 API key set." : "Key cleared — artifact mode."); bump(); saveGame(); }}>Apply key</button>
+                  <button style={{ ...S.smallBtn, flex: 1 }} onClick={() => { setUserApiKey(apiKeyInput); sim.settings.apiKey = apiKeyInput; showToast(apiKeyInput ? "🔑 API key set." : "Key cleared — AI paused."); bump(); saveGame(); }}>Apply key</button>
                   {apiKeyInput && <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => { setApiKeyInput(""); setUserApiKey(""); sim.settings.apiKey = ""; showToast("Key cleared."); bump(); saveGame(); }}>Clear</button>}
                 </div>
               </div>
@@ -7297,7 +8596,19 @@ export default function Alderbrook() {
                 </div>
               )}
             </div>
-            {!interro.concluded ? (
+            {!interro.concluded && interro.offline ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+                <div style={{ fontSize: 11, opacity: 0.65, color: "#2a2620", textAlign: "center" }}>
+                  Question {Math.min(interro.q, CFG.SKILLCHECK.interrogateQuestions)} of {CFG.SKILLCHECK.interrogateQuestions} · they look {interro.susp >= 70 ? "certain" : interro.susp >= 50 ? "unconvinced" : "doubtful"}
+                </div>
+                {Object.entries(CFG.INTERRO_OFFLINE.tactics).map(([id, t]) => (
+                  <button key={id} onClick={() => offlineTactic(id, !!simRef.current.cases.find(c => c.id === interro.caseId && c.killerId === "player"))}
+                    style={{ padding: "8px 10px", borderRadius: 8, border: "none", background: "#2a2f38", color: "#e8e0d0", fontSize: 13, textAlign: "left", fontWeight: 600 }}>
+                    {t.label}<span style={{ opacity: 0.5, fontWeight: 400 }}> — {t.blurb}</span>
+                  </button>
+                ))}
+              </div>
+            ) : !interro.concluded ? (
               <div style={S.chatInputRow}>
                 <input style={{ ...S.chatInput, fontSize: Math.max(16, fs) }} value={chatInput}
                   placeholder={interro.busy ? "…" : "Answer the detective…"} disabled={interro.busy}
@@ -7346,6 +8657,136 @@ export default function Alderbrook() {
                 </button>
                 <div style={{ fontSize: 11, color: "#8a8578", textAlign: "center" }}>
                   Success frees you as a hunted 5★ fugitive. Failure means they drag you back.
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* camera controls — outdoors only, where there's a map bigger than the window */}
+      {simRef.current?.player.scene.startsWith("t:") && (
+        <div style={{ position: "absolute", right: 10, bottom: 120, display: "flex", flexDirection: "column", gap: 6, zIndex: 30 }}>
+          <button onClick={() => nudgeZoom(CFG.ZOOM.step)} disabled={zoomHud >= CFG.ZOOM.max}
+            style={{ width: 38, height: 38, borderRadius: 10, border: "none", background: "rgba(30,34,44,0.88)", color: "#fff", fontSize: 20, fontWeight: 700, opacity: zoomHud >= CFG.ZOOM.max ? 0.35 : 1 }}>+</button>
+          <button onClick={() => nudgeZoom(-CFG.ZOOM.step)} disabled={zoomHud <= CFG.ZOOM.min}
+            style={{ width: 38, height: 38, borderRadius: 10, border: "none", background: "rgba(30,34,44,0.88)", color: "#fff", fontSize: 20, fontWeight: 700, opacity: zoomHud <= CFG.ZOOM.min ? 0.35 : 1 }}>−</button>
+          {zoomHud > 1 && <div style={{ textAlign: "center", fontSize: 11, color: "#fff", opacity: 0.65 }}>{zoomHud.toFixed(2)}×</div>}
+        </div>
+      )}
+
+      {/* the LEFT ACTION STACK — one button per verb; picker chooses who */}
+      {(() => {
+        const p = simRef.current?.player; if (!p) return null;
+        const anyone = nearbyPeople("talk").length > 0;
+        const armedNow = !!bestWeapon(p);
+        if (!anyone && !armedNow) return null;
+        const btn = (label, on, show = true, hot = "") => show ? (
+          <button key={label} onClick={on} style={{ padding: "10px 12px", borderRadius: 10, border: "none", background: "rgba(30,34,44,0.88)", color: "#fff", fontSize: 14, fontWeight: 700, textAlign: "left", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>
+            {label}{hot && !isPhone ? <span style={{ opacity: 0.55, fontWeight: 400 }}> ({hot})</span> : null}
+          </button>
+        ) : null;
+        return (
+          <div style={{ position: "absolute", left: 10, bottom: 120, display: "flex", flexDirection: "column", gap: 6, zIndex: 30 }}>
+            {btn(p.unsheathed ? "🗡 Sheathe" : "🗡 Draw", toggleSheathe, armedNow)}
+            {btn("🎁 Gift", () => openPicker("gift"), anyone, "G")}
+            {btn("💬 Talk", () => openPicker("talk"), anyone, "T")}
+            {btn("🤝 Trade", () => openPicker("trade"), anyone, "H")}
+            {btn("😠 Threaten", () => openPicker("threaten"), anyone && p.unsheathed, "B")}
+            {btn("⚔ Attack", () => openPicker("attack"), anyone && p.unsheathed && isPhone)}
+          </div>
+        );
+      })()}
+
+      {/* frozen-time target picker */}
+      {picker && (
+        <div style={S.chatOverlay} onClick={() => setPicker(null)}>
+          <div style={{ ...S.chatPanel, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+            <div style={{ ...S.chatHeader, background: "#3a4a5a" }}>
+              <span style={{ fontWeight: 700 }}>
+                {picker.kind === "gift" ? "🎁 Gift who?" : picker.kind === "talk" ? "💬 Talk to who?" : picker.kind === "trade" ? "🤝 Trade with who?" : picker.kind === "threaten" ? "😠 Threaten who?" : "⚔ Attack who?"}
+              </span>
+              <button style={S.closeBtn} onClick={() => setPicker(null)}>✕</button>
+            </div>
+            <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              {nearbyPeople(picker.kind).map(n => (
+                <button key={n.id} onClick={() => pickTarget(n.id)}
+                  style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#eef1f5", fontSize: 15, textAlign: "left", fontWeight: 600 }}>
+                  <span style={{ color: n.color }}>●</span> {n.name} <span style={{ opacity: 0.5, fontWeight: 400 }}>— {n.activity}</span>
+                </button>
+              ))}
+              <button onClick={() => setPicker(null)} style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#d8d8d8", fontSize: 15, fontWeight: 700 }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🤝 trade composer (player → NPC) */}
+      {tradePanel && (() => {
+        const tNpc = simRef.current?.npcs.find(n => n.id === tradePanel.npcId);
+        const inv = Object.entries(simRef.current?.player.inv || {}).filter(([, q]) => q > 0);
+        const catalog = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0);
+        const upd = (k, v) => setTradePanel({ ...tradePanel, [k]: v });
+        const numIn = { width: 64, padding: "6px 8px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14 };
+        const selIn = { flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14 };
+        return (
+          <div style={S.chatOverlay} onClick={() => setTradePanel(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#5a6a3a" }}>
+                <span style={{ fontWeight: 700 }}>🤝 Offer a trade — {tNpc?.name || "?"}</span>
+                <button style={S.closeBtn} onClick={() => setTradePanel(null)}>✕</button>
+              </div>
+              <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={S.folkCard}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>You give</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="number" min="0" max={CFG.TRADE.maxCoins} value={tradePanel.giveC} onChange={e => upd("giveC", e.target.value)} style={numIn} /> 🪙
+                    <select value={tradePanel.giveItem} onChange={e => upd("giveItem", e.target.value)} style={selIn}>
+                      <option value="">— no item —</option>
+                      {inv.map(([id, q]) => <option key={id} value={id}>{ITEMS[id]?.emoji} {ITEMS[id]?.name} (×{q})</option>)}
+                    </select>
+                    {tradePanel.giveItem && <input type="number" min="1" max="20" value={tradePanel.giveQty} onChange={e => upd("giveQty", e.target.value)} style={numIn} />}
+                  </div>
+                </div>
+                <div style={S.folkCard}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>You ask</div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="number" min="0" max={CFG.TRADE.maxCoins} value={tradePanel.askC} onChange={e => upd("askC", e.target.value)} style={numIn} /> 🪙
+                    <select value={tradePanel.askItem} onChange={e => upd("askItem", e.target.value)} style={selIn}>
+                      <option value="">— no item —</option>
+                      {catalog.map(id => <option key={id} value={id}>{ITEMS[id]?.emoji} {ITEMS[id]?.name}</option>)}
+                    </select>
+                    {tradePanel.askItem && <input type="number" min="1" max="20" value={tradePanel.askQty} onChange={e => upd("askQty", e.target.value)} style={numIn} />}
+                  </div>
+                </div>
+                <input value={tradePanel.note} maxLength={CFG.TRADE.noteMax} onChange={e => upd("note", e.target.value)}
+                  placeholder={`Optional: "I'll pay you to…" (they'll remember it)`}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" }} />
+                <button style={{ ...S.binBtn, background: "#3a6ea5", color: "#fff" }} onClick={doOfferTrade}>Make the offer</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 🤝 incoming offer (NPC → player) */}
+      {tradeOffer && (() => {
+        const oNpc = simRef.current?.npcs.find(n => n.id === tradeOffer.fromId);
+        return (
+          <div style={S.chatOverlay}>
+            <div style={{ ...S.chatPanel, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#5a6a3a" }}>
+                <span style={{ fontWeight: 700 }}>🤝 {oNpc?.name || "Someone"} has an offer</span>
+              </div>
+              <div style={{ padding: 14 }}>
+                <div style={S.folkCard}>
+                  They give: <b>{tradeSummary(tradeOffer.give, { }) === "nothing for nothing" ? "nothing" : tradeSummary(tradeOffer.give, {}).replace(" for nothing", "")}</b><br />
+                  They ask: <b>{tradeSummary(tradeOffer.ask, {}).replace(" for nothing", "")}</b>
+                </div>
+                {tradeOffer.note && <div style={{ fontStyle: "italic", opacity: 0.8, margin: "8px 0" }}>"{tradeOffer.note}"</div>}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button style={{ ...S.binBtn, flex: 1, background: "#3a7d44", color: "#fff" }} onClick={() => answerOffer(true)}>Accept</button>
+                  <button style={{ ...S.binBtn, flex: 1, background: "#8a5a5a", color: "#fff" }} onClick={() => answerOffer(false)}>Decline</button>
                 </div>
               </div>
             </div>
@@ -7650,6 +9091,229 @@ export default function Alderbrook() {
       })()}
 
       {/* 📋 the Watch's case board + compliance ledger */}
+      {repairPanel && sim && (() => {
+        const rp = repairPanel;
+        const eased = skillLevel(player, "mechanic") >= 2;   // practiced hands get the simpler variant
+        const finishRepair = () => {
+          const sim2 = simRef.current, p2 = sim2.player;
+          const part = CFG.REPAIR.parts[rp.st], fee = CFG.REPAIR.fee[rp.st];
+          p2.inv[part]--; if (p2.inv[part] <= 0) delete p2.inv[part];
+          const rec = applianceRec(sim2, rp.bId, rp.st);
+          rec.broken = false; rec.uses = 0; delete rec.waited;
+          const ownerId = OWNERS[rp.bId];
+          const owner = ownerId && ownerId !== "player" ? sim2.npcs.find(n => n.id === ownerId && n.alive) : null;
+          if (owner) transferCoins(sim2, owner, p2, Math.min(fee, owner.coins));
+          else if (ownerId !== "player") p2.coins += fee;   // civic building: the town pays
+          sim2.time += CFG.REPAIR.playerMin;                 // the rest of those hours WAS the minigame
+          const before = skillLevel(p2, "mechanic");
+          p2.skills.mechanic = (p2.skills.mechanic || 0) + taskXp("mechanic", 0);
+          if (skillLevel(p2, "mechanic") > before) showToast(`📈 ${SKILL_TRACKS.mechanic} — now ${skillTierName(p2, "mechanic")}!`);
+          sfx.coin(); showToast(`🔧 Fixed. ${ownerId === "player" ? "Your place runs again." : `+${fee}c — good, honest mechanic work.`}`);
+          setRepairPanel(null); bump();
+        };
+        const title = rp.st === "wash" ? "Bathroom plumbing" : rp.st === "drinks" ? "Drink machine" : "Oven";
+        return (
+        <div style={S.chatOverlay}>
+          <div style={{ ...S.chatPanel, maxWidth: 420, padding: 18 }} onClick={e => e.stopPropagation()}>
+            <div style={{ ...S.chatHeader, background: "#3a4a5a" }}>
+              <span style={{ fontWeight: 700 }}>🔧 {title}{eased ? " (practiced)" : ""}</span>
+              <button style={S.closeBtn} onClick={() => setRepairPanel(null)}>✕</button>
+            </div>
+            {rp.kind === "sliders" && <SliderGame reps={eased ? 3 : 5} sliders={eased ? 1 : 2} onDone={finishRepair} />}
+            {rp.kind === "buttons" && <ButtonGame steps={eased ? 2 : 4} routing={!eased} onDone={finishRepair} />}
+            {rp.kind === "knob" && <KnobGame spins={eased ? 5 : 10} onDone={finishRepair} />}
+          </div>
+        </div>
+        );
+      })()}
+
+      {craftPanel && sim && (() => {
+        const cp = craftPanel, R = CFG.CRAFT.recipes;
+        const inv = player.inv || {};
+        const hasTools = (r) => r.tools.every(t => (inv[t] || 0) > 0);
+        const hasMats = (r) => Object.entries(r.mats).every(([m, n]) => (inv[m] || 0) >= n);
+        const tierOf = (r) => r.tier;
+        const AREAS = { easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"] };
+        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" } };
+        const start = (rid) => {   // EVERY tier opens on the balance scale — graded by tier
+          const r = R[rid], tier = tierOf(r), B = CFG.CRAFT.balance[tier];
+          const mk = () => { const min = B.minLo + Math.floor(Math.random() * (B.minHi - B.minLo + 1)), max = B.maxLo + Math.floor(Math.random() * (B.maxHi - B.maxLo + 1)); return { min, max, v: min + Math.floor(Math.random() * (max - min + 1)) }; };
+          setCraftPanel({ stage: "balance", recipeId: rid, tier, tol: B.tol, showMax: B.showMax, L: mk(), Rr: mk() });
+        };
+        const beginAssembly = (rid, tier) => {
+          const areas = tier === "easy" ? ["wood", "screw"] : AREAS[tier];   // easy still SHOWS two areas — either accepts the one chip
+          const chips = tier === "easy" ? [Math.random() < 0.5 ? "wood" : "screw"] : AREAS[tier];
+          setCraftPanel({ stage: "assembly", recipeId: rid, tier, areas, chips: chips.map(c => ({ kind: c, placed: false })), screws: tier === "easy" ? 1 : tier === "medium" ? 2 : 3, done: {}, holding: null });
+        };
+        const quoteBase = (r) => Object.entries(r.mats).reduce((s, [m, n]) => s + (ITEMS[m]?.price || 2) * n, 0) + CFG.CRAFT.labor[r.tier];
+        const commission = (rid) => {   // Garrick plans it — API voice, local math
+          const r = R[rid], sim2 = simRef.current;
+          const owner = sim2.npcs.find(n => n.id === OWNERS.workshop_s && n.alive);
+          if (!owner) { showToast("No one's taking commissions."); return; }
+          const base = quoteBase(r), baseDays = CFG.CRAFT.daysByTier[r.tier];
+          const thing = r.furn ? FURNITURE[rid] : ITEMS[rid];
+          setCraftPanel({ stage: "quote", recipeId: rid, busy: true });
+          commissionCall(owner.name, owner.personality, thing.name, r.tier, base, baseDays, `fame ${sim2.player.fame || 0}`)
+            .then(q => setCraftPanel(s => s && { ...s, busy: false, price: clamp(Math.round(q.price || base), Math.ceil(base * 0.8), Math.ceil(base * 1.2)), days: clamp(Math.round(q.days || baseDays), 1, baseDays + 1), line: (q.line || "").slice(0, 140) }))
+            .catch(() => setCraftPanel(s => s && { ...s, busy: false, price: base, days: baseDays, line: `${thing.name}, ${r.tier} work. ${base} coins, ready in ${baseDays} day${baseDays > 1 ? "s" : ""}.` }));
+        };
+        const placeOrder = (withLetter) => {
+          const sim2 = simRef.current, p2 = sim2.player;
+          const total = cp.price + (withLetter ? CFG.CRAFT.letterFee : 0);
+          if (!spend(p2, total)) { showToast(`You need ${total}c.`); return; }
+          creditOwner(sim2, "workshop_s", total);
+          (sim2.contracts = sim2.contracts || []).push({ recipeId: cp.recipeId, readyDay: sim2.day + cp.days, letter: withLetter, letterSent: false });
+          sfx.coin(); showToast(`📜 Ordered. Ready day ${sim2.day + cp.days}${withLetter ? " — a letter will find you" : ""}.`);
+          setCraftPanel(null); bump();
+        };
+        const finish = () => {
+          const r = R[cp.recipeId];
+          const sim2 = simRef.current, p2 = sim2.player;
+          for (const [m, n] of Object.entries(r.mats)) { p2.inv[m] -= n; if (p2.inv[m] <= 0) delete p2.inv[m]; }
+          if (r.furn) {
+            (sim2.playerFurniture = sim2.playerFurniture || []).push(cp.recipeId);
+            showToast(`🪑 You built a ${FURNITURE[cp.recipeId]?.name || cp.recipeId}! It's set up at home.`);
+          } else {
+            p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + 1;
+            showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name} — made by hand.`);
+          }
+          const before = skillLevel(p2, "crafting");
+          p2.skills.crafting = (p2.skills.crafting || 0) + taskXp("crafting", 0);
+          if (skillLevel(p2, "crafting") > before) showToast(`📈 ${SKILL_TRACKS.crafting} — now ${skillTierName(p2, "crafting")}!`);
+          sfx.coin(); setCraftPanel(null); bump();
+        };
+        return (
+        <div style={S.chatOverlay}>
+          <div style={{ ...S.chatPanel, maxWidth: 440, padding: 18 }} onClick={e => e.stopPropagation()}>
+            <div style={{ ...S.chatHeader, background: "#5a4a32" }}>
+              <span style={{ fontWeight: 700 }}>🛠️ {cp.stage === "pick" ? "Workbench" : R[cp.recipeId] ? `Crafting: ${(R[cp.recipeId].furn ? FURNITURE[cp.recipeId] : ITEMS[cp.recipeId])?.name}` : "Workbench"}</span>
+              <button style={S.closeBtn} onClick={() => setCraftPanel(null)}>✕</button>
+            </div>
+            {cp.stage === "pick" && (
+              <div style={{ ...S.chatBody, gap: 6 }}>
+                {Object.entries(R).map(([rid, r]) => {
+                  const ok = hasTools(r) && hasMats(r);
+                  const atShop = player.scene === "i:workshop_s";
+                  const thing = r.furn ? FURNITURE[rid] : ITEMS[rid];
+                  return (
+                    <div key={rid} style={{ ...S.folkCard, textAlign: "left" }}>
+                      <b>{thing.emoji} {thing.name}</b> <span style={{ opacity: 0.6, fontSize: 12 }}>({r.tier}{r.out ? ` · makes ${r.out}` : ""})</span>
+                      <div style={{ fontSize: 12, opacity: 0.75 }}>
+                        needs: {Object.entries(r.mats).map(([m, n]) => `${n}× ${ITEMS[m].name}`).join(", ")} · tools: {r.tools.map(t => ITEMS[t].emoji).join(" ")}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+                        <button disabled={!ok} onClick={() => start(rid)}
+                          style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: ok ? "#5a7a4a" : "#444", color: "#fff", fontSize: 12, opacity: ok ? 1 : 0.5 }}>🛠️ Make it</button>
+                        {atShop && OWNERS.workshop_s !== "player" && (
+                          <button onClick={() => commission(rid)}
+                            style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: "#5a4a7a", color: "#fff", fontSize: 12 }}>📜 Commission (~{quoteBase(r)}c)</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 11, opacity: 0.55 }}>Make it yourself (tools + materials), or pay the wright and come back. Every job opens on the balance scale — graded by difficulty.</div>
+              </div>
+            )}
+            {cp.stage === "quote" && (
+              <div style={{ ...S.chatBody, gap: 10 }}>
+                {cp.busy ? <div style={{ fontStyle: "italic", opacity: 0.6 }}>Garrick chalks some figures…</div> : (
+                  <>
+                    <div style={{ ...S.folkCard, fontStyle: "italic" }}>"{cp.line}"</div>
+                    <div style={{ fontSize: 13 }}><b>{cp.price}c</b> · ready in <b>{cp.days} day{cp.days > 1 ? "s" : ""}</b> · pickup at the counter</div>
+                    <button onClick={() => placeOrder(false)} style={{ ...S.binBtn, width: "100%", background: "#5a7a4a" }}>Pay {cp.price}c</button>
+                    <button onClick={() => placeOrder(true)} style={{ ...S.binBtn, width: "100%", background: "#5a4a7a" }}>Pay {cp.price + CFG.CRAFT.letterFee}c — send a letter when it's ready</button>
+                  </>
+                )}
+              </div>
+            )}
+            {cp.stage === "balance" && (() => {
+              const diff = cp.L.v - cp.Rr.v, deg = clamp(diff * 2.2, -45, 45), even = Math.abs(diff) <= cp.tol;
+              return (
+                <div style={{ ...S.chatBody, alignItems: "center", gap: 14 }}>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>Balance the scale — match the two weights exactly.</div>
+                  <div style={{ height: 8, width: 200, background: even ? "#4a9a5a" : "#c9a84a", borderRadius: 4, transform: `rotate(${deg}deg)`, transition: "transform 0.15s, background 0.2s" }} />
+                  <div style={{ display: "flex", gap: 40, alignItems: "center" }}>
+                    {[["L", cp.L], ["Rr", cp.Rr]].map(([side, sl]) => (
+                      <div key={side} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                        <b style={{ fontSize: 18 }}>{sl.v}</b>
+                        <input type="range" min={sl.min} max={sl.max} value={sl.v}
+                          onChange={e => setCraftPanel(s => ({ ...s, [side]: { ...s[side], v: +e.target.value } }))}
+                          style={{ writingMode: "vertical-lr", direction: "rtl", height: 130, accentColor: "#c9a84a" }} />
+                        <span style={{ fontSize: 10, opacity: 0.5 }}>{sl.min}–{cp.showMax ? sl.max : "?"}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button disabled={!even} onClick={() => beginAssembly(cp.recipeId, cp.tier)}
+                    style={{ ...S.binBtn, width: "100%", background: even ? "#4a9a5a" : "#666", opacity: even ? 1 : 0.5 }}>
+                    {even ? "Balanced — to the bench" : "Not level yet…"}
+                  </button>
+                  {cp.tol > 0 && <div style={{ fontSize: 10, opacity: 0.45 }}>close enough counts (±{cp.tol})</div>}
+                </div>
+              );
+            })()}
+            {cp.stage === "assembly" && (() => {
+              const allPlaced = cp.chips.every(c => c.placed);
+              return (
+                <div style={{ ...S.chatBody, gap: 12 }}>
+                  {!allPlaced && <div style={{ fontSize: 12, opacity: 0.7 }}>Tap a part, then tap where it goes.</div>}
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                    {cp.areas.map(ar => {
+                      const need = cp.chips.find(c => !c.placed && (cp.chips.length === 1 || c.kind === ar));
+                      return (
+                        <div key={ar} onClick={() => { if (cp.sel != null) { const chip = cp.chips[cp.sel]; if (cp.chips.length === 1 || chip.kind === ar) { chip.placed = true; setCraftPanel(s => ({ ...s, sel: null, chips: [...s.chips] })); sfx.pop(); } } }}
+                          style={{ width: 92, height: 72, borderRadius: 10, border: `2px dashed ${need && cp.sel != null ? "#c9a84a" : "#777"}`,
+                            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                            background: cp.chips.find(c => c.placed && c.kind === ar) ? "#3a4a3a" : "#2a2d36", color: "#ddd" }}>
+                          <span style={{ fontSize: 22 }}>{AREA_META[ar].emoji}</span>
+                          <span style={{ fontSize: 11 }}>{AREA_META[ar].label} area</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {!allPlaced && (
+                    <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                      {cp.chips.map((c, i) => !c.placed && (
+                        <button key={i} onClick={() => setCraftPanel(s => ({ ...s, sel: i }))}
+                          style={{ fontSize: 24, padding: "8px 14px", borderRadius: 10, border: cp.sel === i ? "3px solid #c9a84a" : "1px solid #555", background: "#3a3d46" }}>
+                          {AREA_META[c.kind].emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {allPlaced && (
+                    <>
+                      <div style={{ fontSize: 12, opacity: 0.7, textAlign: "center" }}>
+                        Screw {Math.min(Object.values(cp.done).filter(Boolean).length + 1, cp.screws)} of {cp.screws} — hold it for 1 second. One at a time, like real work.
+                      </div>
+                      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                        {Array.from({ length: cp.screws }).map((_, i) => (
+                          <button key={i} disabled={cp.done[i]}
+                            onPointerDown={() => !cp.done[i] && setCraftPanel(s => ({ ...s, holding: { i, t: performance.now() } }))}
+                            onPointerUp={() => setCraftPanel(s => ({ ...s, holding: null }))}
+                            onPointerLeave={() => setCraftPanel(s => ({ ...s, holding: null }))}
+                            style={{ width: 60, height: 60, borderRadius: "50%", border: "none", fontSize: 24,
+                              background: cp.done[i] ? "#4a9a5a" : cp.holding?.i === i ? "#c9a84a" : "#4a4d58", color: "#fff", touchAction: "none" }}>
+                            {cp.done[i] ? "✓" : "🔩"}
+                          </button>
+                        ))}
+                      </div>
+                      <HoldMeter holdT={cp.holding?.t || null} ms={CFG.CRAFT.holdMs}
+                        onDone={() => setCraftPanel(s => {
+                          const done = { ...s.done, [s.holding.i]: true };
+                          if (Object.values(done).filter(Boolean).length >= s.screws) { setTimeout(finish, 60); }
+                          return { ...s, done, holding: null };
+                        })} />
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+        );
+      })()}
+
       {caseBoard && sim && (
         <div style={S.chatOverlay} onClick={() => setCaseBoard(false)}>
           <div style={{ ...S.chatPanel, maxWidth: 500, height: "78%" }} onClick={e => e.stopPropagation()}>
@@ -7658,11 +9322,20 @@ export default function Alderbrook() {
               <button style={S.closeBtn} onClick={() => setCaseBoard(false)}>✕</button>
             </div>
             <div style={S.chatBody}>
+              {(() => {   // v7 Stage 5: the WANTED board — bring them in ALIVE (carry to hospital) for the bounty
+                const marks = sim.npcs.filter(n => n.alive && !n.jailedUntil && (n.wanted || 0) >= 3).sort((a, b) => b.wanted - a.wanted);
+                return marks.length ? (
+                  <div style={{ ...S.folkCard, borderLeft: "4px solid #a08a2a", background: "#faf6e8" }}>
+                    <b>📜 WANTED — bounties paid on live delivery to a hospital</b>
+                    {marks.map(m => <div key={m.id} style={{ marginTop: 4 }}>{"★".repeat(m.wanted)} <b>{m.name}</b> — last seen {m.town} · <b>{m.wanted * 12}c</b></div>)}
+                  </div>
+                ) : null;
+              })()}
               {sim.cases.length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>No cases on record. Three quiet towns... so far.</div>}
               {[...sim.cases].reverse().slice(0, 12).map(c => {
                 const who = c.suspectId === "player" ? "You" : sim.npcs.find(n => n.id === c.suspectId)?.name;
                 return (
-                  <div key={c.id} style={{ ...S.folkCard, borderLeft: `4px solid ${c.type === "murder" ? "#8a3a3a" : c.type === "robbery" ? "#a0763a" : "#5a7a9a"}` }}>
+                  <div key={c.id} style={{ ...S.folkCard, borderLeft: `4px solid ${c.type === "murder" ? "#8a3a3a" : c.type === "vigilante" ? "#6a4a8a" : c.type === "robbery" ? "#a0763a" : "#5a7a9a"}` }}>
                     <b style={{ textTransform: "uppercase" }}>{c.type}</b> · day {c.day} · {c.state === "open" ? "🔍 OPEN" : c.state === "cold" ? "🧊 cold" : "✅ solved"}
                     <div style={{ fontSize: fs - 2, opacity: 0.8 }}>
                       victim: {c.victim || "—"}{c.state !== "open" && who ? ` · culprit: ${who}` : c.state === "open" ? ` · evidence: ${"▪".repeat(c.evidence) || "none"}` : ""}
@@ -7721,10 +9394,10 @@ export default function Alderbrook() {
 /* ===== styles ===== */
 const S = {
   deviceWrap: { position: "fixed", inset: 0, background: "linear-gradient(180deg,#1b2a3a 0%,#2c4a3e 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" },
-  deviceCard: { background: "#fbf6ea", borderRadius: 20, padding: "30px 28px", textAlign: "center", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.45)" },
+  deviceCard: { background: "#fbf6ea", borderRadius: 20, padding: "30px 28px", textAlign: "center", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.45)" , color: "#2a2620" },
   title: { margin: "8px 0 4px", letterSpacing: 6, fontSize: 26, color: "#2a2620" },
   sub: { color: "#5a5245", lineHeight: 1.45, fontSize: 14, margin: "6px 0" },
-  deviceBtn: { flex: 1, padding: "18px 10px", fontSize: 17, lineHeight: 1.6, borderRadius: 14, border: "2px solid #d8cdb6", background: "#fff", cursor: "pointer", fontFamily: "inherit" },
+  deviceBtn: { flex: 1, padding: "18px 10px", fontSize: 17, lineHeight: 1.6, borderRadius: 14, border: "2px solid #d8cdb6", background: "#fff", cursor: "pointer", fontFamily: "inherit" , color: "#2a2620" },
   wipeBtn: { marginTop: 10, padding: "7px 14px", fontSize: 13, borderRadius: 10, border: "none", background: "transparent", color: "#a05252", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" },
   diffBtn: { padding: "7px 14px", fontSize: 13, borderRadius: 10, border: "2px solid #d8cdb6", background: "#fff", color: "#5a5245", cursor: "pointer", fontFamily: "inherit", fontWeight: 700 },
   diffBtnOn: { background: "#2e6fe0", borderColor: "#2e6fe0", color: "#fff" },
@@ -7748,7 +9421,7 @@ const S = {
 
   fishTrack: { position: "relative", height: 26, background: "#2a3242", borderRadius: 8, overflow: "hidden" },
   fishZone: { position: "absolute", left: "33%", width: "34%", top: 0, bottom: 0, background: "rgba(95,184,95,0.55)" },
-  fishMarker: { position: "absolute", top: 3, width: 16, height: 20, borderRadius: 5, background: "#ffd97a", boxShadow: "0 0 8px rgba(255,217,122,0.8)" },
+  fishMarker: { position: "absolute", top: 3, width: 16, height: 20, borderRadius: 5, background: "#ffd97a", boxShadow: "0 0 8px rgba(255,217,122,0.8)" , color: "#2a2620" },
 
   actionCol: { position: "absolute", display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", zIndex: 5, maxHeight: "55%", overflowY: "auto" },
   actionBtn: { padding: "12px 16px", borderRadius: 12, border: "none", background: "rgba(251,246,234,0.97)", color: "#2a2620", fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.35)", fontFamily: "inherit" },
@@ -7757,14 +9430,14 @@ const S = {
   padBtn: { borderRadius: 12, border: "none", background: "rgba(251,246,234,0.85)", color: "#2a2620", fontSize: 20, fontWeight: 700, touchAction: "none", userSelect: "none", WebkitUserSelect: "none", cursor: "pointer" },
 
   chatOverlay: { position: "fixed", inset: 0, background: "rgba(10,12,18,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 20, padding: 10 },
-  chatPanel: { width: "100%", maxWidth: 520, background: "#fbf6ea", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 -10px 40px rgba(0,0,0,0.5)", maxHeight: "86%" },
+  chatPanel: { width: "100%", maxWidth: 520, background: "#fbf6ea", borderRadius: 18, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 -10px 40px rgba(0,0,0,0.5)", maxHeight: "86%" , color: "#2a2620" },
   chatHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", color: "#fff" },
   closeBtn: { border: "none", background: "rgba(255,255,255,0.25)", color: "#fff", borderRadius: 8, width: 32, height: 32, fontSize: 16, cursor: "pointer" },
   chatBody: { flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 },
   folkCard: { background: "#fff", borderRadius: 12, padding: "10px 12px", color: "#2a2620", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
   msg: { maxWidth: "82%", padding: "9px 13px", borderRadius: 14, lineHeight: 1.4, color: "#2a2620" },
   msgYou: { alignSelf: "flex-end", background: "#d7e6ff", borderBottomRightRadius: 4 },
-  msgThem: { alignSelf: "flex-start", background: "#fff", borderBottomLeftRadius: 4, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
+  msgThem: { alignSelf: "flex-start", background: "#fff", borderBottomLeftRadius: 4, boxShadow: "0 1px 4px rgba(0,0,0,0.08)" , color: "#2a2620" },
   chatInputRow: { display: "flex", gap: 8, padding: 12, borderTop: "1px solid #e5dcc8" },
   chatInput: { flex: 1, padding: "11px 14px", borderRadius: 12, border: "2px solid #d8cdb6", outline: "none", fontFamily: "inherit", background: "#fff", color: "#2a2620" },
   sendBtn: { padding: "0 20px", borderRadius: 12, border: "none", background: "#2e6fe0", color: "#fff", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
