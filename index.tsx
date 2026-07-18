@@ -7980,6 +7980,12 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   const grillOrder = sim?.foodOrder;
   const player = sim?.player;
   const playerTownId = sim && worldRef.current ? townOfScene(worldRef.current, player.scene) : "alderbrook";
+  // True when any panel, minigame, or modal is open — used to hide the walking
+  // controls (D-pad + contextual action buttons) so they don't overlap the HUD.
+  const overlayUp = !!(minigame || chat || interro || folk || picker || tradePanel || tradeOffer ||
+    shopPanel || payPanel || managePanel || storagePanel || chestPanel || craftPanel || repairPanel ||
+    partyPanel || cookPanel || castPanel || caseBoard || travelPanel || invOpen || speakOpen ||
+    settingsOpen || threat || combat || deathScreen || jailScreen);
 
   return (
     <div style={{ ...S.gameWrap, fontSize: fs }}>
@@ -8258,13 +8264,17 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           </div>
         )}
 
-        <div style={{ ...S.actionCol, right: isPhone ? 10 : 16, bottom: isPhone ? 190 : 16 }}>
-          {actions.map(a => (
-            <button key={a.id} style={{ ...S.actionBtn, fontSize: fs }} onClick={() => doAction(a)}>{a.label}</button>
-          ))}
-        </div>
+        {/* Any full-screen panel / minigame / modal is up → hide the walking controls
+            so they don't overlap the HUD or sit uselessly behind a dialog. */}
+        {!overlayUp && (
+          <div style={{ ...S.actionCol, right: isPhone ? 10 : 16, bottom: isPhone ? 16 : 16, left: isPhone ? 190 : "auto" }}>
+            {actions.map(a => (
+              <button key={a.id} style={{ ...S.actionBtn, fontSize: fs }} onClick={() => doAction(a)}>{a.label}</button>
+            ))}
+          </div>
+        )}
 
-        {isPhone && (
+        {isPhone && !overlayUp && (
           <div style={S.dpad}>
             <div /><button style={S.padBtn} {...padHold("up")}>▲</button><div />
             <button style={S.padBtn} {...padHold("left")}>◀</button><div style={{ width: 54, height: 54 }} /><button style={S.padBtn} {...padHold("right")}>▶</button>
