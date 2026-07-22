@@ -447,6 +447,10 @@ const CFG = {
   },
   COMBAT: { roundMs: 700, fistDmg: [4, 9], fleeBase: 45 },
   ROBBERY: { take: 0.4, escapeBase: 40 },
+  /* ===== the civic overhaul: elections, the robbable treasury, and trespass ===== */
+  ELECTION: { everyDays: 14, firstDay: 10, regFee: 5 },   // vote every 2 weeks; register at any hall for a small fee
+  SAFE_ROB: { yield: 0.6, minLoot: 5 },                   // cracking a hall safe: 3★, Extreme-tier check, takes 60% of escrow
+  TRESPASS: { graceMin: 25, reportMin: 60 },              // uninvited lingering in a private home: warning, then a 1★ report
   /* difficulty — set on the start screen or in ⚙️; only touches death & bills */
   DIFF: {
     easy:     { label: "Easy",     deathEnabled: false, revive: true,  billMult: 0.5 },
@@ -665,6 +669,130 @@ const FURNITURE = {
   drinkbar: { name: "Drink Station",  emoji: "🍹", price: 48, grants: "drinks", anchor: { x: 2, y: 2 } },
   table:    { name: "Dining Table",   emoji: "🍽️", price: 70, dining: true, anchor: { x: 4, y: 4 } },   // +5 to every stat a home meal already feeds, +5 energy always
 };
+/* ===== furniture PLACEMENT — predetermined slots per home =====
+   Every home template reserves specific tiles that may hold furniture. Slots hug the
+   walls and leave the door column, the stations (bed/stove/bath/table), the seats and
+   the room's crossing lanes untouched — so no arrangement can ever wall anyone in.
+   A placed piece BLOCKS its tile (it's real), which is why the slots are curated. */
+const HOME_SLOTS_STD = [    // the standard 9×6 cottage (every home_*, shack_*)
+  { x: 2, y: 1, label: "north wall, by the bed" },
+  { x: 4, y: 1, label: "north wall, center" },
+  { x: 5, y: 1, label: "north wall, right of center" },
+  { x: 6, y: 1, label: "north wall, by the washroom" },
+  { x: 1, y: 3, label: "west wall, beside the table" },
+  { x: 5, y: 3, label: "mid-room, right of the table" },
+  { x: 6, y: 3, label: "east side of the room" },
+  { x: 7, y: 3, label: "east wall corner" },
+];
+const HOME_SLOTS_MANOR = [  // Vance Manor's 11×7 floor (home_o)
+  { x: 2, y: 1, label: "north wall, by the bed" },
+  { x: 3, y: 1, label: "north wall, left" },
+  { x: 5, y: 1, label: "north wall, center" },
+  { x: 6, y: 1, label: "north wall, right of center" },
+  { x: 7, y: 1, label: "north wall, right" },
+  { x: 8, y: 1, label: "north wall, by the washroom" },
+  { x: 1, y: 3, label: "west wall, beside the table" },
+  { x: 9, y: 3, label: "east wall, past the tables" },
+  { x: 9, y: 4, label: "east wall, south corner" },
+];
+const homeSlots = (homeId) => {
+  const d = INTERIOR_DEFS[homeId]; if (!d) return [];
+  return d.rows[0].length >= 11 ? HOME_SLOTS_MANOR : HOME_SLOTS_STD;
+};
+/* which building ids count as private homes (trespass + furniture placement) */
+const isHomeId = (bId) => /^(home_|shack_)/.test(bId || "");
+
+/* ===== furniture & register vector art =====
+   Small hand-built canvas paintings — simple shapes, warm colors, readable at 32px.
+   (x, y) is the tile's top-left in screen px; T is the tile size. */
+const drawFurnitureArt = (ctx, fid, x, y, T) => {
+  const u = T / 10;                       // art unit
+  ctx.save(); ctx.translate(x, y);
+  const box = (bx, by, bw, bh, c) => { ctx.fillStyle = c; ctx.fillRect(bx * u, by * u, bw * u, bh * u); };
+  const dot = (cx, cy, r, c) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(cx * u, cy * u, r * u, 0, 7); ctx.fill(); };
+  switch (fid) {
+    case "piggy":
+      dot(5, 6, 3, "#e79db1"); dot(7.6, 5.2, 1, "#e79db1");            // body + snout
+      box(2.6, 8, 1, 1.4, "#c97f95"); box(6, 8, 1, 1.4, "#c97f95");    // legs
+      ctx.fillStyle = "#c97f95"; ctx.beginPath(); ctx.moveTo(3.4 * u, 3.6 * u); ctx.lineTo(4.6 * u, 3.2 * u); ctx.lineTo(4.4 * u, 4.6 * u); ctx.fill();   // ear
+      box(4.4, 3.4, 1.4, 0.5, "#8a5563"); dot(8, 5.2, 0.28, "#7d4b59"); // coin slot + nostril
+      break;
+    case "safe":
+      box(1.5, 2, 7, 7, "#4a5158"); box(2.1, 2.6, 5.8, 5.8, "#5b636b");
+      dot(5, 5.5, 1.4, "#394046"); dot(5, 5.5, 0.5, "#c9ccd0");          // dial
+      box(7, 4.8, 0.7, 1.6, "#c9ccd0");                                  // handle
+      box(1.8, 9, 1.2, 0.8, "#3a4046"); box(7, 9, 1.2, 0.8, "#3a4046"); // feet
+      break;
+    case "workbench":
+      box(1, 4.5, 8, 1.2, "#8a6a42"); box(1.6, 5.7, 1, 3.6, "#6e5334"); box(7.4, 5.7, 1, 3.6, "#6e5334");
+      box(2.5, 3.6, 1.8, 0.9, "#9aa1a8"); dot(6.5, 4.1, 0.5, "#c0692e"); // vise + tool
+      box(5.5, 3.9, 2, 0.4, "#5b636b");
+      break;
+    case "chair":
+      box(2, 3, 1.6, 5.5, "#7d5a8c"); box(2, 5.5, 6, 2.4, "#8f6a9e");   // back + seat
+      box(6.6, 5, 1.4, 2.9, "#7d5a8c");                                  // arm
+      box(2.4, 7.9, 1, 1.6, "#5e4570"); box(6.8, 7.9, 1, 1.6, "#5e4570");
+      break;
+    case "bedup":
+      box(1, 3.5, 8, 4.5, "#b48a54"); box(1.4, 2.6, 7.2, 3, "#e8e2d4"); // frame + duvet
+      box(1.8, 3, 2.4, 1.6, "#d8b8c4");                                  // pillow
+      box(1, 7.8, 1, 1.6, "#8a6a42"); box(8, 7.8, 1, 1.6, "#8a6a42");
+      break;
+    case "fridge":
+      box(2.5, 1.5, 5, 8, "#dfe4e8"); box(2.5, 4.4, 5, 0.4, "#aab2ba");
+      box(6.4, 2.3, 0.5, 1.6, "#8a9299"); box(6.4, 5.2, 0.5, 2.2, "#8a9299");
+      break;
+    case "fountain":
+      dot(5, 7, 3.4, "#7fa8c9"); dot(5, 7, 2.6, "#a8c8e0");
+      box(4.6, 3, 0.8, 4, "#8a9299"); dot(5, 2.8, 0.7, "#c9dfef");
+      dot(3.4, 4.2, 0.35, "#c9dfef"); dot(6.6, 4.2, 0.35, "#c9dfef");   // spray
+      break;
+    case "chest":
+      box(1.8, 4, 6.4, 4.6, "#8a6a42"); box(1.8, 3.2, 6.4, 1.6, "#75592f");
+      box(1.8, 5.6, 6.4, 0.5, "#5e4a2e");
+      box(4.6, 5, 0.9, 1.6, "#d8c25e");                                  // clasp
+      break;
+    case "oven":
+      box(2, 2.5, 6, 7, "#4a4e55"); box(2.7, 4.4, 4.6, 3.4, "#2c2f34");
+      dot(4, 5.9, 1.1, "#e8a04a"); dot(5.6, 6.2, 0.7, "#f0c56a");        // the glow
+      dot(3, 3.4, 0.4, "#c9ccd0"); dot(4.4, 3.4, 0.4, "#c9ccd0"); dot(5.8, 3.4, 0.4, "#c9ccd0");
+      break;
+    case "drinkbar":
+      box(1.5, 5.5, 7, 1.2, "#8a6a42"); box(2, 6.7, 1, 2.6, "#6e5334"); box(7, 6.7, 1, 2.6, "#6e5334");
+      box(2.6, 2.8, 1, 2.7, "#7fb069"); box(4.2, 2.2, 1, 3.3, "#c05252"); box(5.8, 3.1, 1, 2.4, "#e0b345");   // bottles
+      dot(7.4, 4.6, 0.8, "#a8c8e0");                                     // a glass
+      break;
+    case "table":
+      dot(5, 5.5, 3.6, "#8a6a42"); dot(5, 5.5, 3, "#9c7a4e");
+      dot(3.6, 5, 0.9, "#e8e2d4"); dot(6.4, 5, 0.9, "#e8e2d4"); dot(5, 7, 0.9, "#e8e2d4");   // set places
+      break;
+    default:                                                             // crafted pieces (chair from the workshop etc.)
+      box(2, 3, 6, 5, "#8a6a42"); box(2.5, 3.5, 5, 4, "#9c7a4e");
+  }
+  ctx.restore();
+};
+/* the till on the counter — three visible looks: base / light security / high security */
+const drawRegisterArt = (ctx, x, y, T, security) => {
+  const u = T / 10;
+  ctx.save(); ctx.translate(x, y);
+  const box = (bx, by, bw, bh, c) => { ctx.fillStyle = c; ctx.fillRect(bx * u, by * u, bw * u, bh * u); };
+  // the base till: a squat machine with a keypad and a drawer
+  box(2, 3.6, 6, 3.6, security >= 2 ? "#3d4a5c" : security >= 1 ? "#4f5a4a" : "#6e6152");
+  box(2.4, 2.4, 5.2, 1.4, "#2c2f34"); box(2.9, 2.7, 4.2, 0.8, "#9fe0a8");    // display
+  box(2, 7.2, 6, 1.2, "#4a4438");                                             // drawer
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) box(2.8 + i * 1.6, 4.2 + j * 1.3, 1, 0.8, "#c9ccd0");   // keys
+  if (security >= 1) {                                                        // light: a lock plate on the drawer
+    box(6.6, 7.3, 1, 1, "#d8c25e"); ctx.fillStyle = "#4a4438"; ctx.fillRect(6.9 * u, 7.7 * u, 0.4 * u, 0.4 * u);
+  }
+  if (security >= 2) {                                                        // high: alarm beacon + camera stalk
+    ctx.fillStyle = "#c05252"; ctx.beginPath(); ctx.arc(5 * u, 1.7 * u, 0.7 * u, 0, 7); ctx.fill();
+    box(4.7, 2, 0.6, 0.6, "#8a3a3a");
+    box(0.8, 2.2, 0.5, 5, "#5b636b"); box(0.4, 1.4, 1.6, 1.1, "#394046");     // the little camera
+    ctx.fillStyle = "#9fe0a8"; ctx.beginPath(); ctx.arc(1.2 * u, 1.95 * u, 0.3 * u, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+};
+
 const FOOD_BUYERS = ["diner", "mart"];
 /* Stage 3.7: what each owner is ALLOWED to put on their menu. Eateries get the
    cooked/baked catalogue (their kitchen makes it); plain stores get non-cooked
@@ -1839,6 +1967,30 @@ Would you invest now? Choose: ${opts}. Return ONLY JSON: {"choice":"install|ligh
   return ["install", "light", "high", "wait"].includes(c) ? c : null;   // null → caller uses auto heuristic
 }
 
+/* Stage F1 — where does the new piece GO? A tiny flavor call: the buyer picks one of
+   their home's free furniture slots. Malformed/failed → caller places it at random. */
+async function furniturePlaceChoice(buyerName, personality, furnName, slotLabels) {
+  const opts = slotLabels.map((l, i) => `${i}: ${l}`).join("; ");
+  const prompt =
+`${buyerName} (${personality}) just bought a ${furnName} for their one-room cottage and must pick where it goes.
+Free spots — ${opts}. Return ONLY JSON: {"slot":<number>}.`;
+  const out = await callClaude(prompt, 24);
+  const i = Number(out?.slot);
+  return Number.isInteger(i) && i >= 0 && i < slotLabels.length ? i : null;
+}
+
+/* Stage F4 — selling the shop: the owner names THEIR price. The benchmark is passed in;
+   the model may go higher or lower within hard bounds the caller clamps to anyway. */
+async function bizQuote(ownerName, personality, bizName, basePrice, recentGross) {
+  const prompt =
+`You are ${ownerName}, sole owner of ${bizName} in a small-town life-sim. You are: ${personality}.
+The player wants to buy your business outright — keys, stock, goodwill, all of it. A fair market benchmark is ${basePrice} coins${recentGross ? ` (recent takings: ~${recentGross}c this period)` : ""}.
+Name YOUR asking price in whole coins — anywhere from ${Math.round(basePrice * 0.6)} to ${Math.round(basePrice * 1.8)} depending on how attached you are, how business is going, and your read of the buyer. Add ONE short in-character line to go with it.
+Return ONLY JSON: {"price":<number>,"say":"<under 20 words>"}.`;
+  const out = await callClaude(prompt, 80);
+  return out && typeof out === "object" ? out : null;
+}
+
 async function ownerConsider(shopName, ownerName, personality, kind, menu, pool, itemInfo, canSwap, maxSwaps) {
   const opening = menu.length === 0;                     // Stage 3.7: day-1 menu composition
   const lines = menu.map(id => `  ${id}: base ${itemInfo[id].price}c (${itemInfo[id].name})`).join("\n");
@@ -2122,6 +2274,9 @@ export default function Alderbrook() {
   const [storagePanel, setStoragePanel] = useState(false);   // Stage 4: home cash storage
   const [chestPanel, setChestPanel] = useState(false);       // Stage 4: item chest
   const [managePanel, setManagePanel] = useState(null);      // Stage 5: owner business-management panel {bId}
+  const [hallPanel, setHallPanel] = useState(null);          // civic: {town} — ledger, taxes, elections, mayor tools
+  const [bizOffer, setBizOffer] = useState(null);            // {bId, price, say} — the owner's asking price on the table
+  const [placePanel, setPlacePanel] = useState(null);        // {furnId} — pick a home slot for a new piece
   const regRobArmRef = useRef(null);                         // Stage 5: two-tap confirm for robbing a register
   const printSurfRef = useRef(null);                         // Stage 6: printer minigame drag surface
   const printDragRef = useRef(null);                         // Stage 6: which paper is being dragged
@@ -2168,7 +2323,7 @@ export default function Alderbrook() {
   const combatRef = useRef(null); combatRef.current = combat;
   const threatRef = useRef(null); threatRef.current = threat;
   const modalRef = useRef(false);
-  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker);
+  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
   const jailRef = useRef(false);
   jailRef.current = !!jailScreen;                        // Stage 3.5: jail time is REAL — the cell must not pause the sim
   const apiBusyRef = useRef(false);
@@ -2230,7 +2385,7 @@ export default function Alderbrook() {
     for (const b of BUILDINGS.filter(b => b.enterable)) mess[b.id] = 10 + Math.random() * 20;
     simRef.current = {
       time: CFG.START_HOUR * 60, day: 1,
-      player: { scene: "t:alderbrook", x: bld("home_p").door.x, y: bld("home_p").door.y,
+      player: { scene: "t:alderbrook", x: bld("home_p").door.x, y: bld("home_p").door.y, home: "home_p",   // home was never set — furniture stations checked p.home and always failed
         hunger: 85, thirst: 85, energy: 95, hygiene: 90, health: 100, alive: true,
         coins: CFG.START_COINS, inv: { bread: 1, water: 1 }, fame: 0, renown: 0,
         wanted: 0, bedrest: false, incap: null, dying: null, sick: null, hospitalBill: 0,
@@ -2266,6 +2421,10 @@ export default function Alderbrook() {
       opening: null, interviewBans: {}, interview: null, // the job market: today's HIRING post + cooldowns
       crimeAlert: null,                                 // player-witnessed theft {thiefId, bId}
       playerReport: null,                               // player's committed citizen arrest
+      homePlacements: {},                               // furniture on the floor: {homeId: {"x,y": furnId}}
+      election: { nextDay: CFG.ELECTION.firstDay, playerRunning: false, last: null },   // the ballot cycle
+      taxRate: CFG.TAX.rate, playerMayor: false,        // the mayor's dials (player-adjustable in office)
+      bizQuotes: {},                                    // today's business asking prices {bId: {day, price, say}}
       settings: { difficulty: difficultyChoice || "normal", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6, apiKey: USER_API_KEY || "" },  // 99 = unlimited; carry any key set on the title screen
     };
   }, []);
@@ -2285,8 +2444,10 @@ export default function Alderbrook() {
       registers: sim.registers, upgrades: sim.upgrades, dishes: sim.dishes,
       townUpgrades: sim.townUpgrades, councilDay: sim.councilDay, approval: sim.approval, tradeQueue: sim.tradeQueue, foragedAt: sim.foragedAt,
       ownerOverrides: sim.ownerOverrides || {},
-      treeChops: sim.treeChops || {}, playerFurniture: sim.playerFurniture || [], contracts: sim.contracts || [],
+      treeChops: sim.treeChops || {}, playerFurniture: sim.player.furniture || [], contracts: sim.contracts || [],
       appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
+      homePlacements: sim.homePlacements || {}, election: sim.election,
+      taxRate: sim.taxRate, playerMayor: !!sim.playerMayor,
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
       npcs: Object.fromEntries(sim.npcs.map(n => [n.id, {
@@ -2345,6 +2506,11 @@ export default function Alderbrook() {
     sim.contracts = data.contracts || [];
     sim.appliances = data.appliances || {};
     sim.ownsManor = !!data.ownsManor;
+    sim.homePlacements = data.homePlacements || {};
+    sim.election = data.election || { nextDay: Math.max(sim.day + 3, CFG.ELECTION.firstDay), playerRunning: false, last: null };
+    sim.taxRate = data.taxRate ?? CFG.TAX.rate;
+    sim.playerMayor = !!data.playerMayor;
+    sim.bizQuotes = {};
     if (!sim.treasury.ferndale) sim.treasury.ferndale = CFG.TREASURY_SEED;   // pre-Ferndale saves
     sim.opening = data.opening || null; sim.interviewBans = data.interviewBans || {};
     sim.interview = null;
@@ -2358,6 +2524,9 @@ export default function Alderbrook() {
         ? makeOccupation(sim.player, sim.player.job.bId, { hiredDay: sim.player.job.since || sim.day })
         : playerOcc;
     }
+    sim.player.home = "home_p";                          // older saves predate the field (furniture stations need it)
+    sim.player.furniture = Array.from(new Set([...(sim.player.furniture || []), ...(sim.playerFurniture || [])]));   // crafted pieces used to live in a SEPARATE list
+    sim.playerFurniture = sim.player.furniture;          // legacy alias kept pointed at the real list
     if (sim.player.jailedUntil === "life") sim.player.jailedUntil = Infinity;
     if (sim.player.jailedUntil === Infinity && sim.player.scene?.startsWith("i:")) {
       setJailScreen({ bId: sim.player.scene.slice(2), day: sim.day });
@@ -2372,6 +2541,7 @@ export default function Alderbrook() {
       if (!n.knownGossip) n.knownGossip = [];
       if (n.work?.bId && n.work.station) n.work.station = validStation(n.work.bId, n.work.station);
     }
+    syncPlacements(sim, worldRef.current);               // stand owned furniture up in its rooms (auto-slot legacy saves)
   };
   const loadGame = useCallback(async () => {
     freshSim();
@@ -3166,6 +3336,10 @@ export default function Alderbrook() {
     { const ct = townOfScene(worldRef.current, data?.scene || "t:alderbrook"); if (sim.approval?.[ct] != null) sim.approval[ct] = clamp(sim.approval[ct] - CFG.APPROVAL.crimeHit, 0, 100); }   // Stage 8
     sim.cases.push({ id: `c${sim.day}_${sim.cases.length}`, type, day: sim.day, state: "open", evidence: 0, interrogated: {}, ...data });
   };
+  /* conviction weight BY CRIME — a cracked till is not a murder (it used to sentence 5★ life for everything) */
+  const caseStars = (kase) => kase.type === "murder" || kase.type === "vigilante" ? 5
+    : ["burglary", "register_robbery", "safe_robbery"].includes(kase.type) ? 3
+    : kase.type === "trespassing" ? 1 : 2;
   /* gift grading — per Blaine: ~100-200 should be shocking, not mythic */
   const gradeGift = (value) => {
     if (value >= 1000) return { fame: 40, renown: 40, legend: true };            // the stuff of songs
@@ -3936,7 +4110,10 @@ export default function Alderbrook() {
     const asleepHours = overnight ? (hour >= 8 && hour < 16) : (hour >= 22 || hour < 6);
     const homeDoor = npc.home ? bld(npc.home).door : null;   // Stage 3: the homeless have no door
     const eatery = TOWN_EATERY[hereTown] || "cafe";   // every town feeds its own
-    const cross = !!(npc.enforcer) || !!npc.visitPlan;   // Watch vehicles ride free; visitors pay fares in moveNPC
+    // Watch vehicles ride free; visitors pay fares in moveNPC. An NPC stranded outside their
+    // home town (hospital discharge, a rescue hauled cross-town) may also travel — otherwise
+    // discharged Outlanders live out their days pacing Stonecross.
+    const cross = !!(npc.enforcer) || !!npc.visitPlan || hereTown !== npc.town;
 
     let goal, activity, hide = false;
     if ((npc.energy < 22 || asleepHours) && npc.thirst > 20 && npc.hunger > 15 && npc.sick?.level !== "bad") {
@@ -4172,8 +4349,10 @@ export default function Alderbrook() {
       } else if (npc.work.spot) { const s = world.towns[npc.town].spots[npc.work.spot]; goal = { scene: `t:${npc.town}`, ...s }; activity = npc.id === "finn" ? "tending the graveyard" : "fishing off the dock"; }
       else { const st = world.interiors[npc.work.bId].stations[npc.work.station]; goal = { scene: `i:${npc.work.bId}`, x: st.x, y: st.y }; activity = `working at ${bld(npc.work.bId).name}`; }
     } else if (npc.enforcer && inShift) {                 // idle Watch: pick up a case, an inspection, or patrol
-      const openCase_ = sim.cases.find(c => c.state === "open");
-      if (openCase_ && !npc.caseWork) { npc.caseWork = { caseId: openCase_.id, stage: "scene" }; goal = { scene: openCase_.scene, x: openCase_.x, y: openCase_.y }; activity = "examining the scene"; }
+      // prefer a case NO colleague is already working — the board gets divided, not dogpiled
+      const worked = new Set(sim.npcs.filter(o => o.id !== npc.id && o.alive && o.caseWork).map(o => o.caseWork.caseId));
+      const openCase_ = sim.cases.find(c => c.state === "open" && !worked.has(c.id)) || sim.cases.find(c => c.state === "open");
+      if (openCase_ && !npc.caseWork) { npc.caseWork = { caseId: openCase_.id, stage: "scene" }; openCase_.lastLook = sim.day; goal = { scene: openCase_.scene, x: openCase_.x, y: openCase_.y }; activity = "examining the scene"; }
       else if (sim.inspectDue) {
         const shops = BUILDINGS.filter(b => SHOP_STOCK[b.id]);
         const shop = rand(shops), st = world.interiors[shop.id].stations[SHOP_STATION[shop.id]];
@@ -4474,9 +4653,9 @@ export default function Alderbrook() {
                     if (reply.cracked) {   // confessed mid-exchange
                       kase.state = "solved"; kase.suspectId = kase.killerId;
                       recordConviction(sim, kase, npc.id, cw.targetId, true);
-                      convictStars(sim, t, 5, `${t.name} confessed to the murder of ${kase.victim}`);
+                      convictStars(sim, t, caseStars(kase), `${t.name} confessed to the ${kase.type} (${kase.victim})`);
                       npc.dispatch = { targetId: cw.targetId };
-                      sim.buzz = { text: `The Watch cracked the ${kase.victim} case — a confession!`, day: sim.day };
+                      sim.buzz = { text: `The Watch cracked the ${kase.victim} ${kase.type} case — a confession!`, day: sim.day };
                       npc.caseWork = null;
                     }
                   } else {
@@ -4487,9 +4666,9 @@ export default function Alderbrook() {
                     if (move.verdict === "accuse") {
                       kase.state = "solved"; kase.suspectId = cw.targetId;
                       recordConviction(sim, kase, npc.id, cw.targetId, isCulprit);   // isCulprit=false → WRONGFUL
-                      convictStars(sim, t, 5, `${t.name} was convicted of the murder of ${kase.victim}`);
+                      convictStars(sim, t, caseStars(kase), `${t.name} was convicted of the ${kase.type} (${kase.victim})`);
                       npc.dispatch = { targetId: cw.targetId };
-                      sim.buzz = { text: isCulprit ? `The Watch solved the ${kase.victim} case!` : `${t.name} convicted for the ${kase.victim} murder.`, day: sim.day };
+                      sim.buzz = { text: isCulprit ? `The Watch solved the ${kase.victim} case!` : `${t.name} convicted for the ${kase.victim} ${kase.type}.`, day: sim.day };
                       npc.caseWork = null;
                     } else {
                       // cleared this suspect — back to the scene to consider others
@@ -4866,7 +5045,7 @@ export default function Alderbrook() {
       const items = sim.demand?.[bId] || {};
       if (!SHOP_STOCK[bId]) continue;
       const ownerId = OWNERS[bId];
-      const owner = ownerId ? sim.npcs.find(n => n.id === ownerId) : null;
+      const owner = ownerId ? ownerEnt(sim, bId) : null;    // resolves the player too — their shops restock like anyone's
       if (ownerId && !owner?.alive) continue;               // no owner, no reorder
       const need = {};
       for (const [it, sold] of Object.entries(items)) {
@@ -4919,7 +5098,7 @@ export default function Alderbrook() {
     sim.orders = sim.orders.filter(o => o.state !== "delivered");
     for (const [bId, ownerId] of Object.entries(OWNERS)) {
       if (!SHOP_STOCK[bId] && bId !== "hospital" && !bId.startsWith("clinic")) continue;
-      const owner = ownerId ? sim.npcs.find(n => n.id === ownerId) : null;
+      const owner = ownerId ? ownerEnt(sim, bId) : null;   // resolves the player too — their shops restock like anyone's
       if (ownerId && !owner?.alive) continue;             // a dead owner orders nothing (grim, but true)
       const list = bId === "hospital" ? ["medicine", "bandage"] : bId.startsWith("clinic") ? ["medicine"] : SHOP_STOCK[bId];
       const need = {};
@@ -4968,7 +5147,7 @@ export default function Alderbrook() {
         const ent = ownerEnt(simRef.current, bId); if (!ent) continue;
         taxed.add(ownerId);
         const gross = ent.grossThisPeriod || 0; if (gross <= 0) continue;
-        const due = Math.max(CFG.TAX.min, Math.ceil(gross * CFG.TAX.rate));
+        const due = Math.max(CFG.TAX.min, Math.ceil(gross * (sim.taxRate ?? CFG.TAX.rate)));   // the mayor sets the rate
         fineCoins(ent, due); payTreasury(sim, bld(bId).town, due);
         ent.grossThisPeriod = 0;
         if (ownerId === "player") showToast(`💸 Business tax: ${due}c on ${gross}c of takings.`);
@@ -5072,9 +5251,34 @@ export default function Alderbrook() {
       }
       n._wasJailed = !!n.jailedUntil;
     }
+    /* THE MORNING LEDGER REVIEW — the Watch actually reads its case board every day.
+       Reported and witnessed crimes all land as cases; each free detective is handed the
+       oldest unworked one, and cold cases get fresh eyes every few days (twice, then they
+       stay cold for good). No more crimes rotting on the board for in-game weeks. */
+    {
+      for (const c of sim.cases) {
+        if (c.state === "cold" && sim.day - (c.lastLook || c.day) >= 3 && (c.reopens || 0) < 2) {
+          c.state = "open"; c.reopens = (c.reopens || 0) + 1; c.lastLook = sim.day;
+          delete c.interrogatedCount;                     // fresh eyes get fresh interviews
+          sim.dayLog.push(`the Watch reopened the ${c.type} case (${c.victim || "unknown"})`);
+        }
+      }
+      const dets = sim.npcs.filter(n => n.alive && n.enforcer && !n.jailedUntil && !n.incap);
+      const workedIds = new Set(dets.map(d => d.caseWork?.caseId).filter(Boolean));
+      const board = sim.cases.filter(c => c.state === "open" && !workedIds.has(c.id));
+      for (const det of dets) {
+        if (det.caseWork || !board.length) continue;
+        const c = board.shift();
+        det.caseWork = { caseId: c.id, stage: "scene" };
+        c.lastLook = sim.day;
+        det.bubble = { text: rand(["Case board first. Then coffee.", `The ${c.type} file. Today.`, "Somebody saw something."]), until: performance.now() / 1000 + 5 };
+      }
+      const stillOpen = sim.cases.filter(c => c.state === "open").length;
+      if (stillOpen) sim.dayLog.push(`the Watch reviewed the case board — ${stillOpen} open case${stillOpen === 1 ? "" : "s"}`);
+    }
     // Pass 4: a seated mayor — on a fresh file (or after a mayor's death) a plausible
     // candidate takes the chair. More citizens = a deeper bench. Odell is A candidate, not THE mayor.
-    if (!sim.npcs.some(n => n.mayor && n.alive)) {
+    if (!sim.playerMayor && !sim.npcs.some(n => n.mayor && n.alive)) {
       const cands = sim.npcs.filter(n => n.alive && n.renown >= 15 && !n.enforcer && !n.doctor && !n.outlaw && !n.thief && !n.minor && n.home && !n.jailedUntil);
       const seat = cands.length ? cands[Math.floor(Math.random() * cands.length)] : sim.npcs.find(n => n.id === "odell" && n.alive);
       if (seat) {
@@ -5082,6 +5286,58 @@ export default function Alderbrook() {
         sim.dayLog.push(`${seat.name} was seated as mayor`);
         seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === seat.town).slice(0, 5), { text: `${seat.name} took the mayor's chair`, subjectId: null, bad: false });
       }
+    }
+    /* ===== ELECTION DAY — every two weeks the valley votes =====
+       Candidates: the incumbent, the two most renowned upstanding citizens, and the player
+       if they registered at a hall (the incumbent player auto-runs). Every adult votes from
+       relationships, reputation, and — for incumbents — how the towns actually feel. */
+    sim.election = sim.election || { nextDay: CFG.ELECTION.firstDay, playerRunning: false, last: null };
+    if (sim.day >= sim.election.nextDay) {
+      const el = sim.election;
+      const incumbent = sim.npcs.find(n => n.mayor && n.alive);
+      const bench = sim.npcs.filter(n => n.alive && n.renown >= 12 && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
+        .sort((a, b) => b.renown - a.renown).slice(0, 2);
+      const cands = [...new Set([incumbent, ...bench].filter(Boolean))];
+      const playerRuns = (el.playerRunning || sim.playerMayor) && !sim.player.jailedUntil && sim.player.alive !== false;
+      const options = [...cands.map(c => c.id), ...(playerRuns ? ["player"] : [])];
+      if (options.length) {
+        const votes = {};
+        const relScore = { hates: -8, dislikes: -4, neutral: 0, likes: 4, friend: 8 };
+        for (const v of sim.npcs) {
+          if (!v.alive || v.minor) continue;
+          let best = null, bestScore = -1e9;
+          for (const oid of options) {
+            const c = oid === "player" ? sim.player : cands.find(x => x.id === oid);
+            let s = Math.random() * 8 + (c.fame || 0) / 4 + (c.renown || 0) / 6;
+            s += relScore[v.relationships[oid] || "neutral"] || 0;
+            if (oid === "player" ? sim.playerMayor : c.mayor) s += (sim.approval[v.town] ?? 60) / 10 - 6;   // incumbents live and die on approval
+            if ((c.wanted || 0) > 0) s -= 10;
+            if (s > bestScore) { bestScore = s; best = oid; }
+          }
+          votes[best] = (votes[best] || 0) + 1;
+        }
+        const tally = Object.entries(votes).sort((a, b) => b[1] - a[1]);
+        const winId = tally[0][0];
+        for (const n of sim.npcs) n.mayor = false;
+        sim.playerMayor = winId === "player";
+        const winNpc = sim.playerMayor ? null : cands.find(c => c.id === winId);
+        if (winNpc) winNpc.mayor = true;
+        const winnerName = sim.playerMayor ? "the player" : winNpc?.name || "nobody";
+        el.last = { day: sim.day, tally: tally.map(([id, v]) => ({ id, name: id === "player" ? "You" : cands.find(c => c.id === id)?.name || id, votes: v })) };
+        el.playerRunning = false;
+        el.nextDay = sim.day + CFG.ELECTION.everyDays;
+        sim.dayLog.push(`ELECTION DAY — ${winnerName} won the mayoralty (${tally[0][1]} votes)`);
+        sim.buzz = { text: `Election day! ${winnerName === "the player" ? "The NEWCOMER" : winnerName} takes the mayor's chair.`, day: sim.day };
+        seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 6), { text: `${winnerName} won the election`, subjectId: null, bad: false });
+        if (sim.playerMayor) { repEvent(sim, sim.player, 10, 15, "the player was elected mayor"); sfx.coin(); showToast("🏛️ YOU are the mayor of the valley! Govern from any hall's Mayor's desk."); }
+        else showToast(`🗳️ Election day: ${winnerName} won the mayoralty.`);
+      } else sim.election.nextDay = sim.day + CFG.ELECTION.everyDays;
+    }
+    /* the player-mayor draws a small weekly salary from the local safes */
+    if (sim.playerMayor && sim.day % 7 === CFG.COUNCIL.weekday) {
+      let pay = 0;
+      for (const t of Object.keys(sim.treasury)) if ((sim.treasury[t] || 0) >= 1) { sim.treasury[t]--; pay++; }
+      if (pay) { sim.player.coins += pay; showToast(`🏛️ Mayor's salary: ${pay}c from the hall safes.`); }
     }
     // Pass 3: weekly patrol assignment — Cole reads the crime picture and routes the Juniors.
     if (sim.day % 7 === CFG.WATCH_PLAN.weekday && sim.day >= 5) {
@@ -5207,7 +5463,11 @@ export default function Alderbrook() {
         applyBuy(pick?.id, pick ? `We fund ${pick.name}. ${townId[0].toUpperCase() + townId.slice(1)} moves forward.` : "The coffers need another week. Patience, all.");
       };
       const mayor = sim.npcs.find(n => n.mayor && n.alive);
-      if (mayor && !apiBusyRef.current) {
+      if (sim.playerMayor) {
+        // the chair is YOURS — no auto-spend. Fund upgrades yourself from any Mayor's desk.
+        showToast(`📯 Council Call: ${townId[0].toUpperCase() + townId.slice(1)} looks to YOU, mayor. Fund upgrades at a Mayor's desk.`);
+        sim.dayLog.push(`Council Call convened in ${townId} — the mayor holds the pen`);
+      } else if (mayor && !apiBusyRef.current) {
         apiBusyRef.current = true;
         councilCall(`Mayor ${mayor.name} — ${mayor.personality}`, townId, coins, Math.round(sim.approval?.[townId] ?? 65), options, (sim.dayLog || []).slice(-3).join("; "))
           .then(out => { if (out) applyBuy(options.some(o => o.id === out.buy) ? out.buy : null, out.say); else localCall(); })
@@ -5283,15 +5543,17 @@ export default function Alderbrook() {
       // auto cash-storage: a wealthy NPC banks pocket cash into their best store (safe from muggings)
       const store = n.furniture.includes("safe") ? "safe" : n.furniture.includes("piggy") ? "piggy" : null;
       if (store) { const cap = FURNITURE[store].store, room = cap - n.stored; if (room > 0 && n.coins > 30) { const put = Math.min(n.coins - 20, room); n.stored += put; n.coins -= put; } }
-      // buy cash storage when holding beyond the thresholds and lacking it
-      if (!n.furniture.includes("safe") && n.coins > CFG.FURN.npcSafeAt) { n.coins -= FURNITURE.safe.price; n.furniture.push("safe"); creditOwner(sim, "furn", FURNITURE.safe.price); sim.dayLog.push(`${n.name} bought an indoor safe`); }
-      else if (!n.furniture.includes("piggy") && !n.furniture.includes("safe") && n.coins > CFG.FURN.npcPiggyAt) { n.coins -= FURNITURE.piggy.price; n.furniture.push("piggy"); creditOwner(sim, "furn", FURNITURE.piggy.price); }
-      // a comfort/utility piece when they can afford it with a healthy buffer (AI can also nudge this)
-      else {
+      // buy cash storage when holding beyond the thresholds and lacking it (needs a free slot to stand in)
+      const roomAtHome = freeSlotsOf(sim, n.home).length > 0;
+      if (roomAtHome && !n.furniture.includes("safe") && n.coins > CFG.FURN.npcSafeAt) { n.coins -= FURNITURE.safe.price; n.furniture.push("safe"); creditOwner(sim, "furn", FURNITURE.safe.price); npcPlaceFurniture(sim, n, "safe"); sim.dayLog.push(`${n.name} bought an indoor safe`); }
+      else if (roomAtHome && !n.furniture.includes("piggy") && !n.furniture.includes("safe") && n.coins > CFG.FURN.npcPiggyAt) { n.coins -= FURNITURE.piggy.price; n.furniture.push("piggy"); creditOwner(sim, "furn", FURNITURE.piggy.price); npcPlaceFurniture(sim, n, "piggy"); }
+      // a comfort/utility piece when they can afford it with a healthy buffer (AI also picks the spot)
+      else if (roomAtHome) {
         const wants = ["table", "fridge", "bedup", "oven", "fountain", "chest", "drinkbar"].filter(f => !n.furniture.includes(f));
         const pick = wants[0];
         if (pick && n.coins > FURNITURE[pick].price + CFG.FURN.npcSpareFloor && Math.random() < 0.15) {
           n.coins -= FURNITURE[pick].price; n.furniture.push(pick); creditOwner(sim, "furn", FURNITURE[pick].price);
+          npcPlaceFurniture(sim, n, pick);
           sim.dayLog.push(`${n.name} furnished their home with a ${FURNITURE[pick].name.toLowerCase()}`);
         }
       }
@@ -5414,7 +5676,7 @@ export default function Alderbrook() {
   /* parcel lands: shelves fill, owner pays the delivery bill — courier keeps it */
   const fulfillOrder = (sim, order, courier) => {
     for (const [it, q] of Object.entries(order.items)) addStock(sim, order.bId, it, q);
-    const owner = OWNERS[order.bId] ? sim.npcs.find(n => n.id === OWNERS[order.bId]) : null;
+    const owner = ownerEnt(sim, order.bId);              // the player pays their own delivery bills too
     const destTown = bld(order.bId).town;
     const baseFee = destTown !== "alderbrook"
       ? (CFG.FARES.alderbrook[destTown]?.c || 0) + CFG.DELIVERY.feeCrossBase
@@ -5636,6 +5898,43 @@ export default function Alderbrook() {
         // the <1 HP floor: ANY cause routes through dying — real time, rescue window, no shortcuts
         if (p.health < 1 && !p.dying && !p.incap && !p.bedrest) { setDying(sim, p, null); showToast("💀 Everything goes grey. You're going down — someone has to FIND you."); }
 
+        /* --- TRESPASS: uninvited lingering in someone else's home ---
+           A brief look inside is nothing. Past the grace window, a resident (or their
+           closed door) wants you gone; ignore that and it's a 1★ report on the ledger.
+           A friendly, awake host is genuine permission — welcome guests linger freely. */
+        if (p.scene.startsWith("i:") && !p.jailedUntil && !p.bedrest) {
+          const hb = p.scene.slice(2);
+          const residents = isHomeId(hb) && hb !== p.home ? sim.npcs.filter(n => n.alive && n.home === hb) : [];
+          if (residents.length) {
+            const abs9 = sim.day * 1440 + sim.time;
+            if (!p.trespass || p.trespass.homeId !== hb) p.trespass = { homeId: hb, since: abs9, warned: false, reported: false };
+            const present = residents.filter(n => n.scene === p.scene && !n.incap && !n.dying);
+            const awakeHost = present.find(n => !n.activity?.includes("sleep") && !n.activity?.includes("Sleep"));
+            const partyHere = sim.party && sim.party.day === sim.day && residents.some(r => r.id === sim.party.throwerId);
+            const welcomed = partyHere || (awakeHost && ["likes", "friend"].includes(awakeHost.relationships.player || awakeHost.relationships[p.id] || "neutral"));
+            const stayed = abs9 - p.trespass.since;
+            const nowS = performance.now() / 1000;
+            if (!welcomed && stayed > CFG.TRESPASS.graceMin && !p.trespass.warned) {
+              p.trespass.warned = true;
+              if (awakeHost) { awakeHost.bubble = { text: rand(["Can I... help you?", "This is my house. Out. Please.", "You should go. Now."]), until: nowS + 5 }; showToast(`🚪 ${awakeHost.name} wants you out of their home.`); }
+              else showToast(present.length ? "🚪 They're asleep. You really shouldn't be in here." : "🚪 You're loitering in someone's home. Leave before you're caught.");
+            }
+            if (!welcomed && stayed > CFG.TRESPASS.reportMin && !p.trespass.reported) {
+              p.trespass.reported = true;
+              p.wanted = Math.max(p.wanted || 0, 1);
+              openCase(sim, "trespassing", { victim: residents[0].name, scene: p.scene, x: Math.round(p.x), y: Math.round(p.y), killerId: "player", evidence: awakeHost ? 2 : 1 });
+              if (awakeHost) {
+                awakeHost.bubble = { text: "That's IT — I'm reporting this.", until: nowS + 5 };
+                const ri9 = REL_ORDER.indexOf(awakeHost.relationships.player || "neutral");
+                awakeHost.relationships.player = REL_ORDER[clamp(ri9 - 1, 0, REL_ORDER.length - 1)];
+              }
+              repEvent(sim, p, -3, 1, "the player was reported for trespassing");
+              sim.dayLog.push(`the player was reported for trespassing in ${bld(hb).name}`);
+              sfx.alert(); showToast("🚨 Trespassing reported to the Watch. (1★)");
+            }
+          } else if (p.trespass) p.trespass = null;
+        } else if (p.trespass) p.trespass = null;
+
         if (p.energy <= 0 && !p.incap && !p.bedrest) {   // exhaustion ≠ injury: someone drives you home
           const inPublic = p.scene.startsWith("t:");
           p.scene = "t:alderbrook"; p.x = bld("home_p").door.x; p.y = bld("home_p").door.y;
@@ -5792,6 +6091,10 @@ export default function Alderbrook() {
           npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
           // Stage 3.5: survival damage — same rules as the player, nobody is exempt
           if (npc.jailedUntil) { npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor); npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor); }
+          /* WARD SAFETY NET: the hospital feeds its patients too. Without this a bedrest NPC's
+             needs run to zero and starvation damage cancels the bed regen — they hover under
+             dischargeHp forever (diagnosed: Outlands rescues stuck in the ward for weeks). */
+          if (npc.bedrest) { npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor); npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor); }
           /* CUSTODY SAFETY NET: anyone inside a Watch building who ISN'T serving a sentence is
              being held informally (questioning, a stalled pursuit, a cell-full fallback). They
              can't shop, cook, or reach a pump from in there — so the Watch feeds them, and if
@@ -6034,10 +6337,10 @@ export default function Alderbrook() {
     }
     { // v7 Stage 5: crafting — at the workshop bench, or at home beside your own Workbench
       const canHere = p.scene === "i:workshop_s"
-        || (p.scene === "i:home_p" && (sim.playerFurniture || []).includes("workbench"));
+        || (p.scene === "i:home_p" && p.furniture.includes("workbench"));
       if (canHere) out.push({ id: "craft", label: "🛠️ Craft…" });
       // the easy chair: real-time rest, 3 energy per full 12-min mark, anyone welcome
-      if (p.scene === "i:home_p" && (sim.playerFurniture || []).includes("chair") && !p.sitting)
+      if (p.scene === "i:home_p" && p.furniture.includes("chair") && !p.sitting)
         out.push({ id: "sitchair", label: "🪑 Sit in the easy chair" });
     }
     { // carry the wounded: any dying/downed NPC nearby can be hauled to care (five-stars go on to the cells)
@@ -6106,10 +6409,10 @@ export default function Alderbrook() {
       if (bId === "workshop_s" && at(shopStn) && (p.inv.rock || 0) >= CFG.CRAFT.smelt.rocks
           && (OWNERS[bId] === "player" || sim.npcs.find(n => n.id === OWNERS[bId] && n.alive && n.scene === `i:${bId}`)))
         out.push({ id: "smelt", label: `🔩 Smelt ${CFG.CRAFT.smelt.rocks} rocks → iron bits${OWNERS[bId] === "player" ? "" : ` (${CFG.CRAFT.smelt.fee}c)`}` });
-      // v7 Stage 5: every private business has a price — if the owner's alive to take the coin
+      // v7 Stage 5: every private business has a price — but the OWNER names it (talk first)
       if (at(shopStn) && BUSINESS_PRICE[bId] && OWNERS[bId] && OWNERS[bId] !== "player" && sim.npcs.find(n => n.id === OWNERS[bId] && n.alive))
-        out.push({ id: "buybiz", label: `💼 Buy ${bld(bId).name} (${BUSINESS_PRICE[bId]}c)`, buybiz: bId });
-      if (at("mayor")) out.push({ id: "cityledger", label: "📊 Town ledger" });   // Stage 8: approval + treasury at the mayor's desk
+        out.push({ id: "buybiz", label: `💼 Ask about buying ${bld(bId).name}`, buybiz: bId });
+      if (at("mayor") || at("tax")) out.push({ id: "cityledger", label: sim.playerMayor ? "🏛️ Govern (mayor's office)" : "🏛️ Hall — ledger, taxes & elections" });
       // Stage 5: someone else's counter with a stocked register → rob it (confirmation-gated below)
       if (at(shopStn) && OWNERS[bId] && OWNERS[bId] !== "player" && sim.registers[bId]?.cash > 0) {
         const keeper = keeperOf(sim, bId), watched = keeper && keeper.scene === `i:${bId}`;
@@ -6142,8 +6445,21 @@ export default function Alderbrook() {
         out.push({ id: "treat", label: `🩺 Treat wounds (${Math.ceil(CFG.HOSPITAL.walkIn * diff().billMult)}c)` });
       if (inter.stations.couch && at("couch") && (p.job?.bId === bId || p.occupation?.bId === bId))
         out.push({ id: "couchrest", label: "🛋️ Rest an hour on the staff couch" });   // Stage 3.5: employees only
-      if (bId.startsWith("townhall") && at("safe"))
-        out.push({ id: "safepeek", label: "🔍 Check the town safe" });   // Stage 3: escrow made visible (robbable come Stage 6)
+      if (bId.startsWith("townhall") && at("safe")) {
+        out.push({ id: "safepeek", label: "🔍 Check the town safe" });   // Stage 3: escrow made visible
+        const tSafe = bld(bId).town;
+        if ((sim.treasury[tSafe] || 0) >= CFG.SAFE_ROB.minLoot)
+          out.push({ id: "cracksafe", label: "🥷 Crack the town safe (3★ · Extreme)" });
+      }
+      /* someone else's home with a cash stash standing in it → the burglar's option */
+      if (isHomeId(bId) && bId !== p.home) {
+        const residents = sim.npcs.filter(n => n.alive && n.home === bId);
+        const loot = residents.reduce((s, n) => s + (n.stored || 0), 0);
+        const store = residents.some(n => (n.furniture || []).includes("safe")) ? "safe"
+          : residents.some(n => (n.furniture || []).includes("piggy")) ? "piggy" : null;
+        if (store && loot > 0)
+          out.push({ id: "crackstash", label: `🥷 Crack the ${FURNITURE[store].name.toLowerCase()} (${store === "safe" ? "Extreme" : "Hard"})`, stash: store, stashB: bId });
+      }
       if ((bId === "hq" || bId.startsWith("watchpost")) && at("report") && sim.playerRobbedBy)
         out.push({ id: "reportrob", label: "🚨 Report the robbery" });
       if (bId === "home_p" && sim.mess.home_p > 20) out.push({ id: "sweep", label: "🧹 Sweep up" });
@@ -6457,6 +6773,7 @@ export default function Alderbrook() {
         sim.time += HC.walkMin;
         p.scene = `t:${a.dest}`; p.x = spot.x; p.y = spot.y;
         setTransition(a.dest === "hills" ? "The path climbs. The towns shrink behind you…" : "Downhill, with the whole valley in view…");
+        setTimeout(() => setTransition(null), 1800);   // the overlay pauses the sim — it MUST clear (was a softlock)
         bump(); break;
       }
       case "noop": break;
@@ -6466,7 +6783,7 @@ export default function Alderbrook() {
         if (idx < 0) break;
         sim.contracts.splice(idx, 1);
         const r = CFG.CRAFT.recipes[a.pickup];
-        if (r.furn) { (sim.playerFurniture = sim.playerFurniture || []).push(a.pickup); showToast(`🪑 ${FURNITURE[a.pickup].name} — delivered and set up at home.`); }
+        if (r.furn) { p.furniture.push(a.pickup); sim.playerFurniture = p.furniture; setPlacePanel({ furnId: a.pickup }); showToast(`🪑 ${FURNITURE[a.pickup].name} — delivered home. Pick where it goes.`); }
         else { p.inv[a.pickup] = (p.inv[a.pickup] || 0) + (r.out || 1); showToast(`📦 ${ITEMS[a.pickup].emoji} ${ITEMS[a.pickup].name}${r.out ? ` ×${r.out}` : ""} — nice work, honestly.`); }
         sfx.coin(); bump(); break;
       }
@@ -6497,19 +6814,77 @@ export default function Alderbrook() {
         showToast(`🪵 ${got} cut wood. The tree, improbably, is fine.`);
         bump(); break;
       }
-      case "buybiz": {   // v7 Stage 5: the handshake — coins to the owner, keys to you
-        const bId = a.buybiz, price = BUSINESS_PRICE[bId];
+      case "buybiz": {   // the handshake now starts with a CONVERSATION — the owner names their price
+        const bId = a.buybiz, base = BUSINESS_PRICE[bId];
         const seller = sim.npcs.find(n => n.id === OWNERS[bId] && n.alive);
-        if (!seller || !spend(p, price)) { showToast(seller ? `You need ${price}c.` : "No one to sell it."); break; }
-        seller.coins = Math.min(9999, seller.coins + price);
-        seller.memories = [...seller.memories, `Sold ${bld(bId).name} to the player. Retirement money at last.`].slice(-CFG.MAX_MEMORIES);
-        if (seller.occupation?.bId === bId) seller.occupation = null;   // a rich retiree — may seek new work
-        OWNERS[bId] = "player";
-        (sim.ownerOverrides = sim.ownerOverrides || {})[bId] = "player";
-        repEvent(sim, p, 6, 4, `the player bought ${bld(bId).name}`);
-        seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === bld(bId).town).slice(0, 5), { text: `the newcomer BOUGHT ${bld(bId).name} off ${seller.name}`, subjectId: null, bad: false });
-        sim.dayLog.push(`the player bought ${bld(bId).name} from ${seller.name}`);
-        sfx.coin(); showToast(`💼 ${bld(bId).name} is YOURS. (Manage it at the counter.)`);
+        if (!seller) { showToast("No one to sell it."); break; }
+        sim.bizQuotes = sim.bizQuotes || {};
+        const q = sim.bizQuotes[bId];
+        if (q && q.day === sim.day) { setBizOffer({ bId, price: q.price, say: q.say }); break; }   // today's number is today's number
+        const lo = Math.round(base * 0.6), hi = Math.round(base * 1.8);
+        const fallback = () => {
+          sim.bizQuotes[bId] = { day: sim.day, price: base, say: `${base} coins, flat. That's the honest number.` };
+          setBizOffer({ bId, ...sim.bizQuotes[bId] });
+        };
+        if (USER_API_KEY && !apiBusyRef.current) {
+          apiBusyRef.current = true;
+          showToast(`You talk numbers with ${seller.name}…`);
+          bizQuote(seller.name, seller.personality, bld(bId).name, base, seller.grossThisPeriod || 0)
+            .then(out => {
+              const price = clamp(Math.round(Number(out?.price) || base), lo, hi);
+              sim.bizQuotes[bId] = { day: sim.day, price, say: (out?.say || "").slice(0, 140) || "That's my number." };
+              setBizOffer({ bId, ...sim.bizQuotes[bId] });
+            })
+            .catch(fallback)
+            .finally(() => { apiBusyRef.current = false; });
+        } else fallback();
+        break;
+      }
+      case "cracksafe": {   // the town safe: 3★, Extreme-tier — the biggest lock in the valley
+        const bId = p.scene.slice(2), t9 = bld(bId).town;
+        const absMin9 = sim.day * 1440 + sim.time;
+        if (!canAttempt(p, `safe_${t9}`, absMin9, 2)) { showToast("You've drawn enough attention at this safe today. Come back tomorrow."); break; }
+        sim.time += 25;
+        const witnesses9 = sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.scene === p.scene && !n.activity.includes("sleep"));
+        if (Math.random() < tierSuccess(p, 3, "service")) {
+          const take = Math.max(1, Math.floor((sim.treasury[t9] || 0) * CFG.SAFE_ROB.yield));
+          sim.treasury[t9] = Math.max(0, (sim.treasury[t9] || 0) - take);
+          p.coins += take; clearCheck(p, `safe_${t9}`);
+          openCase(sim, "safe_robbery", { victim: `the ${t9} treasury`, scene: p.scene, x: Math.round(p.x), y: Math.round(p.y), killerId: "player", evidence: witnesses9.length ? 3 : 2 });
+          if (sim.approval[t9] != null) sim.approval[t9] = clamp(sim.approval[t9] - 5, 0, 100);
+          sim.dayLog.push(`someone cracked the ${t9} town safe overnight`);
+          pushFx(sim, p.scene, p.x, p.y, "crime");
+          if (witnesses9.length) { convictStars(sim, p, 3, "the player was SEEN robbing the town safe"); sfx.alert(); showToast(`💰 ${take}c — but you were SEEN. (3★)`); }
+          else { sfx.coin(); showToast(`💰 ${take}c from the town safe. Walk away calm.`); }
+        } else {
+          recordFail(p, `safe_${t9}`, absMin9, 120);
+          if (witnesses9.length || Math.random() < 0.4) { convictStars(sim, p, 3, "the player was caught cracking the town safe"); sfx.alert(); showToast("🚨 The lock beats you — and the alarm doesn't miss. (3★)"); }
+          else showToast("The dial spins, the lock holds. Nothing for it — walk away.");
+        }
+        bump(); break;
+      }
+      case "crackstash": {   // burgle a resident's piggy bank / safe — the furniture makes it REAL
+        const bId = a.stashB, store9 = a.stash;
+        const absMin9 = sim.day * 1440 + sim.time;
+        if (!canAttempt(p, `stash_${bId}`, absMin9, 2)) { showToast("You've made enough noise here today."); break; }
+        sim.time += 15;
+        const residents9 = sim.npcs.filter(n => n.alive && n.home === bId);
+        const witnesses9 = sim.npcs.filter(n => n.alive && !n.incap && n.scene === p.scene && !n.activity.includes("sleep"));
+        const tier9 = FURNITURE[store9]?.secure === 3 ? 3 : 2;
+        if (Math.random() < tierSuccess(p, tier9, "service")) {
+          let take = 0;
+          for (const r of residents9) { const cut = Math.floor((r.stored || 0) * CFG.FURN.burglaryYield); r.stored = (r.stored || 0) - cut; take += cut; }
+          p.coins += take; clearCheck(p, `stash_${bId}`);
+          openCase(sim, "burglary", { victim: residents9[0]?.name || "a resident", scene: p.scene, x: Math.round(p.x), y: Math.round(p.y), killerId: "player", evidence: witnesses9.length ? 2 : 1 });
+          sim.dayLog.push(`${residents9[0]?.name || "someone"}'s home was burgled`);
+          pushFx(sim, p.scene, p.x, p.y, "crime");
+          if (witnesses9.length) { convictStars(sim, p, 3, "the player was seen cracking a home stash"); sfx.alert(); showToast(`💰 ${take}c — and a WITNESS. (3★)`); }
+          else { sfx.coin(); showToast(take > 0 ? `💰 ${take}c from the ${FURNITURE[store9].name.toLowerCase()}. Nobody saw.` : "Empty. All that risk for cobwebs."); }
+        } else {
+          recordFail(p, `stash_${bId}`, absMin9, 90);
+          if (witnesses9.length) { convictStars(sim, p, 2, "the player was caught tampering with a home stash"); sfx.alert(); showToast("🚨 Caught red-handed! (2★)"); }
+          else showToast(`The ${FURNITURE[store9].name.toLowerCase()} holds. Leave before someone comes home.`);
+        }
         bump(); break;
       }
       case "shadyroute": {   // v7 Stage 4: 25 minutes through the trees — and maybe company
@@ -6518,6 +6893,7 @@ export default function Alderbrook() {
         sim.time += OC.walkMin;
         p.scene = `t:${dest}`; p.x = spot.x; p.y = spot.y;
         setTransition(dest === "outlands" ? "You slip past the tree line. The road forgets you…" : "You follow the trail back toward streetlights…");
+        setTimeout(() => setTransition(null), 1800);   // the overlay pauses the sim — it MUST clear (was a softlock)
         const heat = OC.ambushTravel + p.coins / OC.wealthDiv;   // fat purses draw eyes
         const thug = sim.npcs.find(n => n.alive && n.town === "outlands" && !n.jailedUntil && !n.incap && !n.dying && (n.outlaw || !n.home));
         if (thug && Math.random() < heat) {
@@ -6558,10 +6934,8 @@ export default function Alderbrook() {
         if (skillLevel(p, "foraging") > before) showToast(`📈 ${SKILL_TRACKS.foraging} — now ${skillTierName(p, "foraging")}!`);
         bump(); break;
       }
-      case "cityledger": {   // Stage 8: the hall's public numbers
-        const lt = townOfScene(world, p.scene);
-        const ups = Object.keys(sim.townUpgrades?.[lt] || {}).map(id => TOWN_UPGRADES[id]?.emoji).join(" ") || "none yet";
-        showToast(`📊 ${lt[0].toUpperCase() + lt.slice(1)} — approval ${Math.round(sim.approval?.[lt] ?? 65)}%, treasury ${sim.treasury[lt] || 0}c, upgrades: ${ups}`);
+      case "cityledger": {   // the hall panel: ledger, taxes, elections — and the mayor's own tools
+        setHallPanel({ town: townOfScene(world, p.scene) });
         break;
       }
       case "takeorder": {
@@ -6643,17 +7017,68 @@ export default function Alderbrook() {
     showToast(`Bought ${ITEMS[itemId].name}.`);
     bump();
   };
+  /* ===== furniture placement plumbing =====
+     Placement is per HOME: sim.homePlacements[homeId] maps "x,y" slot keys to furniture ids.
+     A placed piece blocks its tile (slots are curated so nothing can ever wall a room off). */
+  const placementsOf = (sim, homeId) => ((sim.homePlacements = sim.homePlacements || {})[homeId] ||= {});
+  const freeSlotsOf = (sim, homeId) => {
+    const used = placementsOf(sim, homeId);
+    return homeSlots(homeId).filter(s => !used[`${s.x},${s.y}`]);
+  };
+  const placeFurniture = (sim, world, homeId, slot, furnId) => {
+    placementsOf(sim, homeId)[`${slot.x},${slot.y}`] = furnId;
+    const inter = world?.interiors?.[homeId];
+    if (inter?.walk?.[slot.y]) inter.walk[slot.y][slot.x] = false;   // something real stands there now
+  };
+  /* reapply saved placements to the walk grids, then stand up any owned-but-unplaced
+     pieces (legacy saves, mid-session NPC buys that skipped the AI call) in free slots */
+  const syncPlacements = (sim, world) => {
+    sim.homePlacements = sim.homePlacements || {};
+    for (const [homeId, slots] of Object.entries(sim.homePlacements)) {
+      const inter = world.interiors[homeId]; if (!inter) continue;
+      for (const key of Object.keys(slots)) { const [x, y] = key.split(",").map(Number); if (inter.walk?.[y]) inter.walk[y][x] = false; }
+    }
+    const byHome = {};
+    const addAll = (homeId, list) => { if (homeId && list?.length) (byHome[homeId] = byHome[homeId] || []).push(...list); };
+    addAll(sim.player.home || "home_p", sim.player.furniture);
+    for (const n of sim.npcs) if (n.alive) addAll(n.home, n.furniture || []);
+    for (const [homeId, owned] of Object.entries(byHome)) {
+      const counts = {};
+      for (const f of Object.values(placementsOf(sim, homeId))) counts[f] = (counts[f] || 0) + 1;
+      for (const f of owned) {
+        if (counts[f] > 0) { counts[f]--; continue; }     // this one's already standing
+        const free = freeSlotsOf(sim, homeId);
+        if (!free.length) break;
+        placeFurniture(sim, world, homeId, free[Math.floor(Math.random() * free.length)], f);
+      }
+    }
+  };
+  /* an NPC picks its own spot — tiny AI call with an instant random fallback */
+  const npcPlaceFurniture = (sim, npc, furnId) => {
+    if (!npc.home) return;
+    const free = freeSlotsOf(sim, npc.home);
+    if (!free.length) return;
+    const fallback = free[Math.floor(Math.random() * free.length)];
+    if (USER_API_KEY) {
+      furniturePlaceChoice(npc.name, npc.personality, FURNITURE[furnId].name, free.map(s => s.label))
+        .then(i => placeFurniture(sim, worldRef.current, npc.home, free[i] ?? fallback, furnId))
+        .catch(() => placeFurniture(sim, worldRef.current, npc.home, fallback, furnId));
+    } else placeFurniture(sim, worldRef.current, npc.home, fallback, furnId);
+  };
   /* Stage 4: buy a furniture installation (not inventory — it lives in the home). Delivery
      is baked into the price. Owning duplicates of a storage/station piece is pointless, so block it. */
   const buyFurniture = (bId, furnId) => {
     const sim = simRef.current, p = sim.player, f = FURNITURE[furnId];
     if (!f) return;
     if (p.furniture.includes(furnId)) { showToast(`You already own a ${f.name}.`); return; }
+    if (!freeSlotsOf(sim, p.home || "home_p").length) { showToast("No free spot at home — your house is full."); return; }
     if (!spend(p, f.price)) { showToast("Can't afford that."); return; }
     const owner = ownerEnt(sim, bId);
     if (owner) { owner.coins = Math.min(9999, owner.coins + f.price); owner.grossThisPeriod = (owner.grossThisPeriod || 0) + f.price; }
     p.furniture.push(furnId);
-    showToast(`${f.emoji} ${f.name} delivered to your home.`);
+    sim.playerFurniture = p.furniture;                    // keep the legacy alias honest
+    setPlacePanel({ furnId });                            // you choose where it stands
+    showToast(`${f.emoji} ${f.name} delivered — pick where it goes.`);
     bump();
   };
   /* Stage 4: home cash storage. Deposit/withdraw between pocket and the most secure store owned. */
@@ -6690,7 +7115,7 @@ export default function Alderbrook() {
   };
   // buy / upgrade a register — cost comes from the register's own cash if it exists, else the owner's pocket.
   const buyRegisterTier = (sim, bId, tier) => {   // tier: 0 unlock, 1 light, 2 high
-    const owner = OWNERS[bId] ? sim.npcs.find(n => n.id === OWNERS[bId] && n.alive) : null;
+    const owner = ownerEnt(sim, bId);   // resolves the PLAYER too (npc-only lookup made the first register unbuyable for player owners)
     const cost = tier === 0 ? CFG.REGISTER.unlockCost : tier === 1 ? CFG.REGISTER.lightCost : CFG.REGISTER.highCost;
     let reg = regOf(sim, bId);
     const payFrom = reg ? reg : owner;                    // unlock pays from pocket; upgrades pay from the till
@@ -6700,6 +7125,54 @@ export default function Alderbrook() {
     if (!reg) { sim.registers[bId] = { level: 1, cash: 0, security: 0 }; }
     else { reg.security = tier; }                          // light=1, high=2
     return true;
+  };
+  /* ===== the owner's desk: the player runs their shop like any NPC owner would ===== */
+  const playerSetPrice = (sim, bId, itemId, delta) => {
+    const menu = (sim.menu[bId] = sim.menu[bId] || {});
+    const base = ITEMS[itemId].price;
+    menu[itemId] = clamp((menu[itemId] ?? base) + delta, 0, base * 2);   // same bounds the AI owners get
+    bump();
+  };
+  const playerMenuAdd = (sim, bId, itemId) => {
+    const menu = (sim.menu[bId] = sim.menu[bId] || {});
+    if (Object.keys(menu).length >= CFG.OWNERECON.menuSize) { showToast(`The menu holds ${CFG.OWNERECON.menuSize} items — drop one first.`); return; }
+    menu[itemId] = ITEMS[itemId].price;
+    showToast(`${ITEMS[itemId].emoji} ${ITEMS[itemId].name} added to the menu (starts at 0 stock — order or cook it).`);
+    bump();
+  };
+  const playerMenuDrop = (sim, bId, itemId) => { if (sim.menu[bId]) { delete sim.menu[bId][itemId]; bump(); } };
+  const playerOrderStock = (sim, bId, itemId) => {
+    const qty = CFG.SELFCARE.demandReorderQty;
+    const cost = Math.ceil(ITEMS[itemId].price * qty * CFG.STOCK.wholesale);
+    if (!spend(sim.player, cost)) return;
+    sim.orders.push({ id: `${bId}_p_${sim.day}_${Math.floor(sim.time)}_${itemId}`, bId, items: { [itemId]: qty }, state: "ready", day: sim.day });
+    sfx.coin(); showToast(`📦 Ordered ${qty}× ${ITEMS[itemId].name} (${cost}c wholesale) — arrives with the mail.`);
+    bump();
+  };
+  const playerHire = (sim, bId) => {
+    const npc = pickJobSeeker(sim, bId);
+    if (!npc) { showToast("No one's looking for work right now — try again tomorrow."); return; }
+    hireNpc(sim, npc, bId);
+    sim.buzz = { text: `${npc.name} hired on at ${bld(bId).name}.`, day: sim.day };
+    sim.dayLog.push(`the player hired ${npc.name} at ${bld(bId).name}`);
+    showToast(`🤝 ${npc.name} joins ${bld(bId).name} as ${npc.occupation.title}.`);
+    bump();
+  };
+  /* the handshake itself — coins to the owner at THEIR price, keys to you */
+  const acceptBizOffer = (offer) => {
+    const sim = simRef.current, p = sim.player, bId = offer.bId;
+    const seller = sim.npcs.find(n => n.id === OWNERS[bId] && n.alive);
+    if (!seller || !spend(p, offer.price)) { setBizOffer(null); return; }
+    seller.coins = Math.min(9999, seller.coins + offer.price);
+    seller.memories = [...seller.memories, `Sold ${bld(bId).name} to the player for ${offer.price}c. Retirement money at last.`].slice(-CFG.MAX_MEMORIES);
+    if (seller.occupation?.bId === bId) seller.occupation = null;   // a rich retiree — may seek new work
+    OWNERS[bId] = "player";
+    (sim.ownerOverrides = sim.ownerOverrides || {})[bId] = "player";
+    repEvent(sim, p, 6, 4, `the player bought ${bld(bId).name}`);
+    seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === bld(bId).town).slice(0, 5), { text: `the newcomer BOUGHT ${bld(bId).name} off ${seller.name} for ${offer.price}c`, subjectId: null, bad: false });
+    sim.dayLog.push(`the player bought ${bld(bId).name} from ${seller.name} for ${offer.price}c`);
+    sfx.coin(); showToast(`💼 ${bld(bId).name} is YOURS. (Manage it at the counter.)`);
+    setBizOffer(null); bump();
   };
   // Stage 5: does a business own an upgrade? upgrades[bId] is a plain map { upgradeId: true }
   const hasUpgrade = (sim, bId, upId) => !!(sim.upgrades[bId] && sim.upgrades[bId][upId]);
@@ -7870,6 +8343,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       ctx.font = `600 ${Math.max(8, T * 0.26)}px system-ui`; ctx.textAlign = "center";
       ctx.fillText(st.label, px(st.x) + T / 2, py(st.y) - 3);
     }
+    /* placed furniture — every home renders its residents' pieces where they stand */
+    const placed = sim.homePlacements?.[inter.id];
+    if (placed) for (const [key, fid] of Object.entries(placed)) {
+      const [fx, fy] = key.split(",").map(Number);
+      drawFurnitureArt(ctx, fid, px(fx), py(fy), T);
+    }
+    /* the till sits ON the counter once bought — its look upgrades with security */
+    const reg = sim.registers?.[inter.id];
+    const regStn = reg && inter.stations[SHOP_STATION[inter.id]];
+    if (reg && regStn) drawRegisterArt(ctx, px(regStn.x), py(regStn.y) - T * 0.55, T, reg.security);
     ctx.fillStyle = "rgba(255,255,255,0.75)";
     ctx.font = `700 ${Math.max(9, T * 0.3)}px system-ui`; ctx.textAlign = "center";
     ctx.fillText("⬇ exit", px(inter.exit.x) + T / 2, py(inter.exit.y) + T * 0.6);
@@ -8555,7 +9038,254 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     </>
                   );
                 })()}
-                {reg && <div style={{ fontSize: fs - 2, opacity: 0.55, marginTop: 10 }}>Upgrades are paid from the till's cash.</div>}
+                {/* ---- Menu & prices — the owner's pen, same bounds the AI owners get ---- */}
+                {SHOP_CANDIDATES[bId] && (() => {
+                  const sim2 = simRef.current;
+                  const menu = sim2.menu?.[bId] || {};
+                  const pool = (SHOP_CANDIDATES[bId] || []).filter(id => ITEMS[id] && !FURNITURE[id] && menu[id] == null);
+                  return (
+                    <>
+                      <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 12 }}>📋 Menu & Prices <span style={{ fontWeight: 400, opacity: 0.6 }}>({Object.keys(menu).length}/{CFG.OWNERECON.menuSize})</span></div>
+                      {Object.keys(menu).filter(id => ITEMS[id]).map(id => {
+                        const st = stockOf(sim2, bId, id), cooked = KITCHEN[bId]?.includes(id);
+                        const orderCost = Math.ceil(ITEMS[id].price * CFG.SELFCARE.demandReorderQty * CFG.STOCK.wholesale);
+                        return (
+                          <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 18 }}>{ITEMS[id].emoji}</span>
+                            <span style={{ flex: 1, fontSize: fs - 1 }}><b>{ITEMS[id].name}</b><span style={{ opacity: 0.6, fontSize: fs - 3 }}> · base {ITEMS[id].price}c · {st} in stock</span></span>
+                            <button style={S.smallBtn} onClick={() => playerSetPrice(sim2, bId, id, -1)}>−</button>
+                            <b style={{ minWidth: 28, textAlign: "center" }}>{menu[id] ?? ITEMS[id].price}c</b>
+                            <button style={S.smallBtn} onClick={() => playerSetPrice(sim2, bId, id, 1)}>+</button>
+                            {!cooked && st <= CFG.STOCK.low && <button style={{ ...S.smallBtn, background: "#5a7a9a" }} title={`order ${CFG.SELFCARE.demandReorderQty} at wholesale`} onClick={() => playerOrderStock(sim2, bId, id)}>📦 {orderCost}c</button>}
+                            {cooked && st <= CFG.STOCK.low && <span style={{ fontSize: fs - 3, opacity: 0.6 }}>cook it</span>}
+                            <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => playerMenuDrop(sim2, bId, id)}>✕</button>
+                          </div>
+                        );
+                      })}
+                      {pool.length > 0 && Object.keys(menu).length < CFG.OWNERECON.menuSize && (
+                        <div style={{ ...S.folkCard }}>
+                          <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 4 }}>Add to menu:</div>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                            {pool.map(id => (
+                              <button key={id} style={{ ...S.smallBtn }} title={`${ITEMS[id].name} · base ${ITEMS[id].price}c`} onClick={() => playerMenuAdd(sim2, bId, id)}>{ITEMS[id].emoji} {ITEMS[id].name}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {/* ---- Staffing — hire like any owner does ---- */}
+                {(() => {
+                  const sim2 = simRef.current;
+                  const staff = sim2.npcs.filter(n => n.alive && n.occupation?.bId === bId && !n.occupation.owner);
+                  return (
+                    <>
+                      <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 12 }}>🤝 Staff</div>
+                      {staff.length === 0 && <div style={{ ...S.folkCard, opacity: 0.7, fontSize: fs - 1 }}>Nobody on the payroll — it's all you.</div>}
+                      {staff.map(n => (
+                        <div key={n.id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 12, height: 12, borderRadius: 6, background: n.color, display: "inline-block" }} />
+                          <span style={{ flex: 1 }}><b>{n.name}</b> · {n.occupation.title}</span>
+                          <span style={{ fontSize: fs - 3, opacity: 0.6 }}>works {CFG.JOBS.shift[0]}:00–{CFG.JOBS.shift[1]}:00</span>
+                        </div>
+                      ))}
+                      {staff.length < 2 && (
+                        <button style={{ ...S.smallBtn, width: "100%", background: "#4a6a5a" }} onClick={() => playerHire(sim2, bId)}>
+                          🤝 Hire help (best available job-seeker)
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 🪑 furniture placement — tap a highlighted slot on the little floor plan */}
+      {placePanel && player && (() => {
+        const sim2 = simRef.current, homeId = player.home || "home_p";
+        const def = INTERIOR_DEFS[homeId];
+        const placed = sim2.homePlacements?.[homeId] || {};
+        const free = freeSlotsOf(sim2, homeId);
+        const f = FURNITURE[placePanel.furnId];
+        const glyphEmoji = { B: "🛏️", G: "🍳", W: "🚿", D: "🚪" };
+        const doPlace = (slot) => {
+          placeFurniture(sim2, worldRef.current, homeId, slot, placePanel.furnId);
+          setPlacePanel(null); sfx.pop(); showToast(`${f.emoji} ${f.name} — placed ${slot.label}.`); saveGame(); bump();
+        };
+        return (
+          <div style={S.chatOverlay}>
+            <div style={{ ...S.chatPanel, maxWidth: 420, padding: 16 }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#735536" }}>
+                <span style={{ fontWeight: 700 }}>{f?.emoji} Place your {f?.name}</span>
+              </div>
+              <div style={{ ...S.chatBody, gap: 10, alignItems: "center" }}>
+                {free.length === 0 ? (
+                  <>
+                    <div style={{ fontSize: fs, opacity: 0.8 }}>No free spot right now — it waits in the hall closet and will stand when a spot opens.</div>
+                    <button style={{ ...S.binBtn, background: "#7a6a4a" }} onClick={() => setPlacePanel(null)}>Fine</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: fs - 1, opacity: 0.75 }}>Tap a green tile. The door, the beds and the walking lanes stay clear — house rules.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: `repeat(${def.rows[0].length}, 26px)`, gap: 2 }}>
+                      {def.rows.flatMap((row, y) => [...row].map((ch, x) => {
+                        const key = `${x},${y}`;
+                        const slot = free.find(s => s.x === x && s.y === y);
+                        const here = placed[key];
+                        return (
+                          <div key={key} onClick={() => slot && doPlace(slot)}
+                            title={slot?.label || ""}
+                            style={{ width: 26, height: 26, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
+                              cursor: slot ? "pointer" : "default",
+                              background: ch === "#" ? "#4a4436" : here ? "#d8c9a8" : slot ? "#8fae76" : "#e8dfc9",
+                              boxShadow: slot ? "inset 0 0 0 2px #5a7a3a" : "none" }}>
+                            {here ? FURNITURE[here]?.emoji : slot ? "＋" : glyphEmoji[ch] || ""}
+                          </div>
+                        );
+                      }))}
+                    </div>
+                    <button style={{ ...S.smallBtn, background: "#7a6a4a" }} onClick={() => doPlace(free[Math.floor(Math.random() * free.length)])}>Let the movers pick</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 💼 the owner's asking price, on the table */}
+      {bizOffer && player && (() => {
+        const sim2 = simRef.current, seller = sim2.npcs.find(n => n.id === OWNERS[bizOffer.bId]);
+        return (
+          <div style={S.chatOverlay} onClick={() => setBizOffer(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 400, padding: 18 }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#4a5a3a" }}>
+                <span style={{ fontWeight: 700 }}>💼 {bld(bizOffer.bId).name}</span>
+                <button style={S.closeBtn} onClick={() => setBizOffer(null)}>✕</button>
+              </div>
+              <div style={{ ...S.chatBody, gap: 10 }}>
+                <div style={{ ...S.folkCard, fontStyle: "italic" }}>"{bizOffer.say}"</div>
+                <div style={{ textAlign: "center", fontSize: 17, fontWeight: 700 }}>
+                  {seller?.name} asks {bizOffer.price}c
+                  <span style={{ fontSize: fs - 2, fontWeight: 400, opacity: 0.6 }}> · market benchmark {BUSINESS_PRICE[bizOffer.bId]}c</span>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={{ ...S.binBtn, flex: 1, background: player.coins >= bizOffer.price ? "#5a8a4a" : "#888" }} disabled={player.coins < bizOffer.price}
+                    onClick={() => acceptBizOffer(bizOffer)}>🤝 Shake on it — {bizOffer.price}c</button>
+                  <button style={{ ...S.binBtn, flex: 1, background: "#7a6a4a" }} onClick={() => setBizOffer(null)}>Walk away</button>
+                </div>
+                <div style={{ fontSize: fs - 2, opacity: 0.6, textAlign: "center" }}>Their number can change tomorrow.</div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 🏛️ the hall: ledger, taxes, elections — and the mayor's own tools */}
+      {hallPanel && player && (() => {
+        const sim2 = simRef.current, t = hallPanel.town;
+        const mayorNpc = sim2.npcs.find(n => n.mayor && n.alive);
+        const mayorName = sim2.playerMayor ? "YOU" : mayorNpc ? `${mayorNpc.name} (${TOWN_DEFS[mayorNpc.town]?.name || mayorNpc.town})` : "(the chair sits empty)";
+        const el = sim2.election || { nextDay: sim2.day + 1, playerRunning: false, last: null };
+        const rate = Math.round((sim2.taxRate ?? CFG.TAX.rate) * 100);
+        const wt = CFG.WEALTH_TAX;
+        const ups = Object.keys(sim2.townUpgrades?.[t] || {}).map(id => `${TOWN_UPGRADES[id]?.emoji} ${TOWN_UPGRADES[id]?.name}`).join(", ") || "none yet";
+        const bench = sim2.npcs.filter(n => n.alive && n.renown >= 12 && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
+          .sort((a, b) => b.renown - a.renown).slice(0, 2);
+        const setRate = (d) => {
+          const nr = clamp((sim2.taxRate ?? CFG.TAX.rate) + d, 0.05, 0.30);
+          if (Math.abs(nr - (sim2.taxRate ?? CFG.TAX.rate)) < 0.001) return;
+          sim2.taxRate = Math.round(nr * 100) / 100;
+          for (const tw of Object.keys(sim2.approval)) sim2.approval[tw] = clamp(sim2.approval[tw] + (d > 0 ? -2 : 1), 0, 100);
+          showToast(d > 0 ? `📈 Business tax raised to ${Math.round(sim2.taxRate * 100)}%. Nobody claps.` : `📉 Business tax cut to ${Math.round(sim2.taxRate * 100)}%. The shopkeepers notice.`);
+          sim2.dayLog.push(`the mayor set the business tax to ${Math.round(sim2.taxRate * 100)}%`);
+          bump();
+        };
+        const fund = (id) => {
+          const u = TOWN_UPGRADES[id], owned = (sim2.townUpgrades[t] = sim2.townUpgrades[t] || {});
+          if (!u || owned[id] || (sim2.treasury[t] || 0) < u.cost) return;
+          sim2.treasury[t] -= u.cost; owned[id] = true;
+          sim2.approval[t] = clamp((sim2.approval[t] ?? 65) + CFG.APPROVAL.upgradeBoost, 0, 100);
+          sim2.dayLog.push(`Mayor's office funded ${u.name} in ${t}`);
+          sim2.buzz = { text: `The mayor funded ${u.name} in ${TOWN_DEFS[t]?.name || t}!`, day: sim2.day };
+          sfx.coin(); showToast(`📯 ${u.emoji} ${u.name} funded from the ${t} safe.`);
+          bump();
+        };
+        return (
+          <div style={S.chatOverlay} onClick={() => setHallPanel(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 460, height: "80%" }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#8a7a42" }}>
+                <span style={{ fontWeight: 700 }}>🏛️ {TOWN_DEFS[t]?.name || t} Hall</span>
+                <button style={S.closeBtn} onClick={() => setHallPanel(null)}>✕</button>
+              </div>
+              <div style={S.chatBody}>
+                <div style={{ ...S.folkCard }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>🎖️ Mayor: {mayorName}</div>
+                  <div style={{ fontSize: fs - 1 }}>
+                    Approval here: <b>{Math.round(sim2.approval?.[t] ?? 65)}%</b> · Treasury: <b>{sim2.treasury[t] || 0}c</b><br />
+                    <span style={{ opacity: 0.7 }}>Town upgrades: {ups}</span>
+                  </div>
+                </div>
+                <div style={{ ...S.folkCard }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>💸 The tax code (live rates)</div>
+                  <div style={{ fontSize: fs - 1, lineHeight: 1.5 }}>
+                    · Business tax: <b>{rate}%</b> of gross takings, weekly (min {CFG.TAX.min}c) — into the local safe<br />
+                    · Wealth tax: adults holding ≥{wt.floor}c pay {wt.base}c + {wt.per}c per {wt.bracket}c held, weekly<br />
+                    · Rent: {CFG.RENT.amount}c weekly · Business bills every {CFG.BILLS.cycle} days
+                  </div>
+                </div>
+                <div style={{ ...S.folkCard }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>🗳️ Elections</div>
+                  <div style={{ fontSize: fs - 1, lineHeight: 1.5 }}>
+                    Next election: <b>day {el.nextDay}</b> ({Math.max(0, el.nextDay - sim2.day)} day{el.nextDay - sim2.day === 1 ? "" : "s"} away)<br />
+                    Likely challengers: {bench.map(n => n.name).join(", ") || "nobody of note"}<br />
+                    {el.playerRunning && <b>You are on the ballot. 🎗️</b>}
+                    {sim2.playerMayor && <b>You hold the chair — you're on the ballot automatically.</b>}
+                  </div>
+                  {el.last && (
+                    <div style={{ fontSize: fs - 2, opacity: 0.75, marginTop: 4 }}>
+                      Last result (day {el.last.day}): {el.last.tally.map(r => `${r.name} ${r.votes}`).join(" · ")}
+                    </div>
+                  )}
+                  {!el.playerRunning && !sim2.playerMayor && (
+                    <button style={{ ...S.smallBtn, marginTop: 6, background: "#4a6a5a", width: "100%" }}
+                      onClick={() => { if (!spend(player, CFG.ELECTION.regFee)) return; el.playerRunning = true; sim2.dayLog.push("the player registered to run for mayor"); sim2.buzz = { text: "The NEWCOMER is running for mayor. Genuinely anyone's race now.", day: sim2.day }; showToast("🎗️ You're on the ballot. Make friends — they vote."); bump(); }}>
+                      🎗️ Run for mayor ({CFG.ELECTION.regFee}c registration)
+                    </button>
+                  )}
+                </div>
+                {sim2.playerMayor && (
+                  <>
+                    <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>🖋️ The Mayor's Pen</div>
+                    <div style={{ ...S.folkCard }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Business tax rate</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <button style={S.smallBtn} onClick={() => setRate(-0.01)}>−1%</button>
+                        <b style={{ fontSize: 16 }}>{rate}%</b>
+                        <button style={S.smallBtn} onClick={() => setRate(0.01)}>+1%</button>
+                        <span style={{ fontSize: fs - 3, opacity: 0.6 }}>raising it costs approval; cutting it buys a little</span>
+                      </div>
+                    </div>
+                    <div style={{ ...S.folkCard }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Fund {TOWN_DEFS[t]?.name || t} upgrades <span style={{ fontWeight: 400, opacity: 0.6 }}>(from this hall's safe: {sim2.treasury[t] || 0}c)</span></div>
+                      {Object.entries(TOWN_UPGRADES).map(([id, u]) => {
+                        const owned = !!sim2.townUpgrades?.[t]?.[id];
+                        return (
+                          <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, opacity: owned ? 0.5 : 1, marginBottom: 4 }}>
+                            <span style={{ flex: 1, fontSize: fs - 1 }}>{u.emoji} <b>{u.name}</b> · {u.cost}c <span style={{ opacity: 0.6 }}>· {u.blurb}</span></span>
+                            {owned ? <span style={{ fontSize: fs - 2, opacity: 0.6 }}>done</span>
+                              : <button style={{ ...S.smallBtn, opacity: (sim2.treasury[t] || 0) >= u.cost ? 1 : 0.4 }} disabled={(sim2.treasury[t] || 0) < u.cost} onClick={() => fund(id)}>Fund</button>}
+                          </div>
+                        );
+                      })}
+                      <div style={{ fontSize: fs - 3, opacity: 0.6 }}>Visit each town's hall to spend that town's safe.</div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -9219,8 +9949,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           const sim2 = simRef.current, p2 = sim2.player;
           for (const [m, n] of Object.entries(r.mats)) { p2.inv[m] -= n; if (p2.inv[m] <= 0) delete p2.inv[m]; }
           if (r.furn) {
-            (sim2.playerFurniture = sim2.playerFurniture || []).push(cp.recipeId);
-            showToast(`🪑 You built a ${FURNITURE[cp.recipeId]?.name || cp.recipeId}! It's set up at home.`);
+            p2.furniture.push(cp.recipeId); sim2.playerFurniture = p2.furniture;
+            setPlacePanel({ furnId: cp.recipeId });
+            showToast(`🪑 You built a ${FURNITURE[cp.recipeId]?.name || cp.recipeId}! Pick where it stands.`);
           } else {
             p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + 1;
             showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name} — made by hand.`);
