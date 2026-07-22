@@ -3352,12 +3352,12 @@ export default function Alderbrook() {
     // magically generate more revenue than an equally-skilled junior.
     const rev = Math.ceil(CFG.ECON[econKey].rev * mult);
     const wage = Math.ceil(CFG.ECON[econKey].wage * mult * rankMult(worker));
-    const ownerId = OWNERS[bId];
-    const owner = ownerId ? sim.npcs.find(n => n.id === ownerId) : null;
-    if (!owner || !owner.alive) { worker.coins = Math.min(9999, worker.coins + (rev || wage)); return; }
-    if (owner === worker) { if (rev) ringSale(sim, bId, rev); return; }   // Stage 5: through the till
-    ringSale(sim, bId, rev);   // skilled staff lift the take, not just the payroll
-    transferCoins(sim, owner, worker, wage);
+    const owner = ownerEnt(sim, bId);   // resolves the PLAYER too — your staff's takings ring into YOUR till
+    if (!owner || (owner.id && !owner.alive)) { worker.coins = Math.min(9999, worker.coins + (rev || wage)); return; }   // civic/ownerless: the worker keeps it
+    if (owner === worker) { if (rev) ringSale(sim, bId, rev); return; }   // Stage 5: an owner working their own shop
+    ringSale(sim, bId, rev);   // skilled staff lift the take, not just the payroll — into the owner's register
+    if (owner.id) transferCoins(sim, owner, worker, wage);              // NPC owner pays the wage from pocket
+    else { sim.player.coins = Math.max(0, sim.player.coins - wage); worker.coins = Math.min(9999, worker.coins + wage); }   // player owner pays their staff
   };
   /* shelves are finite: every sale, theft, and meal comes out of these */
   const stockOf = (sim, bId, itemId) => sim.stock[bId]?.[itemId] ?? 0;
@@ -3582,10 +3582,11 @@ export default function Alderbrook() {
     const price = priceOf(sim, bId, itemId);                               // Stage 3.7: owner-set price
     if (npc.coins < price || !takeStock(sim, bId, itemId)) return false;   // empty shelf = no sale
     trackDemand(sim, bId, itemId);                                          // this item is moving — remember it
-    const ownerId = OWNERS[bId];
-    const owner = ownerId ? sim.npcs.find(n => n.id === ownerId && n.alive) : null;
-    if (owner && owner.id !== npc.id) transferCoins(sim, npc, owner, price);   // revenue to the OWNER, staffed or not
-    else npc.coins -= price;
+    npc.coins -= price;                                                     // the buyer always pays
+    // revenue flows through the register (bonus + till capacity, overflow to pocket) — and ringSale
+    // resolves the owner as an NPC OR the PLAYER, so a shop you own actually banks its NPC sales.
+    // (An owner buying from their own shelf just pays out; no self-sale.)
+    if (OWNERS[bId] !== npc.id) ringSale(sim, bId, price);
     npc.inv[itemId] = (npc.inv[itemId] || 0) + 1;
     return true;
   };
@@ -4665,12 +4666,11 @@ export default function Alderbrook() {
         const eatery = npc.scene.slice(2);
         takeStock(sim, eatery, EATERY_MEAL[eatery]);
         soilDish(sim, eatery);   // Stage 5: a served meal = a dirty dish
-        const ownerId = OWNERS[eatery];
-        const owner = ownerId ? sim.npcs.find(n => n.id === ownerId && n.alive) : null;
-        if (owner && owner.id !== npc.id) {
-          if (npc.coins >= 3) transferCoins(sim, npc, owner, 3);
-          else { fineCoins(npc, 3); owner.coins += 3; }   // Stage 3.5: fed on credit — real debt, and the owner is made whole
-        } else npc.coins = Math.max(0, npc.coins - 3);
+        if (OWNERS[eatery] !== npc.id) {                 // not eating at your own place
+          const pay = 3;
+          if (npc.coins >= pay) npc.coins -= pay; else fineCoins(npc, pay);   // Stage 3.5: fed on credit — real debt
+          ringSale(sim, eatery, pay);   // through the till — resolves an NPC owner OR the player, so a diner you own gets paid
+        }
         npc.paidMeal = true;
       }
       npc.hunger = clamp(npc.hunger + 240 * dtHours, 0, 100);
