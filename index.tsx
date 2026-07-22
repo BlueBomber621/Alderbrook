@@ -153,6 +153,8 @@ const CFG = {
       bolt:      { tier: "medium", mats: { ore: 1 },            tools: ["hammer"], out: 3 },
       birdhouse: { tier: "medium", mats: { wood: 2 },           tools: ["saw", "hammer"] },
       drum:      { tier: "medium", mats: { wood: 1, fiber: 1 }, tools: ["saw", "hammer"] },
+      ore:       { tier: "medium", mats: { rock: 3 },           tools: ["hammer"] },   // forge 3 round rocks into iron bits (medium craft; the workshop furnace is the other route)
+      bandage:   { tier: "easy",   mats: { fiber: 1, herb: 1 }, tools: [] },   // an herbal dressing — grass to bind, a wild herb to soothe
       pipe:      { tier: "easy",   mats: { ore: 1 },            tools: ["hammer"] },
       nozzle:    { tier: "medium", mats: { ore: 1, fiber: 1 },  tools: ["screwdriver"] },
       heatcoil:  { tier: "medium", mats: { ore: 2 },            tools: ["hammer", "screwdriver"] },
@@ -180,7 +182,7 @@ const CFG = {
   REPAIR: {   // v7 Stage 5c: appliances BREAK — and the mechanic trade is born
     baseChance: 0.02, perUse: 0.01,          // 2% first use, +1% per use — slow, but there are a LOT of appliances
     parts: { wash: "pipe", stove: "heatcoil", grill: "heatcoil", drinks: "nozzle" },   // station kind → the part it takes
-    fee: { wash: 18, stove: 24, grill: 24, drinks: 20 },   // paid by the owner — good profit for anyone with the part
+    fee: { wash: 30, stove: 45, grill: 45, drinks: 36 },   // paid by the owner — a hefty call-out that beats commissioning the part fresh (parts run pricey, and this is skilled labor on top)
     playerMin: 40,                            // the job skips 40 game-min for the player (the rest was the minigame)
     npcMin: 100, npcEnergy: 25,               // NPCs sit on it for a couple of hours — hefty time, hefty energy
   },
@@ -535,6 +537,13 @@ const ITEMS = {
   taco:         { name: "Taco",           emoji: "🌮", price: 7,  cat: "food",   eat: { hunger: 46, thirst: 6, energy: 10 } },   // Stage 3.8
   sushi:        { name: "Sushi",          emoji: "🍣", price: 10, cat: "food",   eat: { hunger: 48, thirst: 8 } },
   croissant:    { name: "Croissant",      emoji: "🥐", price: 7,  cat: "food",   eat: { hunger: 36, energy: 5 } },   // Stage 3.8
+  /* easy forager fare — a grass bundle + a veg. Not honestly too bad. */
+  bland_salad:  { name: "Bland Salad",    emoji: "🥬", price: 3,  cat: "food",   eat: { hunger: 24, thirst: 8 } },
+  /* ===== the gourmet tier — EXPERT cooking, built on wild herbs & foraged greens ===== */
+  herb_roast:   { name: "Herb-Crusted Roast", emoji: "🍖", price: 20, cat: "food", eat: { hunger: 70, energy: 12 } },
+  wild_stew:    { name: "Forager's Stew",  emoji: "🥘", price: 16, cat: "food",   eat: { hunger: 60, thirst: 12, energy: 8 } },
+  herb_tart:    { name: "Savory Herb Tart", emoji: "🥧", price: 15, cat: "food",  eat: { hunger: 40, energy: 18 } },
+  gourmet_platter: { name: "Gourmet Platter", emoji: "🍱", price: 24, cat: "food", eat: { hunger: 65, thirst: 15, energy: 20 } },
   burnt:        { name: "Burnt Mess",     emoji: "🍳", price: 0,  cat: "food",   eat: { hunger: 5 } },        // failure has flavor
   sludge:       { name: "Sludge",         emoji: "🫗", price: 0,  cat: "drink",  eat: { thirst: 5 } },        // Stage 6: a botched drink — barely wet
   /* gifts & tools */
@@ -596,9 +605,10 @@ const RECIPES = {
   cookies:      { needs: { chocolate: 1, dough: 1 }, out: 3, tier: 1, label: "Bake cookies (makes 3)" },
   veg_soup:     { needs: { veg: 1 },               tier: 0, label: "Simmer veggie soup" },
   fish_stew:    { needs: { hearty_stew: 1, tropical_fish: 1 }, tier: 2, temp: 210, out: 1, label: "Hearty Fish Stew (hard)" },   // Stage 6
-  hearty_stew:  { needs: { fish: 1, veg: 1 },      tier: 1, label: "Hearty stew (the good stuff)" },
+  hearty_stew:  { needs: { fish: 2, veg: 2 },      tier: 1, label: "Hearty stew (two fish, two veg)" },
   stew:         { needs: { fish: 1, veg: 1 },      tier: 0, label: "Simmer a stew" },
   salad:        { needs: { fruit: 1, veg: 1 },     tier: 0, label: "Toss a salad" },
+  bland_salad:  { needs: { fiber: 1, veg: 1 },     tier: 0, label: "Toss a bland salad" },   // grass bundle + veg — easy, honest
   candy_apple:  { needs: { sugar: 1, fruit: 1 },   tier: 1, label: "Dip a candy apple" },
   fish_sticks:  { needs: { fish: 1, flour: 1 },    tier: 1, label: "Fry fish sticks" },
   noodles:      { needs: { water: 1, flour: 1 },   tier: 0, label: "Pull noodles" },
@@ -608,6 +618,14 @@ const RECIPES = {
   taco:         { needs: { dough: 1, veg: 1, milk: 1 },    temp: 400, hard: true, tier: 2, label: "Build tacos" },
   sushi:        { needs: { fish: 1, flour: 1, veg: 1 },    temp: 220, hard: true, tier: 2, label: "Roll sushi" },
   croissant:    { needs: { fresh_bread: 1, milk: 1 },      temp: 375, hard: true, tier: 2, label: "Fold croissants" },
+  /* --- EXPERT (tier 3): gourmet cooking built on wild herbs & foraged greens. `expert` flips
+     the knob game to the skill-gated rules: below Professional you must hit the temp EXACTLY in
+     3s; Professional gets "close enough" in 3s; Expert/Master cook with no time rush. Below
+     Apprentice a 50% technique roll still bites. No API — nail it and it's nailed. --- */
+  herb_roast:   { needs: { fish: 2, herb: 1, veg: 1 },     temp: 425, hard: true, expert: true, tier: 3, label: "Roast an herb-crusted fillet" },
+  wild_stew:    { needs: { herb: 1, fiber: 1, veg: 2 },    temp: 300, hard: true, expert: true, tier: 3, label: "Simmer a forager's stew" },
+  herb_tart:    { needs: { dough: 1, herb: 1, veg: 1 },    temp: 375, hard: true, expert: true, tier: 3, label: "Bake a savory herb tart" },
+  gourmet_platter: { needs: { fish: 1, herb: 1, fruit: 1, veg: 1 }, temp: 350, hard: true, expert: true, tier: 3, label: "Compose a gourmet platter" },
   /* Stage 3.8 — DRINKS (made at the drink station; hard/extreme also gate on temp+timing) */
   choco_milk:   { needs: { milk: 1, chocolate: 1 },        drink: true, tier: 0, label: "Mix chocolate milk" },
   hot_choc:     { needs: { water: 1, chocolate: 1 },       drink: true, tier: 0, label: "Heat hot chocolate" },
@@ -650,7 +668,8 @@ const FACILITY_DOCTOR = { hospital: "amara", clinic_a: "reyes", clinic_m: "noor"
 const TOWN_LOCKUP = { alderbrook: "watchpost_a", mossford: "watchpost_m", stonecross: "hq", ferndale: "hq", outlands: "hq", hills: "watchpost_a" };   // frontier convicts ride to the main lockup
 const LOCKUP_ORDER = ["hq", "watchpost_m", "watchpost_a"];   // overflow preference: main lockup first
 /* what venues buy back from the player, and for how much */
-const SELLABLE = { fish: 2, grilled_fish: 6, fresh_bread: 4, veg_soup: 3, hearty_stew: 7 };
+const SELLABLE = { fish: 2, grilled_fish: 6, fresh_bread: 4, veg_soup: 3, hearty_stew: 7,
+  bland_salad: 3, herb_roast: 15, wild_stew: 12, herb_tart: 11, gourmet_platter: 18 };   // cook gourmet, sell it on
 /* ===== Stage 4 — Hearth & Holt furniture catalog =====
    Furniture is a persistent home INSTALLATION (lives in ent.furniture[], not inventory).
    `store` = cash-storage cap; `secure` = burglary difficulty tier (2 Hard / 3 Extreme);
@@ -817,7 +836,7 @@ const SHOP_CANDIDATES = {
   grill_o:  ["mystery_stew", "stew", "coffee", "bread", "water"],
 };
 /* which candidate items are "baked/cooked" — plain stores may carry at most a couple */
-const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
+const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","bland_salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","herb_roast","wild_stew","herb_tart","gourmet_platter","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
 /* who owns each business — revenue flows to them, wages flow out of them.
    null = civic (post, HQ): the town mints those paychecks. */
 const OWNERS = { cafe: "marge", market: "theo", office: "bruno", fastfood: "rosa", post: "pete",
@@ -853,7 +872,8 @@ const TASK_DOMAIN = {
   cake: "pastry", pie: "pastry", cookies: "pastry", croissant: "pastry", candy_apple: "pastry",
   bread: "bread", fresh_bread: "bread", dough: "bread",
   taco: "savory", sushi: "savory", fish_sticks: "savory", stew: "savory", hearty_stew: "savory",
-  noodles: "savory", salad: "savory", veg_soup: "savory", grilled_fish: "savory", meal: "savory",
+  noodles: "savory", salad: "savory", bland_salad: "savory", veg_soup: "savory", grilled_fish: "savory", meal: "savory",
+  herb_roast: "savory", wild_stew: "savory", gourmet_platter: "savory", herb_tart: "pastry",   // the gourmet tier
   // office
   printer: "paperwork",                 // coaxing the printer → paperwork expertise
   filing: "sorting", parcel: "sorting", letter: "sorting",   // file/post tasks → sorting expertise
@@ -2721,12 +2741,12 @@ export default function Alderbrook() {
     const press = (i) => {
       if (phase !== "press" || done) return;
       if (i === plan.order[at]) { sfx.pop(); routing ? setPhase("route") : advance(); }
-      else { sfx.alert(); setAt(0); setPhase("press"); }   // wrong button: the sequence resets
+      else sfx.alert();   // wrong button just buzzes — your progress STANDS (a full reset made this unwinnable)
     };
     const route = (side) => {
       if (phase !== "route" || done) return;
       if (side === plan.routes[at]) { sfx.pop(); advance(); }
-      else { sfx.alert(); setAt(0); setPhase("press"); }
+      else sfx.alert();   // wrong way: buzz and try again, same step (no reset)
     };
     const advance = () => { const n = at + 1; setAt(n); setPhase("press"); if (n >= steps) onDone(); };
     return (
@@ -2742,9 +2762,9 @@ export default function Alderbrook() {
         </div>
         {routing && (
           <div style={{ display: "flex", gap: 34, alignItems: "center", opacity: phase === "route" ? 1 : 0.35 }}>
-            <button onClick={() => route("L")} style={{ width: 26, height: 26, borderRadius: "50%", border: "none", background: "#181818" }} />
+            <button onClick={() => route("L")} style={{ width: 30, height: 30, borderRadius: "50%", border: phase === "route" && plan.routes[at] === "L" ? "2px solid #e0c060" : "none", background: "#181818", color: "#fff", fontWeight: 800 }}>◀</button>
             <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#c94a4a" }} />
-            <button onClick={() => route("R")} style={{ width: 26, height: 26, borderRadius: "50%", border: "none", background: "#181818" }} />
+            <button onClick={() => route("R")} style={{ width: 30, height: 30, borderRadius: "50%", border: phase === "route" && plan.routes[at] === "R" ? "2px solid #e0c060" : "none", background: "#181818", color: "#fff", fontWeight: 800 }}>▶</button>
           </div>
         )}
       </div>
@@ -8010,13 +8030,26 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     } else if (r2.temp != null) {   // Stage 3.6: HARD food recipe — set the oven knob before the timing game
       const tier = r2.tier ?? 2;
       const pr = taskParams(p, "kitchen", tier);
-      // badly under-skilled → a 4s countdown to set the EXACT temp; tolerance tightens when green, loosens when skilled
-      const tempTol = clamp(COOK_TEMP_TOL * pr.goalW, 8, 40);
-      const setDeadline = pr.timeLimit ? Date.now() + 4000 : null;
+      const lvl = skillLevel(p, "kitchen");
+      let tempTol, setDeadline, expertRoll = false;
+      if (r2.expert) {
+        /* the gourmet rules — deterministic, NO API. Difficulty relaxes as you climb the ladder:
+           below Professional (V) you must hit the temp EXACTLY within 3s; Professional gets
+           "close enough" in 3s; Expert/Master (VI/VII) cook with no time rush at all. And below
+           Apprentice (III) a 50% technique roll still bites at the end — otherwise, nail it = done. */
+        const perfect = lvl < 5;
+        tempTol = perfect ? 0 : (lvl >= 6 ? COOK_TEMP_TOL * 1.5 : COOK_TEMP_TOL);
+        setDeadline = lvl >= 6 ? null : Date.now() + 3000;
+        expertRoll = lvl < 3;
+      } else {
+        // badly under-skilled → a 4s countdown to set the EXACT temp; tolerance tightens when green, loosens when skilled
+        tempTol = clamp(COOK_TEMP_TOL * pr.goalW, 8, 40);
+        setDeadline = pr.timeLimit ? Date.now() + 4000 : null;
+      }
       // timing goal: centered + wide when skilled, small + random-spot when under-skilled
       const goalCenter = pr.randomGoal ? 0.22 + Math.random() * 0.56 : 0.5;
       setMinigame({ type: "cooktemp", recipe: recipeId, knob: 250, mode: chefB ? "chef" : null, bId: chefB,
-        tier, tempTol, setDeadline, goalCenter, goalW: pr.goalW });
+        tier, tempTol, setDeadline, goalCenter, goalW: pr.goalW, expert: !!r2.expert, expertRoll });
     } else {
       setMinigame({ type: "cook", recipe: recipeId, start: Date.now(), mode: chefB ? "chef" : null, bId: chefB });
     }
@@ -8028,7 +8061,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       const want = RECIPES[mg.recipe].temp;
       if (Math.abs(mg.knob - want) > (mg.tempTol ?? COOK_TEMP_TOL)) { showToast(`🌡️ Not quite — aim closer to ${want}°F.`); return mg; }
       return { type: "cook", recipe: mg.recipe, start: Date.now(), mode: mg.mode, bId: mg.bId, hard: true,
-        tier: mg.tier, goalCenter: mg.goalCenter ?? 0.5, goalW: mg.goalW ?? 1 };
+        tier: mg.tier, goalCenter: mg.goalCenter ?? 0.5, goalW: mg.goalW ?? 1, expert: mg.expert, expertRoll: mg.expertRoll };
     });
   };
   const cookStop = () => {
@@ -8064,11 +8097,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         }
       };
       if (mg.hard) {                                     // Stage 3.7d: hard recipe done right.
-        // Player has NO technique roll — nailing the temp + timing IS success. (Real player-side
-        // difficulty comes later via actual mechanics, not chance.) Domain still trains for expertise.
         const domain = TASK_DOMAIN[mg.recipe] || null;
-        plate();
-        if (trainDomain(p, "kitchen", domain)) showToast(`🌟 You've mastered ${DOMAIN_LABEL[domain]} cooking!`);
+        // EXPERT gourmet + a below-Apprentice hand: one last 50% technique roll (no API — pure chance).
+        // Everyone Apprentice and up: nailing the temp + timing IS success, no roll.
+        if (mg.expertRoll && Math.random() < 0.5) {
+          if (mg.mode !== "chef") p.inv.burnt = (p.inv.burnt || 0) + 1;
+          sfx.fail(); showToast("😞 Gourmet cooking is unforgiving — the technique got away from you this time.");
+        } else {
+          plate();
+          if (trainDomain(p, "kitchen", domain)) showToast(`🌟 You've mastered ${DOMAIN_LABEL[domain]} cooking!`);
+        }
       } else plate();
     } else {
       if (mg.mode !== "chef") p.inv.burnt = (p.inv.burnt || 0) + 1;
@@ -8725,8 +8763,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           return (
             <div style={S.gamePanel}>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>🌡️ {RECIPES[minigame.recipe].label}</div>
-              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>drag the dial to <b>{want}°F</b></div>
-              {minigame.setDeadline && <div style={{ fontSize: 12, fontWeight: 700, color: "#c0483a", marginBottom: 4 }}>⏱️ Set it FAST — the oven's already hot!</div>}
+              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>drag the dial to <b>{want}°F</b>{minigame.expert ? (tol === 0 ? " — EXACTLY" : " — close enough") : ""}</div>
+              {minigame.setDeadline && <div style={{ fontSize: 12, fontWeight: 700, color: "#c0483a", marginBottom: 4 }}>⏱️ {minigame.expert ? "3 seconds — gourmet waits for no one!" : "Set it FAST — the oven's already hot!"}</div>}
+              {minigame.expert && !minigame.setDeadline && <div style={{ fontSize: 12, fontWeight: 700, color: "#5fae5f", marginBottom: 4 }}>👨‍🍳 Expert hands — take your time.</div>}
               <svg width="200" height="185" viewBox="0 0 200 185" style={{ touchAction: "none", cursor: "grab" }}
                    onPointerDown={onDown}>
                 {/* dial face */}
