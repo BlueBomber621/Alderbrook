@@ -2297,6 +2297,139 @@ Respond ONLY with JSON, no markdown: {"response":"submit|run|fight"}`;
 /* =====================================================================
    COMPONENT
    ===================================================================== */
+/* ===== interaction minigames — MODULE SCOPE so they keep their own state across the
+   game loop's re-renders (defined inside the component, they remounted every frame and
+   reset/re-randomized — the oven repair "kept re-initiating"). ===== */
+/* MECHANIC MINIGAME 1 — plumbing: slide each highlighted slider fully left→right, N times
+   each; it snaps back to the left when the next rep is up. Overcomplicated Simon says. */
+const SliderGame = ({ reps, sliders, onDone }) => {
+  const [rep, setRep] = useState(0);            // total completed slides
+  const [v, setV] = useState(0);
+  const total = reps * sliders;
+  const active = rep % sliders;                 // alternate sliders
+  const onSlide = (nv) => {
+    setV(nv);
+    if (nv >= 100) { sfx.pop(); const nr = rep + 1; setRep(nr); setV(0); if (nr >= total) onDone(); }
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 14, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>Flush the lines: slide the lit one all the way right. {rep}/{total}</div>
+      {Array.from({ length: sliders }).map((_, i) => (
+        <input key={i} type="range" min={0} max={100} value={i === active ? v : 0} disabled={i !== active}
+          onChange={e => i === active && onSlide(+e.target.value)}
+          style={{ width: 240, accentColor: i === active ? "#c9a84a" : "#555", opacity: i === active ? 1 : 0.4 }} />
+      ))}
+    </div>
+  );
+};
+/* MECHANIC MINIGAME 2 — the oven: press the labeled buttons in the prompted order; after
+   each press, route the center RED dot to the LEFT or RIGHT black dot as prompted. */
+const ButtonGame = ({ steps, routing, onDone }) => {
+  const [plan] = useState(() => {
+    const labels = Array.from({ length: 4 }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26)) + Math.floor(Math.random() * 10));
+    const order = [...Array(4).keys()].sort(() => Math.random() - 0.5).slice(0, steps);
+    return { labels, order, routes: order.map(() => (Math.random() < 0.5 ? "L" : "R")) };
+  });
+  const [at, setAt] = useState(0);              // which step
+  const [phase, setPhase] = useState("press");  // press → route
+  const done = at >= steps;
+  const press = (i) => {
+    if (phase !== "press" || done) return;
+    if (i === plan.order[at]) { sfx.pop(); routing ? setPhase("route") : advance(); }
+    else sfx.alert();   // wrong button just buzzes — your progress STANDS (a full reset made this unwinnable)
+  };
+  const route = (side) => {
+    if (phase !== "route" || done) return;
+    if (side === plan.routes[at]) { sfx.pop(); advance(); }
+    else sfx.alert();   // wrong way: buzz and try again, same step (no reset)
+  };
+  const advance = () => { const n = at + 1; setAt(n); setPhase("press"); if (n >= steps) onDone(); };
+  return (
+    <div style={{ ...S.chatBody, gap: 12, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center" }}>
+        Sequence: {plan.order.map((b, i) => `${plan.labels[b]}${routing ? (plan.routes[i] === "L" ? "◀" : "▶") : ""}`).join(" → ")}
+        <br /><b>{done ? "Done." : phase === "press" ? `Press ${plan.labels[plan.order[at]]}` : `Route the red dot ${plan.routes[at] === "L" ? "LEFT ◀" : "RIGHT ▶"}`}</b> · {at}/{steps}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {plan.labels.map((lb, i) => (
+          <button key={i} onClick={() => press(i)} style={{ width: 54, height: 44, borderRadius: 8, border: "none", fontWeight: 800, background: "#4a4d58", color: "#fff" }}>{lb}</button>
+        ))}
+      </div>
+      {routing && (
+        <div style={{ display: "flex", gap: 34, alignItems: "center", opacity: phase === "route" ? 1 : 0.35 }}>
+          <button onClick={() => route("L")} style={{ width: 30, height: 30, borderRadius: "50%", border: phase === "route" && plan.routes[at] === "L" ? "2px solid #e0c060" : "none", background: "#181818", color: "#fff", fontWeight: 800 }}>◀</button>
+          <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#c94a4a" }} />
+          <button onClick={() => route("R")} style={{ width: 30, height: 30, borderRadius: "50%", border: phase === "route" && plan.routes[at] === "R" ? "2px solid #e0c060" : "none", background: "#181818", color: "#fff", fontWeight: 800 }}>▶</button>
+        </div>
+      )}
+    </div>
+  );
+};
+/* MECHANIC MINIGAME 3 — the drink machine: a toggle switch + a knob. Spin the knob a full
+   turn and it only COUNTS if the switch is set right — and each counted spin re-rolls
+   which way the switch must sit. Ten of those. Overcomplicated Simon says, as ordered. */
+const KnobGame = ({ spins, onDone }) => {
+  const [count, setCount] = useState(0);
+  const [need, setNeed] = useState(Math.random() < 0.5 ? "up" : "down");
+  const [sw, setSw] = useState("up");
+  const accRef = useRef(0); const lastRef = useRef(null); const knobRef = useRef(null);
+  const [ang, setAng] = useState(0);
+  const onMove = (e) => {
+    if (lastRef.current == null || !knobRef.current) return;
+    const r = knobRef.current.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const a = Math.atan2(e.clientY - cy, e.clientX - cx);
+    let d = a - lastRef.current;
+    if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
+    accRef.current += d; lastRef.current = a; setAng(g => g + d * 57.3);
+    if (Math.abs(accRef.current) >= 2 * Math.PI) {
+      accRef.current = 0;
+      if (sw === need) { sfx.pop(); const n = count + 1; setCount(n); setNeed(Math.random() < 0.5 ? "up" : "down"); if (n >= spins) onDone(); }
+      else sfx.alert();   // a wasted turn — the switch was wrong
+    }
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 12, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>Switch <b>{need.toUpperCase()}</b>, then a full turn of the knob. {count}/{spins}</div>
+      <div style={{ display: "flex", gap: 30, alignItems: "center" }}>
+        <button onClick={() => setSw(s => s === "up" ? "down" : "up")}
+          style={{ width: 44, height: 76, borderRadius: 10, border: "2px solid #666", background: "#2a2d36", color: "#fff", display: "flex", alignItems: sw === "up" ? "flex-start" : "flex-end", justifyContent: "center", padding: 5 }}>
+          <div style={{ width: 26, height: 26, borderRadius: 6, background: sw === need ? "#4a9a5a" : "#c9a84a" }} />
+        </button>
+        <div ref={knobRef}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); const r = e.currentTarget.getBoundingClientRect(); lastRef.current = Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)); }}
+          onPointerMove={onMove}
+          onPointerUp={() => { lastRef.current = null; }}
+          style={{ width: 96, height: 96, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #6a6d78, #3a3d46)", border: "3px solid #222",
+            display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none", cursor: "grab", transform: `rotate(${ang}deg)` }}>
+          <div style={{ width: 8, height: 30, borderRadius: 4, background: "#c9a84a", marginBottom: 50 }} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* the crafting clamp meter: fills while ALL clamps are held; releasing resets it */
+const HoldMeter = ({ holdT, ms, onDone }) => {
+  const [p, setP] = useState(0);
+  useEffect(() => {
+    if (!holdT) { setP(0); return; }
+    let raf;
+    const tick = () => {
+      const f = Math.min(1, (performance.now() - holdT) / ms);
+      setP(f);
+      if (f >= 1) onDone(); else raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [holdT]);
+  return (
+    <div style={{ height: 10, borderRadius: 5, background: "#2a2d36", overflow: "hidden" }}>
+      <div style={{ height: "100%", width: `${p * 100}%`, background: p >= 1 ? "#4a9a5a" : "#c9a84a", transition: "width 0.05s linear" }} />
+    </div>
+  );
+};
+
 export default function Alderbrook() {
   const [screen, setScreen] = useState("device");
   const [isPhone, setIsPhone] = useState(false);
@@ -2705,136 +2838,6 @@ export default function Alderbrook() {
     }
     return fresh;
   };
-  /* MECHANIC MINIGAME 1 — plumbing: slide each highlighted slider fully left→right, N times
-     each; it snaps back to the left when the next rep is up. Overcomplicated Simon says. */
-  const SliderGame = ({ reps, sliders, onDone }) => {
-    const [rep, setRep] = useState(0);            // total completed slides
-    const [v, setV] = useState(0);
-    const total = reps * sliders;
-    const active = rep % sliders;                 // alternate sliders
-    const onSlide = (nv) => {
-      setV(nv);
-      if (nv >= 100) { sfx.pop(); const nr = rep + 1; setRep(nr); setV(0); if (nr >= total) onDone(); }
-    };
-    return (
-      <div style={{ ...S.chatBody, gap: 14, alignItems: "center" }}>
-        <div style={{ fontSize: 12, opacity: 0.7 }}>Flush the lines: slide the lit one all the way right. {rep}/{total}</div>
-        {Array.from({ length: sliders }).map((_, i) => (
-          <input key={i} type="range" min={0} max={100} value={i === active ? v : 0} disabled={i !== active}
-            onChange={e => i === active && onSlide(+e.target.value)}
-            style={{ width: 240, accentColor: i === active ? "#c9a84a" : "#555", opacity: i === active ? 1 : 0.4 }} />
-        ))}
-      </div>
-    );
-  };
-  /* MECHANIC MINIGAME 2 — the oven: press the labeled buttons in the prompted order; after
-     each press, route the center RED dot to the LEFT or RIGHT black dot as prompted. */
-  const ButtonGame = ({ steps, routing, onDone }) => {
-    const [plan] = useState(() => {
-      const labels = Array.from({ length: 4 }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26)) + Math.floor(Math.random() * 10));
-      const order = [...Array(4).keys()].sort(() => Math.random() - 0.5).slice(0, steps);
-      return { labels, order, routes: order.map(() => (Math.random() < 0.5 ? "L" : "R")) };
-    });
-    const [at, setAt] = useState(0);              // which step
-    const [phase, setPhase] = useState("press");  // press → route
-    const done = at >= steps;
-    const press = (i) => {
-      if (phase !== "press" || done) return;
-      if (i === plan.order[at]) { sfx.pop(); routing ? setPhase("route") : advance(); }
-      else sfx.alert();   // wrong button just buzzes — your progress STANDS (a full reset made this unwinnable)
-    };
-    const route = (side) => {
-      if (phase !== "route" || done) return;
-      if (side === plan.routes[at]) { sfx.pop(); advance(); }
-      else sfx.alert();   // wrong way: buzz and try again, same step (no reset)
-    };
-    const advance = () => { const n = at + 1; setAt(n); setPhase("press"); if (n >= steps) onDone(); };
-    return (
-      <div style={{ ...S.chatBody, gap: 12, alignItems: "center" }}>
-        <div style={{ fontSize: 12, opacity: 0.75, textAlign: "center" }}>
-          Sequence: {plan.order.map((b, i) => `${plan.labels[b]}${routing ? (plan.routes[i] === "L" ? "◀" : "▶") : ""}`).join(" → ")}
-          <br /><b>{done ? "Done." : phase === "press" ? `Press ${plan.labels[plan.order[at]]}` : `Route the red dot ${plan.routes[at] === "L" ? "LEFT ◀" : "RIGHT ▶"}`}</b> · {at}/{steps}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {plan.labels.map((lb, i) => (
-            <button key={i} onClick={() => press(i)} style={{ width: 54, height: 44, borderRadius: 8, border: "none", fontWeight: 800, background: "#4a4d58", color: "#fff" }}>{lb}</button>
-          ))}
-        </div>
-        {routing && (
-          <div style={{ display: "flex", gap: 34, alignItems: "center", opacity: phase === "route" ? 1 : 0.35 }}>
-            <button onClick={() => route("L")} style={{ width: 30, height: 30, borderRadius: "50%", border: phase === "route" && plan.routes[at] === "L" ? "2px solid #e0c060" : "none", background: "#181818", color: "#fff", fontWeight: 800 }}>◀</button>
-            <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#c94a4a" }} />
-            <button onClick={() => route("R")} style={{ width: 30, height: 30, borderRadius: "50%", border: phase === "route" && plan.routes[at] === "R" ? "2px solid #e0c060" : "none", background: "#181818", color: "#fff", fontWeight: 800 }}>▶</button>
-          </div>
-        )}
-      </div>
-    );
-  };
-  /* MECHANIC MINIGAME 3 — the drink machine: a toggle switch + a knob. Spin the knob a full
-     turn and it only COUNTS if the switch is set right — and each counted spin re-rolls
-     which way the switch must sit. Ten of those. Overcomplicated Simon says, as ordered. */
-  const KnobGame = ({ spins, onDone }) => {
-    const [count, setCount] = useState(0);
-    const [need, setNeed] = useState(Math.random() < 0.5 ? "up" : "down");
-    const [sw, setSw] = useState("up");
-    const accRef = useRef(0); const lastRef = useRef(null); const knobRef = useRef(null);
-    const [ang, setAng] = useState(0);
-    const onMove = (e) => {
-      if (lastRef.current == null || !knobRef.current) return;
-      const r = knobRef.current.getBoundingClientRect();
-      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      const a = Math.atan2(e.clientY - cy, e.clientX - cx);
-      let d = a - lastRef.current;
-      if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
-      accRef.current += d; lastRef.current = a; setAng(g => g + d * 57.3);
-      if (Math.abs(accRef.current) >= 2 * Math.PI) {
-        accRef.current = 0;
-        if (sw === need) { sfx.pop(); const n = count + 1; setCount(n); setNeed(Math.random() < 0.5 ? "up" : "down"); if (n >= spins) onDone(); }
-        else sfx.alert();   // a wasted turn — the switch was wrong
-      }
-    };
-    return (
-      <div style={{ ...S.chatBody, gap: 12, alignItems: "center" }}>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>Switch <b>{need.toUpperCase()}</b>, then a full turn of the knob. {count}/{spins}</div>
-        <div style={{ display: "flex", gap: 30, alignItems: "center" }}>
-          <button onClick={() => setSw(s => s === "up" ? "down" : "up")}
-            style={{ width: 44, height: 76, borderRadius: 10, border: "2px solid #666", background: "#2a2d36", color: "#fff", display: "flex", alignItems: sw === "up" ? "flex-start" : "flex-end", justifyContent: "center", padding: 5 }}>
-            <div style={{ width: 26, height: 26, borderRadius: 6, background: sw === need ? "#4a9a5a" : "#c9a84a" }} />
-          </button>
-          <div ref={knobRef}
-            onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); const r = e.currentTarget.getBoundingClientRect(); lastRef.current = Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2)); }}
-            onPointerMove={onMove}
-            onPointerUp={() => { lastRef.current = null; }}
-            style={{ width: 96, height: 96, borderRadius: "50%", background: "radial-gradient(circle at 35% 35%, #6a6d78, #3a3d46)", border: "3px solid #222",
-              display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none", cursor: "grab", transform: `rotate(${ang}deg)` }}>
-            <div style={{ width: 8, height: 30, borderRadius: 4, background: "#c9a84a", marginBottom: 50 }} />
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  /* the crafting clamp meter: fills while ALL clamps are held; releasing resets it */
-  const HoldMeter = ({ holdT, ms, onDone }) => {
-    const [p, setP] = useState(0);
-    useEffect(() => {
-      if (!holdT) { setP(0); return; }
-      let raf;
-      const tick = () => {
-        const f = Math.min(1, (performance.now() - holdT) / ms);
-        setP(f);
-        if (f >= 1) onDone(); else raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
-    }, [holdT]);
-    return (
-      <div style={{ height: 10, borderRadius: 5, background: "#2a2d36", overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${p * 100}%`, background: p >= 1 ? "#4a9a5a" : "#c9a84a", transition: "width 0.05s linear" }} />
-      </div>
-    );
-  };
-
   /* ===== the camera's pointer inputs: wheel to zoom, pinch to zoom ===== */
   useEffect(() => {
     const cv = canvasRef.current; if (!cv) return;
