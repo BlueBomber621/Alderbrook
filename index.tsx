@@ -2213,6 +2213,23 @@ Return ONLY JSON: {"accept":true,"say":"<one short in-character line>"}.`;
   return (out && typeof out.accept === "boolean") ? out : null;
 }
 
+/* Trade-note follow-through: once an owner ACCEPTS a paid trade with a note, read the note
+   for concrete business tasks they've now agreed to do. Returns a subset of the allowed verbs
+   (upgrade / hire / restock). Anything not a real request → []. A keyword scan is the fallback. */
+async function favorInterpret(npcName, personality, bizName, note) {
+  const prompt =
+`${npcName} (${personality}) owns ${bizName} in a small-town life-sim. A townsperson just paid them in a trade and asked: "${note}".
+Which concrete business actions did they agree to take? Pick any that apply:
+- "upgrade": install or improve the cash register/security, or buy a shop upgrade
+- "hire": take on more staff / couriers / transporters
+- "restock": order more stock / supplies
+If the note isn't really a business request, return an empty list.
+Return ONLY JSON: {"tasks":["upgrade"|"hire"|"restock", ...]}.`;
+  const out = await callClaude(prompt, 40);
+  const tasks = Array.isArray(out?.tasks) ? out.tasks.filter(t => ["upgrade", "hire", "restock"].includes(t)) : null;
+  return tasks;   // null → caller runs the keyword fallback
+}
+
 async function microNudge(town, npcs, dayLog, npcsById, playerTier) {
   const roster = npcs.map(n =>
     `- ${n.id} (${n.name}): mood ${n.mood}, ${Math.floor(n.coins)} coins, needs h${Math.round(n.hunger)}/t${Math.round(n.thirst)}, ${provisionLine(n)}, carries ${invLine(n)}. Feels: ${relLine(n, npcsById)}.`
@@ -2464,6 +2481,7 @@ export default function Alderbrook() {
         grossThisPeriod: n.grossThisPeriod || 0,   // Stage 4: the tax accumulator survives a save
         mayor: !!n.mayor, patrolRoute: n.patrolRoute || null,   // Pass 4: the chair + the beat survive too
         timesJailed: n.timesJailed || 0, spreeUntil: n.spreeUntil || null,   // the criminal career survives too
+        favors: n.favors || null,   // paid-favor promises the owner still owes
       }])),
     };
   };
@@ -2845,6 +2863,73 @@ export default function Alderbrook() {
     if (giver.id) giver.memories = [...giver.memories, `Traded with ${tName}: ${sum}${note ? ` (I asked: "${note}")` : ""}`].slice(-CFG.MAX_MEMORIES);
     if (taker.id) taker.memories = [...taker.memories, `Traded with ${gName}: ${sum}${note ? ` — and agreed: "${note}"` : ""}`].slice(-CFG.MAX_MEMORIES);
     sim.dayLog.push(`${gName} and ${tName} made a trade`);
+  };
+  /* ===== trade-note follow-through — a paid favor an owner actually DOES ===== */
+  // offline reading of the note when the AI's unavailable
+  const favorKeywords = (note) => {
+    const s = (note || "").toLowerCase(); const tasks = [];
+    if (/upgrad|improve|register|security|better|renovat|till/.test(s)) tasks.push("upgrade");
+    if (/hire|staff|worker|transporter|courier|deliver|employ|\bhelp\b|another|more people|more hands/.test(s)) tasks.push("hire");
+    if (/stock|restock|order|supply|supplies|inventor|shelves/.test(s)) tasks.push("restock");
+    return tasks;
+  };
+  // execute ONE agreed task for a business the NPC owns; returns true if something happened
+  const runFavor = (sim, npc, kind, bId) => {
+    if (OWNERS[bId] !== npc.id) return false;
+    if (kind === "hire") {
+      const staff = sim.npcs.filter(n => n.alive && n.occupation?.bId === bId && !n.occupation.owner).length;
+      if (staff >= 2) { npc.bubble = { text: "I've got the hands I need, honestly.", until: performance.now() / 1000 + 4 }; return true; }
+      const seeker = pickJobSeeker(sim, bId); if (!seeker) return false;   // nobody free today — retry tomorrow
+      hireNpc(sim, seeker, bId);
+      sim.buzz = { text: `${seeker.name} hired on at ${bld(bId).name} — ${npc.name} was good to their word.`, day: sim.day };
+      sim.dayLog.push(`${npc.name} hired ${seeker.name} at ${bld(bId).name} (a favor the player paid for)`);
+      npc.bubble = { text: `Done — ${seeker.name} starts on the ${bld(bId).name} floor.`, until: performance.now() / 1000 + 4 };
+      return true;
+    }
+    if (kind === "upgrade") {
+      const reg = sim.registers[bId];
+      if (!reg) { if (npc.coins >= CFG.REGISTER.unlockCost && buyRegisterTier(sim, bId, 0)) { sim.dayLog.push(`${npc.name} installed a register at ${bld(bId).name} (paid favor)`); npc.bubble = { text: "New till's in. Sharp, eh?", until: performance.now() / 1000 + 4 }; return true; } return false; }
+      if (reg.security < 2) { const tier = reg.security + 1, cost = tier === 1 ? CFG.REGISTER.lightCost : CFG.REGISTER.highCost; if (reg.cash >= cost && buyRegisterTier(sim, bId, tier)) { sim.dayLog.push(`${npc.name} upgraded security at ${bld(bId).name} (paid favor)`); npc.bubble = { text: "Locked down tighter now.", until: performance.now() / 1000 + 4 }; return true; } return false; }
+      const up = upgradesFor(bId).find(id => !hasUpgrade(sim, bId, id) && reg.cash >= CFG.UPGRADES[id].cost);
+      if (up && buyUpgrade(sim, bId, up)) { sim.dayLog.push(`${bld(bId).name} added ${CFG.UPGRADES[up].name} (paid favor)`); npc.bubble = { text: `${CFG.UPGRADES[up].emoji} ${CFG.UPGRADES[up].name} — installed.`, until: performance.now() / 1000 + 4 }; return true; }
+      return false;
+    }
+    if (kind === "restock") {
+      if (!SHOP_STOCK[bId]) return false;
+      const need = {};
+      for (const it of SHOP_STOCK[bId]) { if (KITCHEN[bId]?.includes(it)) continue; if (stockOf(sim, bId, it) <= CFG.STOCK.low && ITEMS[it]) need[it] = CFG.STOCK.orderQty; }
+      const inbound = sim.orders.filter(o => o.bId === bId && o.state !== "delivered").flatMap(o => Object.keys(o.items));
+      for (const it of inbound) delete need[it];
+      if (!Object.keys(need).length) { npc.bubble = { text: "Shelves are full up already.", until: performance.now() / 1000 + 4 }; return true; }
+      const goods = Math.ceil(Object.entries(need).reduce((s, [it, q]) => s + ITEMS[it].price * q, 0) * CFG.STOCK.wholesale);
+      fineCoins(npc, goods);
+      sim.orders.push({ id: `${bId}_favor_${sim.day}_${Math.floor(sim.time)}`, bId, items: need, state: "ready", day: sim.day });
+      sim.dayLog.push(`${npc.name} put in a big restock order for ${bld(bId).name} (paid favor)`);
+      npc.bubble = { text: "Order's in — mail brings it round.", until: performance.now() / 1000 + 4 };
+      return true;
+    }
+    return false;
+  };
+  // the player paid + the owner agreed: interpret the note and queue the tasks (try now, retry at dawn)
+  const commissionFavor = (sim, npc, note) => {
+    const bId = Object.keys(OWNERS).find(b => OWNERS[b] === npc.id && (SHOP_STOCK[b] || KITCHEN[b] || b === "post"));
+    if (!bId || !note) return;
+    const queue = (tasks) => {
+      const uniq = [...new Set(tasks)];
+      if (!uniq.length) return;
+      npc.favors = npc.favors || [];
+      for (const kind of uniq) {
+        const done = runFavor(sim, npc, kind, bId);
+        if (!done) npc.favors.push({ kind, bId, since: sim.day });   // couldn't yet — retry each dawn for a few days
+      }
+    };
+    if (USER_API_KEY && !apiBusyRef.current) {
+      apiBusyRef.current = true;
+      favorInterpret(npc.name, npc.personality, bld(bId).name, note)
+        .then(tasks => queue(tasks == null ? favorKeywords(note) : tasks))
+        .catch(() => queue(favorKeywords(note)))
+        .finally(() => { apiBusyRef.current = false; });
+    } else queue(favorKeywords(note));
   };
   // local fallback: fair value, softened for friends; never accept what you can't pay
   const localTradeDecide = (decider, offerer, t) => {
@@ -4110,10 +4195,18 @@ export default function Alderbrook() {
     const asleepHours = overnight ? (hour >= 8 && hour < 16) : (hour >= 22 || hour < 6);
     const homeDoor = npc.home ? bld(npc.home).door : null;   // Stage 3: the homeless have no door
     const eatery = TOWN_EATERY[hereTown] || "cafe";   // every town feeds its own
-    // Watch vehicles ride free; visitors pay fares in moveNPC. An NPC stranded outside their
-    // home town (hospital discharge, a rescue hauled cross-town) may also travel — otherwise
-    // discharged Outlanders live out their days pacing Stonecross.
-    const cross = !!(npc.enforcer) || !!npc.visitPlan || hereTown !== npc.town;
+    /* an employee whose workplace is in ANOTHER town has to commute. Building-based jobs use the
+       building's town; spot jobs (dock/graveyard) are always local. */
+    const workTown = (npc.work?.bId && !npc.work.spot) ? (bld(npc.work.bId)?.town || npc.town) : npc.town;
+    const commutes = !!npc.work?.bId && workTown !== npc.town;
+    // cross-town commuters set out ~90 sim-min before the whistle so they clock in on time, not after
+    const commuteLead = commutes ? 1.5 : 0;
+    const preShift = commutes && npc.schedule && !overnight && !inShift &&
+      hour >= npc.schedule[0] - commuteLead && hour < npc.schedule[0];
+    // Watch vehicles ride free; visitors pay fares in moveNPC. A commuter, or an NPC stranded
+    // outside their home town (hospital discharge, a rescue hauled cross-town), may travel —
+    // otherwise a cross-town hire can never reach the shop and discharged Outlanders pace Stonecross.
+    const cross = !!(npc.enforcer) || !!npc.visitPlan || hereTown !== npc.town || commutes;
 
     let goal, activity, hide = false;
     if ((npc.energy < 22 || asleepHours) && npc.thirst > 20 && npc.hunger > 15 && npc.sick?.level !== "bad") {
@@ -4324,6 +4417,12 @@ export default function Alderbrook() {
     } else if (npc.printing) {                            // Stage 2.2: Bruno vs. the printer — now a skill check, not a timer
       const st = world.interiors.office.stations["desk_" + npc.id] || world.interiors.office.stations.desk_bruno;
       goal = { scene: "i:office", x: st.x, y: st.y }; activity = "wrestling with the printer (loudly)";
+    } else if (preShift && npc.work && !npc.work.spot && world.interiors[npc.work.bId]) {
+      // the morning commute: a cross-town hire heads for the shop BEFORE the bell so they're
+      // on the floor on time. (Same-town workers don't need the lead — inShift covers them.)
+      const st = world.interiors[npc.work.bId].stations[npc.work.station] || world.interiors[npc.work.bId].stations[SHOP_STATION[npc.work.bId]] || world.interiors[npc.work.bId].exit;
+      goal = { scene: `i:${npc.work.bId}`, x: st.x, y: st.y };
+      activity = `heading to work at ${bld(npc.work.bId).name}`;
     } else if (inShift && npc.work) {
       if (OWNERS[npc.work.bId] === npc.id && npc.work.bId === "office" && stockOf(sim, "office", "files") < 3 &&
           !npc.printing && canAttempt(npc, "printer", absTime)) {
@@ -5589,6 +5688,16 @@ export default function Alderbrook() {
           const tier = auto === "install" ? 0 : auto === "light" ? 1 : 2;
           buyRegisterTier(sim, bId, tier);
         });
+    }
+    /* paid-favor follow-through: an owner who agreed to a task but couldn't do it on the spot
+       (no job-seeker free, till short) tries again each dawn — for a few days, then lets it go */
+    for (const n of sim.npcs) {
+      if (!n.alive || !n.favors?.length) continue;
+      n.favors = n.favors.filter(f => {
+        if (sim.day - f.since > 4) return false;            // the promise goes stale after a few days
+        return !runFavor(sim, n, f.kind, f.bId);            // done → drop it
+      });
+      if (!n.favors.length) delete n.favors;
     }
     /* Stage 5: NPC owners also buy business UPGRADES from a healthy till (local, paced) */
     for (const bId of Object.keys(OWNERS)) {
@@ -7834,7 +7943,11 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     setTradePanel(null);
     const t = { give, ask, note };
     const finish = (accept, say) => {
-      if (accept && canFulfillTrade(npc, ask)) { executeTrade(sim, p, npc, give, ask, note); sfx.coin(); showToast(`🤝 ${npc.name}: deal!`); }
+      if (accept && canFulfillTrade(npc, ask)) {
+        executeTrade(sim, p, npc, give, ask, note); sfx.coin(); showToast(`🤝 ${npc.name}: deal!`);
+        // the note isn't just flavor: if they own a business and the note reads as a task, they DO it
+        if (note && Object.keys(OWNERS).some(b => OWNERS[b] === npc.id)) commissionFavor(sim, npc, note);
+      }
       else showToast(`${npc.name} ${accept ? "can't actually cover it." : "declines."}`);
       npc.bubble = { text: say || (accept ? "Deal." : "Not this time."), until: performance.now() / 1000 + 3.5 };
     };
@@ -9537,9 +9650,17 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     {tradePanel.askItem && <input type="number" min="1" max="20" value={tradePanel.askQty} onChange={e => upd("askQty", e.target.value)} style={numIn} />}
                   </div>
                 </div>
-                <input value={tradePanel.note} maxLength={CFG.TRADE.noteMax} onChange={e => upd("note", e.target.value)}
-                  placeholder={`Optional: "I'll pay you to…" (they'll remember it)`}
-                  style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" }} />
+                {(() => {
+                  const ownsBiz = tNpc && Object.keys(OWNERS).some(b => OWNERS[b] === tNpc.id && (SHOP_STOCK[b] || KITCHEN[b] || b === "post"));
+                  return (
+                    <>
+                      <input value={tradePanel.note} maxLength={CFG.TRADE.noteMax} onChange={e => upd("note", e.target.value)}
+                        placeholder={ownsBiz ? `e.g. "upgrade the shop and hire more help"` : `Optional: "I'll pay you to…" (they'll remember it)`}
+                        style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" }} />
+                      {ownsBiz && <div style={{ fontSize: fs - 3, opacity: 0.6, marginTop: -2 }}>💡 {tNpc.name} owns a business — pay them and ask them to upgrade it, hire staff, or restock, and they'll actually do it.</div>}
+                    </>
+                  );
+                })()}
                 <button style={{ ...S.binBtn, background: "#3a6ea5", color: "#fff" }} onClick={doOfferTrade}>Make the offer</button>
               </div>
             </div>
