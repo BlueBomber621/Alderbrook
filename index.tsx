@@ -254,7 +254,9 @@ const CFG = {
   /* the star ladder — 1: warning/fine · 2: short jail · 3: long jail + debt
      4: attempted murder · 5: murder — life, assets seized, active pursuit */
   WANTED: { arrestAt: 2, finePerLevel: 6, stealFineMult: 3,
-    jailHours: { 2: 6, 3: 24, 4: 48 }, debtFine: { 3: 15, 4: 30 } },
+    jailHours: { 2: 14, 3: 36, 4: 168 }, debtFine: { 3: 15, 4: 30 },   // 2★ 12-16h (scaled by repetition), 3★ 36h, 4★ a week
+    twoStarLo: 12, twoStarHi: 16,   // the 2★ custody band; each prior stint nudges it up
+    bounty: { 2: 5, 3: 12, 4: 18, 5: 24 } },   // paid per star for a LIVE takedown delivery; 2★ is the "petty" rate
   DYING_WINDOW_MIN: 32,            // lethal wounds: found fast, or not at all (32: drag at 12 + cries-carry need real margin under v7 crime volume)
   SICK: { baseHr: 0.0008, lowNeedHr: 0.018, hygieneMult: 3, contam: 0.06,
           burn: 0.35, burnBad: 0.2, mildEnergyMult: 1.5, badHealthHr: 1.5,
@@ -1755,6 +1757,9 @@ const BUSINESS_PRICE = { cafe: 180, market: 200, fastfood: 160, diner: 190, mart
 const bushSpots = (town) => town.trees.map(([x, y]) => [x + 1, y]).filter(([x, y]) => x < town.w - 1 && y < town.h - 1);
 
 const bestWeapon = (ent) => {
+  // an explicitly EQUIPPED combat item wins — you fight with what you chose. Falls back to the
+  // strongest thing on hand when nothing's equipped (or the equipped piece is gone).
+  if (ent.equipped && (ent.inv[ent.equipped] || 0) > 0 && ITEMS[ent.equipped]?.dmg) return ent.equipped;
   let best = null;
   for (const [id, c] of Object.entries(ent.inv)) {
     if (c > 0 && ITEMS[id].dmg && (!best || ITEMS[id].dmg[1] > ITEMS[best].dmg[1])) best = id;
@@ -2568,7 +2573,7 @@ export default function Alderbrook() {
       dialogues: [], pulseDay: {}, nudgeDone: {}, ownerPulseDay: -1,
       treasury: { alderbrook: CFG.TREASURY_SEED, mossford: CFG.TREASURY_SEED, stonecross: CFG.TREASURY_SEED, ferndale: CFG.TREASURY_SEED },   // Stage 3: hall-safe escrow
       lastStipendHr: null, lastVagrancySweep: -9999,    // Stage 3: doctor pay + night-beat sweep trackers
-      fx: [],                                           // Stage 3.5: transient crime/arrest pulses (unsaved)
+      fx: [], projectiles: [],                          // Stage 3.5: transient crime/arrest pulses + flying shots (unsaved)
       incidents: { day: 1, count: 0 },                  // incident-call counter (for the optional settings limit)
       encounters: [], dayLog: [], buzz: null,
       mail: null, foodOrder: null, task: null, mess,
@@ -3379,6 +3384,34 @@ export default function Alderbrook() {
     if (stockOf(sim, bId, itemId) < n) return false;
     sim.stock[bId][itemId] -= n; return true;
   };
+  /* custody length for a star level. 2★ is a 12-16h band that grows with the offender's
+     record; 3★/4★/5★ come from the table (5★ is life, handled separately). */
+  const custodyHours = (target, stars) => {
+    if (stars === 2) return clamp(CFG.WANTED.twoStarLo + (target.timesJailed || 0) * 2, CFG.WANTED.twoStarLo, CFG.WANTED.twoStarHi);
+    return CFG.WANTED.jailHours[stars] || 24;
+  };
+  /* did this NPC wrong the PLAYER? (robbed/mugged them). Victims are entitled to fight back
+     and hand their attacker in without it reading as thuggery. */
+  const wrongedPlayer = (sim, foeId) => sim.playerRobbedBy === foeId || (sim.player.wrongedBy || []).includes(foeId);
+  /* the justice math for the player bringing a foe DOWN (alive). Returns what it's worth and
+     what it costs YOU, by the foe's wanted level and whether they wronged you:
+       5★+   → big bounty, hero renown, lawful
+       3-4★  → bounty, renown, lawful
+       2★    → petty: a small bounty, but a MINOR 1★ on you (beating a small-timer is questionable)
+               — UNLESS you were their victim, then it's clean
+       0-1★  → not a custody matter. Attacking them is assault (you get charged) unless you're
+               the victim, in which case it's clean but pays nothing (a fine matter, not the cells). */
+  const takedownOutcome = (sim, foe) => {
+    const stars = foe.wanted || 0, victim = wrongedPlayer(sim, foe.id);
+    if (stars >= 3) return { lawful: true, jail: true, bounty: (CFG.WANTED.bounty[Math.min(5, stars)] || stars * 6), playerStars: 0, fame: stars >= 5 ? 8 : 4, renown: stars >= 5 ? 6 : 3, hero: true };
+    if (stars === 2) return victim
+      ? { lawful: true, jail: true, bounty: CFG.WANTED.bounty[2], playerStars: 0, fame: 2, renown: 1 }
+      : { lawful: true, jail: true, bounty: Math.ceil(CFG.WANTED.bounty[2] / 2), playerStars: 1, fame: 0, renown: 0, petty: true };
+    // 0-1★
+    return victim
+      ? { lawful: true, jail: false, bounty: 0, playerStars: 0, fame: 0, renown: 0, minor: true }
+      : { lawful: false, jail: false, bounty: 0, playerStars: 0, fame: 0, renown: 0 };   // caller charges assault
+  };
   /* wanted stars only ever escalate; convictions carry a fame cost */
   const convictStars = (sim, ent, stars, reason) => {
     if (sim.crime) sim.crime.starsGiven = (sim.crime.starsGiven || 0) + 1;   // crime ledger
@@ -3588,6 +3621,51 @@ export default function Alderbrook() {
     (sim.fx = sim.fx || []).push({ scene, x, y, kind, born: performance.now() });
     if (sim.fx.length > 24) sim.fx.shift();
   };
+  /* a flying shot: an emoji that travels shooter→target and is drawn in the loop. Because combat
+     can play out in the open, a bystander standing ON the line of fire may catch a stray — the
+     RTS "don't wander into a firefight" hazard. Returns nothing; damage is applied here. */
+  const spawnProjectile = (sim, scene, from, to, emoji = "➶") => {
+    (sim.projectiles = sim.projectiles || []).push({ scene, x0: from.x, y0: from.y, x1: to.x, y1: to.y, born: performance.now(), dur: 300, emoji });
+    if (sim.projectiles.length > 16) sim.projectiles.shift();
+    const line = sim.npcs.filter(n => n.alive && !n.incap && !n.dying && n.scene === scene && n !== from && n !== to);
+    for (const b of line) {
+      const vx = to.x - from.x, vy = to.y - from.y, wx = b.x - from.x, wy = b.y - from.y;
+      const len2 = vx * vx + vy * vy || 1;
+      const t = clamp((wx * vx + wy * vy) / len2, 0, 1);
+      const d = Math.hypot(from.x + t * vx - b.x, from.y + t * vy - b.y);
+      if (d < 0.6 && Math.random() < 0.5) {   // caught in the crossfire
+        const stray = randInt([6, 12]);
+        if (damage(b, stray) && !b.dying && !b.incap) setDying(sim, b, null);
+        b.bubble = { text: rand(["AGH — I'm hit!", "Watch where you AIM!", "*staggers, clutching their side*"]), until: performance.now() / 1000 + 4 };
+        pushFx(sim, scene, b.x, b.y, "crime");
+        if (sim.player.scene === scene) showToast(`💥 ${b.name} caught a stray shot!`);
+        break;   // one unlucky bystander per shot
+      }
+    }
+  };
+  /* book a downed WANTED NPC into a cell (2★+). Shared by hospital delivery and bounty brawls.
+     A fugitive who's been brought down is a caught fugitive. */
+  const bookFugitive = (sim, world, ent) => {
+    if (!ent.id || (ent.wanted || 0) < 2) return false;
+    const stars = ent.wanted, lifer = stars >= 5;
+    const cTown = townOfScene(world, ent.scene) || "stonecross";
+    const cell = assignCell(sim, world, cTown, lifer);
+    if (!cell) return false;
+    ent.bedrest = false; ent.incap = null; ent.dying = null;
+    ent.scene = `i:${cell.bId}`; ent.x = cell.spot.x; ent.y = cell.spot.y;
+    ent.legs = []; ent.path = []; ent.goal = null; ent.wanted = 0;
+    if (lifer) {
+      ent.jailedUntil = Infinity; ent.activity = "serving a life sentence";
+      sim.dayLog.push(`${ent.name} was delivered to the cells — for life`);
+      seedGossip(sim, sim.npcs.filter(o => o.alive && o.town === cTown).slice(0, 5), { text: `${ent.name} got life`, subjectId: ent.id, bad: true });
+    } else {
+      const hrs = custodyHours(ent, stars);
+      ent.jailedUntil = sim.day * 1440 + sim.time + hrs * 60;
+      ent.activity = "in a holding cell";
+      sim.dayLog.push(`${ent.name}, wanted ${stars}★, was delivered to the cells (${hrs}h)`);
+    }
+    return true;
+  };
 
   /* carried to Mercy: wake in a ward bed, billed on the way in */
   /* Stage 2.3: find a free holding cell — local lockup first, then overflow toward
@@ -3639,26 +3717,7 @@ export default function Alderbrook() {
     ent.dying = null;
     hospitalize(sim, world, ent);
     ent.health = 5;                                       // barely
-    if (ent.id && (ent.wanted || 0) >= 3) {               // a delivered fugitive (3★+) is a CAUGHT fugitive
-      const stars = ent.wanted, lifer = stars >= 5;
-      const cTown = townOfScene(world, ent.scene) || "stonecross";
-      const cell = assignCell(sim, world, cTown, lifer);
-      if (cell) {
-        ent.bedrest = false; ent.incap = null;
-        ent.scene = `i:${cell.bId}`; ent.x = cell.spot.x; ent.y = cell.spot.y;
-        ent.legs = []; ent.path = []; ent.goal = null;
-        if (lifer) {
-          ent.jailedUntil = Infinity; ent.activity = "serving a life sentence";
-          sim.dayLog.push(`${ent.name} was patched up at the hospital and sent straight to the cells — for life`);
-          seedGossip(sim, sim.npcs.filter(o => o.alive && o.town === cTown).slice(0, 5), { text: `${ent.name} got life — stitched up and sent down the same day`, subjectId: ent.id, bad: true });
-        } else {
-          const hrs = CFG.WANTED.jailHours[stars] || 24;   // 3★→24h, 4★→48h
-          ent.jailedUntil = sim.day * 1440 + sim.time + hrs * 60;
-          ent.activity = "in a holding cell";
-          sim.dayLog.push(`${ent.name}, wanted ${stars}★, was delivered to the cells (${hrs}h)`);
-        }
-      }
-    }
+    if (ent.id && (ent.wanted || 0) >= 2) bookFugitive(sim, world, ent);   // a delivered fugitive (2★+) is a CAUGHT fugitive
     if (byId) {                                           // victim SURVIVED an attack → attempted murder
       const attacker = byId === "player" ? sim.player : sim.npcs.find(n => n.id === byId);
       if (attacker) {
@@ -3914,7 +3973,7 @@ export default function Alderbrook() {
         target.wanted = 0;
       }
     } else {                                              // 2★-4★: time, and past 2★, debt
-      const hours = CFG.WANTED.jailHours[stars];
+      const hours = custodyHours(target, stars);
       const debt = CFG.WANTED.debtFine[stars] || 0;
       if (debt) fineCoins(target, debt);
       target.wanted = 0;
@@ -4009,12 +4068,22 @@ export default function Alderbrook() {
     // exception (40%), not the rule. Criminals and the Watch get no such mercy.
     const civilianLoser = !loser.outlaw && !loser.enforcer;
     if (lethal && (!civilianLoser || Math.random() < 0.4)) setDying(sim, loser, winner.id); else incapacitate(sim, loser);
-    if (winner === a) {
+    // a BOUNTY takedown: if the loser was a wanted fugitive (2★+), whoever downed them collects
+    // the bounty and the fugitive is hauled straight to a cell — lawful, no stars for the hunter.
+    if ((loser.wanted || 0) >= 2 && !loser.enforcer) {
+      const stars = loser.wanted, pay = CFG.WANTED.bounty[Math.min(5, stars)] || stars * 6;
+      winner.coins = Math.min(9999, winner.coins + pay);
+      repEvent(sim, winner, stars >= 5 ? 6 : 3, stars >= 5 ? 5 : 2, `${winner.name} brought down ${loser.name}, a ${stars}-star fugitive`);
+      winner.bubble = { text: rand(["That's the bounty paid.", "Should've stayed low, friend.", "The Watch'll want a word with you."]), until: now + 4 };
+      bookFugitive(sim, worldRef.current, loser);
+    } else if (winner === a && !((b.wanted || 0) >= 3 && !b.enforcer)) {
+      // a mugged a normal person and won (NOT a lawful bounty attempt on a fugitive)
       transferCoins(sim, loser, winner, Math.floor(loser.coins * CFG.ROBBERY.take));
       convictStars(sim, winner, lethal ? 4 : 3, `${winner.name} ${lethal ? "gravely wounded" : "beat down"} ${loser.name}`);
-    } else {
+    } else if (winner === b) {
       repEvent(sim, winner, 3, 2, `${winner.name} fought off ${loser.name}`);    // self-defense reads well
-      convictStars(sim, a, 2, `${a.name} attacked ${b.name}`);                   // failed aggression is still attempted harm
+      // charge the aggressor — UNLESS they were lawfully going after a wanted fugitive and just lost
+      if (!((b.wanted || 0) >= 3 && !b.enforcer)) convictStars(sim, a, 2, `${a.name} attacked ${b.name}`);
     }
     const enforcer = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
     if (enforcer && winner.wanted > 0) enforcer.dispatch = { targetId: winner.id };
@@ -4071,10 +4140,12 @@ export default function Alderbrook() {
           log.push(lethal ? `You land the finish (${pd}). ${foe.name} collapses — that blade cut DEEP.` : `You land the finish (${pd}). ${foe.name} goes down.`);
           if (lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);   // knives don't stop at down
           if (c.aggressor === "player") {
-            if ((foe.wanted || 0) >= 3) {   // subduing a wanted fugitive (3★+) is a lawful bounty takedown, not a crime
-              const big = (foe.wanted || 0) >= 5;
-              repEvent(sim, p, big ? 8 : 4, big ? 6 : 3, `the player brought down ${foe.name}, a ${foe.wanted}-star fugitive`);
-              log.push(`${foe.name} is wanted (${foe.wanted}★) — carry them to a hospital to claim the bounty.`);
+            const o = takedownOutcome(sim, foe);
+            if (o.lawful) {
+              if (o.fame || o.renown) repEvent(sim, p, o.fame, o.renown, `the player brought down ${foe.name}${(foe.wanted || 0) ? `, a ${foe.wanted}-star fugitive` : ""}`);
+              if (o.playerStars) convictStars(sim, p, o.playerStars, `the player roughed up ${foe.name}, a petty offender`);
+              if (o.jail) log.push(`${foe.name} is wanted (${foe.wanted}★)${o.petty ? " — small fry, but" : ""} carry them to a hospital for the bounty${o.playerStars ? " (heavy-handed of you)" : ""}.`);
+              else log.push(`${foe.name} isn't a jailable case — nothing to collect here.`);
             } else {
               transferCoins(sim, foe, p, Math.floor(foe.coins * CFG.ROBBERY.take));
               convictStars(sim, p, lethal ? 4 : 3, `the player ${lethal ? "gravely wounded" : "beat down"} ${foe.name}`);
@@ -4134,6 +4205,8 @@ export default function Alderbrook() {
     const sim = simRef.current, now = performance.now() / 1000;
     const robber = sim.npcs.find(n => n.id === threat.robberId);
     setThreat(null);
+    // they threatened you at knifepoint — you're now their VICTIM, entitled to hit back / hunt them clean
+    if (robber) { sim.player.wrongedBy = [...new Set([...(sim.player.wrongedBy || []), robber.id])].slice(-6); }
     if (choice === "submit") {
       const took = transferCoins(sim, sim.player, robber, Math.floor(sim.player.coins * CFG.ROBBERY.take));
       showToast(`You hand over ${took} coins. ${robber.name} melts into the shadows. Report it — or don't.`);
@@ -4516,6 +4589,19 @@ export default function Alderbrook() {
       // danger. A starving man doesn't leave the table because he dislikes someone across it.
       const near = sim.npcs.find(o => o.alive && npc.avoids.includes(o.id) && o.scene === npc.scene && dist(o, npc) < 4);
       if (near) { const s = town.spots.graveyard || town.spots.plaza; goal = { scene: `t:${hereTown}`, ...s }; activity = "suddenly remembering somewhere to be"; }
+    }
+
+    /* GET OUT OF THE LINE OF FIRE: a civilian near drawn steel or a bleeding body steers well
+       clear — nobody wanders into a brawl. The Watch, the armed, and the desperate hold their
+       ground; everyone else finds somewhere else to be. (Keeps bystanders off the firing line,
+       though a stray can still catch a slow mover.) */
+    if (!npc.enforcer && !npc.dispatch && !npc.outlaw && npc.energy > 12 && npc.sick?.level !== "bad") {
+      const danger = sim.npcs.find(o => o.alive && o.id !== npc.id && o.scene === npc.scene && dist(o, npc) < 4
+        && (o.dying || (o.steelUntil && o.steelUntil > now)));
+      if (danger) {
+        const away = town.spots.graveyard || town.spots.park || town.spots.plaza;
+        goal = { scene: `t:${hereTown}`, ...away }; activity = "hurrying away from trouble"; hide = false;
+      }
     }
 
     const enc = sim.encounters.find(e => !e.done && (e.a === npc.id || e.b === npc.id) && Math.abs(hour - e.hour) < 0.6);
@@ -6285,6 +6371,47 @@ export default function Alderbrook() {
           moveNPC(npc, world, dt);
           npcAtGoal(npc, sim, world, dtHours, now);
 
+          /* PROFESSIONAL FORCE: a dispatched officer facing a 5★ killer (or a spree) doesn't walk
+             up for a polite arrest — if they carry a ranged weapon (Cole's crossbow), they OPEN
+             FIRE from distance. Bolts fly across the scene; bystanders can catch a stray. */
+          if (npc.enforcer && npc.dispatch && !npc.incap && !npc.dying) {
+            const t = npc.dispatch.targetId === "player" ? p : sim.npcs.find(n => n.id === npc.dispatch.targetId);
+            const hostile = t && (t.wanted || 0) >= 5;
+            const wid = bestWeapon(npc), w = wid ? ITEMS[wid] : null;
+            const ranged = w && w.range && (npc.inv[w.ammo] || 0) > 0;
+            if (hostile && ranged && t.scene === npc.scene && !t.incap && !t.dying) {
+              const gap = dist(npc, t);
+              if (gap <= w.range && gap > 1.4) {
+                if (!npc._lastShot || now - npc._lastShot > 1.1) {   // a shot roughly once a second
+                  npc._lastShot = now; npc.steelUntil = now + 6;     // a live firefight — civilians scatter
+                  npc.inv[w.ammo]--; if (npc.inv[w.ammo] <= 0) delete npc.inv[w.ammo];
+                  spawnProjectile(sim, npc.scene, npc, t, w.emoji || "➶");
+                  const dmg = randInt(w.dmg);
+                  const downed = damage(t, dmg);
+                  npc.bubble = { text: rand(["HALT — or the next one lands!", "Down! NOW!", "Watch! Stand down!"]), until: now + 3 };
+                  if (t.id) { if (downed && !t.dying && !t.incap) { if (w.lethal) setDying(sim, t, npc.id); else incapacitate(sim, t); bookFugitive(sim, world, t); npc.dispatch = null; } }
+                  else {
+                    if (sfx) sfx.alert();
+                    showToast(`🎯 ${npc.name} fires! You take ${dmg}.`);
+                    if (downed && !p.dying && !p.incap) { setDying(sim, p, npc.id); showToast("💀 Cole's bolt drops you. You're going down."); }
+                  }
+                }
+              }
+            }
+          }
+
+          /* desperate townsfolk turn bounty hunter: broke, and a wanted fugitive (3★+) is right
+             there. A risky brawl for the coin. Not the Watch, the fearless, or the already-hunted. */
+          if (!npc.enforcer && !npc.minor && !npc.incap && !npc.dying && !npc.jailedUntil && !npc.dispatch
+              && (npc.coins || 0) < 8 && npc.energy > 30 && npc.health > 45 && decide && Math.random() < 0.04) {
+            const mark = sim.npcs.find(m => m.alive && !m.incap && !m.dying && !m.jailedUntil && m.id !== npc.id
+              && (m.wanted || 0) >= 3 && m.scene === npc.scene && dist(m, npc) < 2.4);
+            if (mark) {
+              npc.bubble = { text: rand(["That's a wanted face — and I need the coin.", "Bounty's a bounty.", "Sorry, friend. Business."]), until: now + 3 };
+              resolveFightNPC(sim, npc, mark, now);
+            }
+          }
+
           /* enforcer reaches their mark */
           if (npc.enforcer && npc.dispatch) {
             const t = npc.dispatch.targetId === "player" ? p : sim.npcs.find(n => n.id === npc.dispatch.targetId);
@@ -7050,9 +7177,10 @@ export default function Alderbrook() {
       }
       case "carry": {   // haul the wounded in: half an hour of your day, renown if they make it
         const downed = sim.npcs.find(n => n.id === a.carry && n.alive); if (!downed) break;
-        const wasFive = (downed.wanted || 0) >= 5;
-        const wasWanted = (downed.wanted || 0) >= 3;
-        const bounty = wasWanted ? downed.wanted * 12 : 0;   // v7 Stage 5: live delivery pays
+        const dstars = downed.wanted || 0;
+        const wasFive = dstars >= 5;
+        const wasWanted = dstars >= 2;
+        const bounty = wasWanted ? (CFG.WANTED.bounty[Math.min(5, dstars)] || dstars * 6) : 0;   // live delivery pays, by star
         completeRescue(sim, world, downed, downed.dying?.byId || null);
         sim.time += 30;
         repEvent(sim, p, 2, wasFive ? 5 : 2, `the player carried ${downed.name} to the hospital`);
@@ -7928,10 +8056,11 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       const sim = simRef.current, p = sim.player;
       const foe = sim.npcs.find(n => n.id === npcId && n.alive); if (!foe) return;
       const wid = bestWeapon(p), w = wid ? ITEMS[wid] : null;
-      { // being attacked is an INCIDENT — UNLESS the target is a wanted fugitive (3★+), where a
-        // takedown reads as a lawful bounty and bystanders don't turn the hunter in.
+      { // being attacked is an INCIDENT — UNLESS this is a lawful takedown (a wanted fugitive, or
+        // your own mugger), where bystanders don't turn the hunter in.
+        const lawfulHit = takedownOutcome(sim, foe).lawful;
         const witnesses = sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.id !== npcId && !n.hidden && n.scene === p.scene && !n.activity.includes("sleep"));
-        if ((foe.wanted || 0) < 3 && witnesses.length && incidentBudget(sim) && !apiBusyRef.current) {
+        if (!lawfulHit && witnesses.length && incidentBudget(sim) && !apiBusyRef.current) {
           const byId = Object.fromEntries(sim.npcs.map(n => [n.id, n]));
           const ctx = `the player just attacked ${foe.name} in the open`;
           sim.incidents.count++;
@@ -7945,14 +8074,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       }
       if (w?.range && (p.inv[w.ammo] || 0) > 0) {   // v7 Stage 2: the OPENING SHOT — spend ammo, strike from range
         p.inv[w.ammo]--; if (p.inv[w.ammo] <= 0) delete p.inv[w.ammo];
+        spawnProjectile(sim, p.scene, p, foe, w.emoji || "➶");   // the bolt flies — and can clip a bystander
         const dmg = randInt(w.dmg);
         foe.health = Math.max(0, foe.health - dmg);
         if (foe.health <= 5) {   // dropped at range — same justice as a won fight, minus the looting
           if (w.lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);
-          if ((foe.wanted || 0) >= 3) {   // a 3★+ takedown is a lawful bounty — haul them in for the reward
-            const big = (foe.wanted || 0) >= 5;
-            repEvent(sim, p, big ? 8 : 4, big ? 6 : 3, `the player brought down ${foe.name}, a ${foe.wanted}-star fugitive`);
-            showToast(`${w.emoji} ${foe.name} goes down (${dmg}). Wanted ${foe.wanted}★ — carry them to a hospital for the bounty.`);
+          const o = takedownOutcome(sim, foe);
+          if (o.lawful) {
+            if (o.fame || o.renown) repEvent(sim, p, o.fame, o.renown, `the player brought down ${foe.name}${(foe.wanted || 0) ? `, a ${foe.wanted}-star fugitive` : ""}`);
+            if (o.playerStars) convictStars(sim, p, o.playerStars, `the player shot down ${foe.name}, a petty offender`);
+            showToast(o.jail ? `${w.emoji} ${foe.name} goes down (${dmg}). Wanted ${foe.wanted}★ — carry them to a hospital for the bounty${o.playerStars ? " (heavy-handed)" : ""}.` : `${w.emoji} ${foe.name} goes down (${dmg}) — not a jailable case.`);
           } else {
             convictStars(sim, p, w.lethal ? 4 : 3, `the player shot ${foe.name} down`);
             const enf = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
@@ -8273,8 +8404,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         if (e.key === "+" || e.key === "=") { nudgeZoom(CFG.ZOOM.step); return; }
         if (e.key === "-" || e.key === "_") { nudgeZoom(-CFG.ZOOM.step); return; }
       }
-      if (!modalRef.current && !e.repeat) {   // left-stack verbs: G gift, T talk, H trade, B threaten, Z attack
+      if (!modalRef.current && !e.repeat) {   // left-stack verbs: X draw/sheathe, G gift, T talk, H trade, B threaten, Z attack
         const k = e.key.toLowerCase();
+        if (k === "x") { toggleSheathe(); return; }
         if (k === "g") { openPicker("gift"); return; }
         if (k === "t") { openPicker("talk"); return; }
         if (k === "h") { openPicker("trade"); return; }
@@ -8400,6 +8532,18 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         ctx.fillText("⚖️", cx, cy - T * (0.3 + t01));
       }
       ctx.globalAlpha = 1;
+    }
+    // flying shots — an emoji streaking from shooter to target
+    sim.projectiles = (sim.projectiles || []).filter(pr => nowMs - pr.born < pr.dur);
+    for (const pr of sim.projectiles) {
+      if (pr.scene !== sim.player.scene) continue;
+      const t01 = clamp((nowMs - pr.born) / pr.dur, 0, 1);
+      const cx = px(pr.x0 + (pr.x1 - pr.x0) * t01) + T / 2, cy = py(pr.y0 + (pr.y1 - pr.y0) * t01) + T / 2;
+      const ang = Math.atan2(pr.y1 - pr.y0, pr.x1 - pr.x0);
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
+      ctx.font = `${Math.floor(T * 0.6)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(pr.emoji || "➶", 0, 0);
+      ctx.restore(); ctx.textBaseline = "alphabetic";
     }
     for (const e of ents) {
       if (e.ref.dying) drawBubble(ctx, "🩸 DYING — get help!", px(e.x) + T / 2, py(e.y) - T * 0.15, T, cw);
@@ -9636,7 +9780,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         ) : null;
         return (
           <div style={{ position: "absolute", left: 10, bottom: 120, display: "flex", flexDirection: "column", gap: 6, zIndex: 30 }}>
-            {btn(p.unsheathed ? "🗡 Sheathe" : "🗡 Draw", toggleSheathe, armedNow)}
+            {btn(p.unsheathed ? "🗡 Sheathe" : `🗡 Draw${bestWeapon(p) ? ` ${ITEMS[bestWeapon(p)].emoji}` : ""}`, toggleSheathe, armedNow, "X")}
             {btn("🎁 Gift", () => openPicker("gift"), anyone, "G")}
             {btn("💬 Talk", () => openPicker("talk"), anyone, "T")}
             {btn("🤝 Trade", () => openPicker("trade"), anyone, "H")}
@@ -9846,7 +9990,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
                   <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> ×{c}</span>
                   {(ITEMS[id].eat || ITEMS[id].heal || ITEMS[id].cure || ITEMS[id].use) && <button style={S.smallBtn} onClick={() => useItem(id)}>{ITEMS[id].use === "goodie" ? "Open" : "Use"}</button>}
-                  {ITEMS[id].dmg && <span style={{ fontSize: fs - 2, opacity: 0.6 }}>dmg {ITEMS[id].dmg[0]}–{ITEMS[id].dmg[1]}</span>}
+                  {ITEMS[id].dmg && <span style={{ fontSize: fs - 2, opacity: 0.6 }}>dmg {ITEMS[id].dmg[0]}–{ITEMS[id].dmg[1]}{ITEMS[id].lethal ? " ⚠" : ""}{ITEMS[id].range ? ` · range ${ITEMS[id].range}` : ""}</span>}
+                  {ITEMS[id].dmg && (player.equipped === id
+                    ? <button style={{ ...S.smallBtn, background: "#6a8a4a" }} onClick={() => { player.equipped = null; showToast("Unequipped — you'll swing whatever's strongest."); bump(); }}>✓ Equipped</button>
+                    : <button style={S.smallBtn} onClick={() => { player.equipped = id; showToast(`Equipped ${ITEMS[id].name} — that's your attack now.`); bump(); }}>Equip</button>)}
                   {id === "broom" && <span style={{ fontSize: fs - 2, opacity: 0.6 }}>sweep anywhere</span>}
                 </div>
               ))}
