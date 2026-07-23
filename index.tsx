@@ -470,7 +470,14 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const pad2 = (n) => String(n).padStart(2, "0");
 const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
-const REL_ORDER = ["hates", "dislikes", "neutral", "likes", "friend"];
+// Two tiers deeper at each end: "enemy"/"nemesis" below "hates", "close"/"beloved" above "friend".
+// "enemy"/"close" are the "much more than that" step; "nemesis"/"beloved" are the long-term extremes.
+const REL_ORDER = ["nemesis", "enemy", "hates", "dislikes", "neutral", "likes", "friend", "close", "beloved"];
+const relIdx = (r) => { const i = REL_ORDER.indexOf(r); return i < 0 ? REL_ORDER.indexOf("neutral") : i; };
+// natural "<name> <phrase> <other>" wording handed to the AI brains and shown in the roster
+const REL_DESC = { nemesis: "sworn nemesis of", enemy: "an enemy of", hates: "hates", dislikes: "dislikes", neutral: "neutral toward", likes: "likes", friend: "friend of", close: "close friend of", beloved: "utterly devoted to" };
+// short label for the player's Townsfolk list ("… you")
+const REL_TOYOU = { nemesis: "your sworn nemesis", enemy: "an enemy of yours", hates: "hates you", dislikes: "dislikes you", likes: "likes you", friend: "a friend", close: "a close friend", beloved: "utterly devoted to you" };
 
 function fameTier(fame, renown) {
   if (renown < 8) return "a newcomer nobody really knows yet";
@@ -2089,7 +2096,7 @@ Return ONLY JSON. To ask: {"action":"ask","say":"your question"}. To conclude: {
 
 function relLine(npc, npcsById) {
   const parts = Object.entries(npc.relationships)
-    .map(([id, st]) => `${st === "friend" ? "friend of" : st} ${id === "player" ? "the player" : (npcsById[id]?.name || id)}`);
+    .map(([id, st]) => `${REL_DESC[st] || st} ${id === "player" ? "the player" : (npcsById[id]?.name || id)}`);
   return parts.length ? parts.join("; ") : "no strong feelings about anyone yet";
 }
 const invLine = (ent) => {
@@ -2299,6 +2306,27 @@ Respond ONLY with JSON, no markdown: {"response":"submit|run|fight"}`;
   return callClaude(prompt, CFG.INCIDENT.tokens);
 }
 
+/* A friendlier fork on a mugging: an NPC who feels warmly toward the player gets to choose,
+   in character, whether to go through with the robbery — or drop the knife and just ASK a
+   friend for a gift instead. If they ask, they also decide whether a refusal turns them back
+   to robbery, or whether they simply couldn't do that to someone they care about. */
+async function giftOrRob(robber, player) {
+  const rel = robber.relationships?.player || "neutral";
+  const carried = Object.entries(player.inv)
+    .filter(([id, c]) => c > 0 && ITEMS[id])
+    .map(([id, c]) => `${id} — ${ITEMS[id].name}, worth ~${ITEMS[id].price}c (carrying ${c})`).join("; ") || "nothing of note";
+  const prompt = `In a cozy life-sim with real stakes, ${robber.name} (${robber.personality}) has caught the player alone in a quiet moment and COULD shake them down for coin. But ${robber.name} genuinely feels toward the player: ${REL_DESC[rel] || rel} them.
+Because of that bond, ${robber.name} might not want to rob them at all — they might instead just ASK, the way you'd hit up a friend for a real favor, for a gift of a decent amount of things.
+The player is carrying ${player.coins}c and: ${carried}.
+Decide, fully in character:
+- "action": "rob" (go through with the mugging) OR "ask" (put the knife away and just ask for a gift instead).
+- If "ask": name a DECENT but not greedy request — some "coins" (up to roughly a third of what they carry) and/or a few items from what the player is actually carrying. Ask for what ${robber.name} would truly want or need, not the whole pack.
+- "retaliate": if the player REFUSES the gift, does ${robber.name} turn on them and rob them anyway (true) — or could they not bring themselves to do that to someone they feel this way about, and back off (false)?
+- "line": what ${robber.name} says as they step up, in character, under 25 words.
+Respond ONLY with JSON, no markdown: {"action":"rob|ask","coins":<int>,"items":[{"id":"<itemId>","qty":<int>}],"retaliate":<bool>,"line":"<text>"}`;
+  return callClaude(prompt, 240);
+}
+
 /* =====================================================================
    COMPONENT
    ===================================================================== */
@@ -2482,6 +2510,7 @@ export default function Alderbrook() {
   const [travelPanel, setTravelPanel] = useState(false);// Mo's fare menu
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [threat, setThreat] = useState(null);           // { robberId } — submit/run/fight
+  const [giftDemand, setGiftDemand] = useState(null);   // a friendly NPC asks for a gift instead of robbing: { robberId, coins, items, retaliate, line }
   const [combat, setCombat] = useState(null);           // { foeId, log, over, won }
   const [deathScreen, setDeathScreen] = useState(null); // hardcore epitaph
   const [jailScreen, setJailScreen] = useState(null);   // Stage 2.3: life-sentence cell UI (prison break)
@@ -2497,8 +2526,9 @@ export default function Alderbrook() {
   const transitionRef = useRef(null); transitionRef.current = transition;
   const combatRef = useRef(null); combatRef.current = combat;
   const threatRef = useRef(null); threatRef.current = threat;
+  const giftDemandRef = useRef(null); giftDemandRef.current = giftDemand;
   const modalRef = useRef(false);
-  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
+  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
   const jailRef = useRef(false);
   jailRef.current = !!jailScreen;                        // Stage 3.5: jail time is REAL — the cell must not pause the sim
   const apiBusyRef = useRef(false);
@@ -3093,7 +3123,7 @@ export default function Alderbrook() {
   const friendCoversBill = (sim, patientId, bill) => {
     if (Math.random() > CFG.MEDICAL.friendCoverChance) return null;
     return sim.npcs.find(n => n.alive && n.id !== patientId &&
-      n.relationships[patientId] === "friend" && n.coins >= bill + 4) || null;
+      relIdx(n.relationships[patientId] || "neutral") >= relIdx("friend") && n.coins >= bill + 4) || null;
   };
   /* ===== Stage 3.5: when the player sleeps, the town sleeps =====
      Player time-jumps (bed/inn/bench) skip hours the NPCs never lived, so everyone
@@ -3857,8 +3887,8 @@ export default function Alderbrook() {
     if (npc.enforcer) return "arrest";
     if (npc.minor) return "flee";
     const feeling = npc.relationships[thief.id || "player"] || "neutral";
-    if (feeling === "hates" || feeling === "dislikes") return Math.random() < 0.7 ? "arrest" : "ignore";
-    if (feeling === "friend" || feeling === "likes") return Math.random() < 0.15 ? "arrest" : "ignore";
+    if (relIdx(feeling) <= relIdx("dislikes")) return Math.random() < 0.7 ? "arrest" : "ignore";   // dislikes and worse (down to a sworn nemesis)
+    if (relIdx(feeling) >= relIdx("likes")) return Math.random() < 0.15 ? "arrest" : "ignore";     // likes and better — inclined to look away
     return Math.random() < 0.3 ? "arrest" : "ignore";
   };
 
@@ -4108,7 +4138,7 @@ export default function Alderbrook() {
       victim.bubble = { text: `T-take it... ${took} coins. Just go.`, until: now + 4 };
       victim.memories = [...victim.memories, `${robber.id ? robber.name : "The player"} robbed me`].slice(-CFG.MAX_MEMORIES);
       seedGossip(sim, [victim], { text: `${robber.id ? robber.name : "the player"} robbed ${victim.name}`, subjectId: robber.id || "player", bad: true });
-      victim.relationships[robber.id || "player"] = "hates";
+      { const rk = robber.id || "player"; victim.relationships[rk] = REL_ORDER[Math.min(relIdx(victim.relationships[rk] || "neutral"), relIdx("hates"))]; }   // at least hates — but a standing enemy/nemesis doesn't soften to mere hate
       // Stage 3.5: a shaken victim usually reports it — or an earshot witness does. Nobody just KNOWS.
       if (Math.random() < 0.75) { victim.report = { thiefId: robber.id || "player", crime: "robbery", victimName: victim.name }; victim.goal = null; }
       else {
@@ -4225,6 +4255,83 @@ export default function Alderbrook() {
         sim.playerRobbedBy = robber.id;                  // Stage 3.5: hurt, robbed — and it's still on YOU to report it
       }
     } else setCombat({ foeId: robber.id, aggressor: robber.id, log: ["You raise your fists."], over: false, won: null });
+  };
+
+  /* clamp a Claude gift request down to what the player is actually carrying */
+  const sanitizeGiftRequest = (player, out) => {
+    if (!out) return null;
+    const coins = clamp(Math.floor(out.coins || 0), 0, player.coins);
+    const items = [];
+    for (const it of (Array.isArray(out.items) ? out.items : [])) {
+      const id = it?.id, have = player.inv[id] || 0;
+      if (id && ITEMS[id] && have > 0 && !items.some(x => x.id === id))
+        items.push({ id, qty: clamp(Math.floor(it.qty || 1), 1, have) });
+      if (items.length >= 4) break;
+    }
+    return { coins, items };
+  };
+
+  /* an NPC steps up to shake the player down — but a friend may ask instead of rob. If they're
+     warm enough (and the AI is on), Claude decides gift-vs-rob; otherwise it's a plain mugging. */
+  const approachForCoins = (sim, robberId) => {
+    if (threatRef.current || giftDemandRef.current || combatRef.current) return;
+    const robber = sim.npcs.find(n => n.id === robberId);
+    if (!robber) return;
+    const goRob = () => {
+      if (threatRef.current || giftDemandRef.current || combatRef.current) return;
+      robber.steelUntil = performance.now() / 1000 + 90;   // the blade comes OUT
+      sfx.alert(); setThreat({ robberId });
+    };
+    // only someone who actually likes you might soften — and only if the AI is on and free
+    if (relIdx(robber.relationships?.player || "neutral") < relIdx("likes") || !USER_API_KEY || apiBusyRef.current) { goRob(); return; }
+    apiBusyRef.current = true;
+    giftOrRob(robber, sim.player)
+      .then(out => {
+        if (threatRef.current || giftDemandRef.current || combatRef.current) return;
+        if (robber.alive === false || robber.incap || robber.jailedUntil || robber.scene !== sim.player.scene) return;   // moment passed while we asked the AI
+        const req = sanitizeGiftRequest(sim.player, out);
+        if (out && out.action === "ask" && req && (req.coins > 0 || req.items.length)) {
+          robber.goal = null; sfx.pop();
+          setGiftDemand({ robberId, coins: req.coins, items: req.items, retaliate: !!out.retaliate,
+            line: String(out.line || "Hey — could you help a friend out?").slice(0, 160) });
+        } else goRob();
+      })
+      .catch(goRob)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* the gift-request panel's two answers: give what they asked, or refuse (and maybe get robbed) */
+  const giftDemandChoice = (choice) => {
+    const sim = simRef.current, now = performance.now() / 1000;
+    const gd = giftDemandRef.current;
+    setGiftDemand(null);
+    if (!gd) return;
+    const robber = sim.npcs.find(n => n.id === gd.robberId);
+    if (!robber) return;
+    if (choice === "give") {
+      const handed = [];
+      if (gd.coins > 0) { const n = transferCoins(sim, sim.player, robber, gd.coins); if (n) handed.push(`${n}c`); }
+      for (const it of gd.items) { const n = giveItem(sim.player, robber, it.id, it.qty); if (n) handed.push(`${n}× ${ITEMS[it.id].name}`); }
+      const cur = relIdx(robber.relationships.player || "neutral");
+      robber.relationships.player = REL_ORDER[clamp(cur + 1, 0, REL_ORDER.length - 1)];   // generosity between friends deepens the bond
+      robber.memories = [...robber.memories, `The player came through with ${handed.join(", ") || "a favor"} when I asked`].slice(-CFG.MAX_MEMORIES);
+      robber.bubble = { text: rand(["You're a true friend. I won't forget this.", "...thank you. Really.", "I owe you one — a big one."]), until: now + 5 };
+      robber.goal = null; robber.steelUntil = 0;
+      repEvent(sim, sim.player, 2, 1, `the player helped ${robber.name} out with a gift`);
+      sfx.coin(); showToast(handed.length ? `🎁 You give ${robber.name} ${handed.join(", ")}. They melt back into the day, grateful.` : `${robber.name} waves it off — you'd nothing to spare.`);
+    } else if (gd.retaliate) {                              // "wrong answer" — the favor was never really optional
+      robber.bubble = { text: rand(["Wrong answer. Hand it over, then.", "Fine. The HARD way.", "You'll regret that."]), until: now + 4 };
+      setThreat({ robberId: robber.id });
+      robber.steelUntil = now + 90; sfx.alert();
+    } else {                                                // couldn't do it to a friend — backs off, but stung
+      const cur = relIdx(robber.relationships.player || "neutral");
+      robber.relationships.player = REL_ORDER[clamp(cur - 1, 0, REL_ORDER.length - 1)];
+      robber.memories = [...robber.memories, "Swallowed my pride and asked the player for help — they said no"].slice(-CFG.MAX_MEMORIES);
+      robber.bubble = { text: rand(["...forget I asked.", "No — no, you're right. Sorry.", "Yeah. Bad idea. Sorry to bother you."]), until: now + 5 };
+      robber.goal = null;
+      showToast(`${robber.name} can't bring themselves to force it. They back off — but they'll remember the no.`);
+    }
+    bump();
   };
 
   /* =====================================================================
@@ -5162,7 +5269,7 @@ export default function Alderbrook() {
     const bits = [];
     if (rumor) bits.push(`${a.name} has JUST heard news to share: ${rumor.text}`);   // Stage 6: gossip leads
     const rel = a.relationships[b.id] || b.relationships[a.id];
-    if (rel && rel !== "neutral") bits.push(`${a.name} ${rel} ${b.name}`);
+    if (rel && rel !== "neutral") bits.push(`${a.name} ${REL_DESC[rel] || rel} ${b.name}`);
     const mem = (a.memories || []).slice(-2);
     if (mem.length) bits.push(`recent on ${a.name}'s mind: ${mem.join("; ")}`);
     // a shared third person both have an opinion about (gossip fuel)
@@ -5533,7 +5640,7 @@ export default function Alderbrook() {
       const options = [...cands.map(c => c.id), ...(playerRuns ? ["player"] : [])];
       if (options.length) {
         const votes = {};
-        const relScore = { hates: -8, dislikes: -4, neutral: 0, likes: 4, friend: 8 };
+        const relScore = { nemesis: -16, enemy: -12, hates: -8, dislikes: -4, neutral: 0, likes: 4, friend: 8, close: 12, beloved: 16 };
         for (const v of sim.npcs) {
           if (!v.alive || v.minor) continue;
           let best = null, bestScore = -1e9;
@@ -5853,7 +5960,7 @@ export default function Alderbrook() {
       if (!Object.keys(CFG.FARES[n.town] || {}).length) continue;
       if (n.work?.bId && OWNERS[n.work.bId] === n.id) continue;   // your shop doesn't run itself
       const far = Object.entries(n.relationships).find(([id, st]) =>
-        (st === "friend" || st === "likes") && sim.npcs.some(o => o.id === id && o.alive && o.town !== n.town
+        relIdx(st) >= relIdx("likes") && sim.npcs.some(o => o.id === id && o.alive && o.town !== n.town
           && Object.keys(CFG.FARES[o.town] || {}).length));   // and nobody buses OUT to the camp either
       if (far) n.visitPlan = { targetId: far[0], phase: "go" };
     }
@@ -5959,7 +6066,7 @@ export default function Alderbrook() {
   const rollFriendLetters = (sim) => {
     for (const n of sim.npcs) {
       if (!n.alive || n.jailedUntil || Math.random() > 0.08) continue;
-      const friends = Object.entries(n.relationships).filter(([, st]) => st === "friend" || st === "likes");
+      const friends = Object.entries(n.relationships).filter(([, st]) => relIdx(st) >= relIdx("likes"));
       if (!friends.length) continue;
       const [toId] = rand(friends);
       sendLetter(sim, n.id, toId, rand([
@@ -5988,7 +6095,7 @@ export default function Alderbrook() {
     for (const n of sim.npcs) {
       if (!n.alive || n.jailedUntil || n.town === town) continue;
       const st = n.relationships[throwerKey];
-      if (st === "friend" || st === "likes") {
+      if (relIdx(st) >= relIdx("likes")) {
         sendLetter(sim, throwerKey, n.id, `You're invited! Party at the ${TOWN_DEFS[town].name} plaza tonight!`);
         n.visitPlan = { targetId: throwerKey, phase: "go", party: true };
       }
@@ -6152,7 +6259,7 @@ export default function Alderbrook() {
             const present = residents.filter(n => n.scene === p.scene && !n.incap && !n.dying);
             const awakeHost = present.find(n => !n.activity?.includes("sleep") && !n.activity?.includes("Sleep"));
             const partyHere = sim.party && sim.party.day === sim.day && residents.some(r => r.id === sim.party.throwerId);
-            const welcomed = partyHere || (awakeHost && ["likes", "friend"].includes(awakeHost.relationships.player || awakeHost.relationships[p.id] || "neutral"));
+            const welcomed = partyHere || (awakeHost && relIdx(awakeHost.relationships.player || awakeHost.relationships[p.id] || "neutral") >= relIdx("likes"));
             const stayed = abs9 - p.trespass.since;
             const nowS = performance.now() / 1000;
             if (!welcomed && stayed > CFG.TRESPASS.graceMin && !p.trespass.warned) {
@@ -6303,7 +6410,7 @@ export default function Alderbrook() {
               thrower.inv[pt.dinner] = (thrower.inv[pt.dinner] || 0) + 1;
               thrower.inv[pt.dessert] = (thrower.inv[pt.dessert] || 0) + 1;
               repEvent(sim, thrower, CFG.PARTY.repFame, CFG.PARTY.repRenown, `${pt.throwerId === "player" ? "the player" : thrower.name} threw a party for the whole town`);
-              for (const g of attendees.filter(g => g.id && g.relationships[pt.throwerId] === "friend" && Math.random() < CFG.PARTY.giftChance)) {
+              for (const g of attendees.filter(g => g.id && relIdx(g.relationships[pt.throwerId] || "neutral") >= relIdx("friend") && Math.random() < CFG.PARTY.giftChance)) {
                 const itemId = Object.keys(g.inv).find(id => g.inv[id] > 0 && !ITEMS[id].dmg);
                 if (Math.random() < 0.5 && itemId) receiveGift(sim, g, thrower, { itemId });
                 else if (g.coins > 5) receiveGift(sim, g, thrower, { coins: 2 + Math.floor(Math.random() * 3) });
@@ -6444,9 +6551,9 @@ export default function Alderbrook() {
           if (npc.thief && !npc.incap && !npc.jailedUntil && npc.scene === p.scene && dist(npc, p) < 2 &&
               p.coins > 15 && ((sim.time / 60) % 24 >= 21 || (sim.time / 60) % 24 < 5) &&
               !sim.npcs.some(e => e.enforcer && e.alive && townOfScene(world, e.scene) === townOfScene(world, p.scene)) &&
-              npc.lastRobDay !== sim.day && Math.random() < 0.0015 && !threatRef.current && !combatRef.current) {
+              npc.lastRobDay !== sim.day && Math.random() < 0.0015 && !threatRef.current && !combatRef.current && !giftDemandRef.current && !apiBusyRef.current) {
             npc.lastRobDay = sim.day;
-            setThreat({ robberId: npc.id });
+            approachForCoins(sim, npc.id);   // a friendly Dex might just ask for a hand-out instead
           }
 
           if (npc.scene === p.scene && !npc.hidden && !npc.incap && !npc.jailedUntil && dist(npc, p) < CFG.GREET_RADIUS &&
@@ -6461,11 +6568,12 @@ export default function Alderbrook() {
             else line = rand(npc.greets);
             npc.bubble = { text: line, until: now + CFG.BUBBLE_SECONDS };
 
-            if (npc.relationships.player === "friend" && npc.coins > 8 && npc.lastGiftDay !== sim.day && Math.random() < 0.15) {
+            const bond = relIdx(npc.relationships.player);   // friend and beyond spontaneously gift; the deeper the bond, the more often & more generous
+            if (bond >= relIdx("friend") && npc.coins > 8 && npc.lastGiftDay !== sim.day && Math.random() < 0.15 + 0.1 * (bond - relIdx("friend"))) {
               npc.lastGiftDay = sim.day;
               const itemId = Object.keys(npc.inv).find(id => npc.inv[id] > 0 && !ITEMS[id].dmg);   // nobody gifts their baton
               if (itemId && Math.random() < 0.5) receiveGift(sim, npc, p, { itemId });
-              else receiveGift(sim, npc, p, { coins: 1 + Math.floor(Math.random() * 2) });
+              else receiveGift(sim, npc, p, { coins: 1 + (bond - relIdx("friend")) + Math.floor(Math.random() * 2) });
             }
           }
           if (npc.bubble && now > npc.bubble.until) npc.bubble = null;
@@ -6517,7 +6625,7 @@ export default function Alderbrook() {
             sim._ambHr = hr9;
             if (Math.random() < CFG.OUTLANDS.ambushLinger + sim.player.coins / (CFG.OUTLANDS.wealthDiv * 4)) {
               const thug9 = sim.npcs.find(n => n.alive && n.town === "outlands" && !n.jailedUntil && !n.incap && !n.dying && (n.outlaw || !n.home) && n.scene === sim.player.scene);
-              if (thug9) { thug9.x = clamp(sim.player.x + 1, 0, 99); thug9.y = sim.player.y; thug9.legs = []; thug9.path = []; thug9.goal = null; thug9.steelUntil = performance.now() / 1000 + 90; sfx.alert(); setThreat({ robberId: thug9.id }); }
+              if (thug9) { thug9.x = clamp(sim.player.x + 1, 0, 99); thug9.y = sim.player.y; thug9.legs = []; thug9.path = []; thug9.goal = null; approachForCoins(sim, thug9.id); }
             }
           } else if (sim.player.scene !== "t:outlands") sim._ambHr = hr9;
         }
@@ -7181,8 +7289,7 @@ export default function Alderbrook() {
         if (thug && Math.random() < heat) {
           thug.scene = p.scene; thug.x = clamp(p.x + 1, 0, 99); thug.y = p.y;
           thug.legs = []; thug.path = []; thug.goal = null;
-          thug.steelUntil = performance.now() / 1000 + 90;   // v7 Stage 1: the blade comes OUT
-          sfx.alert(); setThreat({ robberId: thug.id });   // the classic: "nice coin purse"
+          approachForCoins(sim, thug.id);   // "nice coin purse" — unless they've grown to like you, in which case they might just ask
         }
         bump(); break;
       }
@@ -7437,6 +7544,19 @@ export default function Alderbrook() {
     sim.orderSeq = (sim.orderSeq || 0) + 1;
     sim.orders.push({ id: `${bId}_p_${sim.day}_${sim.orderSeq}_${itemId}`, bId, items: { [itemId]: qty }, state: "ready", day: sim.day });
     sfx.coin(); showToast(`📦 Ordered ${qty}× ${ITEMS[itemId].name} (${cost}c wholesale) — arrives with the mail.`);
+    bump();
+  };
+  /* Stage 5: stock your OWN shelf straight from your pack — no wholesale bill, no waiting on the mail.
+     Moves as much as the shelf will hold (cap 30) up to what you're carrying. */
+  const playerStockFromInv = (sim, bId, itemId) => {
+    const have = sim.player.inv[itemId] || 0;
+    if (have <= 0) { showToast(`You're not carrying any ${ITEMS[itemId].name}.`); return; }
+    const room = 30 - stockOf(sim, bId, itemId);
+    if (room <= 0) { showToast(`The ${ITEMS[itemId].name} shelf is already full.`); return; }
+    const move = Math.min(have, room);
+    sim.player.inv[itemId] -= move; if (sim.player.inv[itemId] <= 0) delete sim.player.inv[itemId];
+    addStock(sim, bId, itemId, move);
+    sfx.pop(); showToast(`📥 Stocked ${move}× ${ITEMS[itemId].name} from your pack onto the shelf.`);
     bump();
   };
   const playerHire = (sim, bId) => {
@@ -8466,7 +8586,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       toYou: n.relationships.player || "neutral",
       memories: [...n.memories], likes: n.likes, dislikes: n.dislikes,
       rels: Object.entries(n.relationships).filter(([id]) => id !== "player")
-        .map(([id, st]) => `${st} ${byId[id]?.name || id}`),
+        .map(([id, st]) => `${REL_DESC[st] || st} ${byId[id]?.name || id}`),
     })));
   };
 
@@ -9266,6 +9386,34 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         );
       })()}
 
+      {/* 🎁 a friend asks for a gift instead of robbing you — your move */}
+      {giftDemand && sim && (() => {
+        const robber = sim.npcs.find(n => n.id === giftDemand.robberId);
+        if (!robber) return null;
+        const asks = [];
+        if (giftDemand.coins > 0) asks.push(`🪙 ${giftDemand.coins} coins`);
+        for (const it of giftDemand.items) asks.push(`${ITEMS[it.id].emoji} ${it.qty}× ${ITEMS[it.id].name}`);
+        return (
+          <div style={S.chatOverlay}>
+            <div style={{ ...S.chatPanel, maxWidth: 420 }}>
+              <div style={{ ...S.chatHeader, background: "#5a7a4a" }}>
+                <span style={{ fontWeight: 700 }}>🤝 {robber.name} falls into step beside you…</span>
+              </div>
+              <div style={S.chatBody}>
+                <div style={{ ...S.folkCard, fontStyle: "italic" }}>"{giftDemand.line}"</div>
+                <div style={{ ...S.folkCard }}>
+                  <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 4 }}>They're hoping for:</div>
+                  <div>{asks.length ? asks.join("  ·  ") : "just a little something"}</div>
+                </div>
+                <button style={{ ...S.binBtn, width: "100%", background: "#5a8a4a" }} onClick={() => giftDemandChoice("give")}>🎁 Give it to them</button>
+                <button style={{ ...S.binBtn, width: "100%", background: "#7a6a4a" }} onClick={() => giftDemandChoice("refuse")}>🙅 Sorry — not today</button>
+                <div style={{ fontSize: fs - 3, opacity: 0.55, textAlign: "center" }}>They're a friend… but you never quite know how a "no" will land.</div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 🥊 combat */}
       {combat && sim && (() => {
         const foe = sim.npcs.find(n => n.id === combat.foeId);
@@ -9392,6 +9540,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                               ? <span style={{ fontSize: fs - 3, opacity: 0.6 }}>📦 on the way</span>
                               : <button style={{ ...S.smallBtn, background: "#5a7a9a" }} title={`order ${CFG.SELFCARE.demandReorderQty} at wholesale`} onClick={() => playerOrderStock(sim2, bId, id)}>📦 {orderCost}c</button>)}
                             {cooked && st <= CFG.STOCK.low && <span style={{ fontSize: fs - 3, opacity: 0.6 }}>cook it</span>}
+                            {(sim2.player.inv[id] || 0) > 0 && st < 30 && (
+                              <button style={{ ...S.smallBtn, background: "#5a8a4a" }} title={`stock ${Math.min(sim2.player.inv[id], 30 - st)} onto the shelf from your pack (free)`} onClick={() => playerStockFromInv(sim2, bId, id)}>📥 {Math.min(sim2.player.inv[id], 30 - st)}</button>
+                            )}
                             <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => playerMenuDrop(sim2, bId, id)}>✕</button>
                           </div>
                         );
@@ -10146,7 +10297,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 14, height: 14, borderRadius: 7, background: f.color, display: "inline-block" }} />
                     <b>{f.name}</b>{!f.alive && " 🪦"}
-                    <span style={{ opacity: 0.6, fontSize: fs - 2 }}>{f.mood} · 🪙 {f.coins} · {f.toYou === "neutral" ? "no opinion of you yet" : `${f.toYou} you`}{f.wanted > 0 && <span style={{ color: "#a05252" }}> · wanted {"★".repeat(Math.min(3, f.wanted))}</span>}</span>
+                    <span style={{ opacity: 0.6, fontSize: fs - 2 }}>{f.mood} · 🪙 {f.coins} · {f.toYou === "neutral" ? "no opinion of you yet" : (REL_TOYOU[f.toYou] || `${f.toYou} you`)}{f.wanted > 0 && <span style={{ color: "#a05252" }}> · wanted {"★".repeat(Math.min(3, f.wanted))}</span>}</span>
                   </div>
                   <div style={{ fontSize: fs - 2, opacity: 0.8, marginTop: 4 }}>{f.intent ? `Today: ${f.intent}` : f.activity} · {f.tier} · {f.health}{f.sick && <span style={{ color: "#7a9a5f" }}> · 🤒 {f.sick}</span>}</div>
                   <div style={{ fontSize: fs - 2, marginTop: 4 }}>
