@@ -1831,7 +1831,7 @@ function initStock() {
   for (const [bId, meal] of Object.entries(EATERY_MEAL)) { stock[bId] = stock[bId] || {}; stock[bId][meal] = CFG.OWNERECON.survivalFloor; }
   stock.office = { files: CFG.STOCK.files };
   stock.hospital = { medicine: CFG.STOCK.meds, bandage: CFG.STOCK.bandages };
-  stock.clinic_a = { medicine: 4 }; stock.clinic_m = { medicine: 4 };   // walk-in shelves, smaller
+  stock.clinic_a = { medicine: 4 }; stock.clinic_m = { medicine: 4 }; stock.clinic_f = { medicine: 4 };   // walk-in shelves (clinic_f was missing — its shelf never existed, so it could never stock medicine)
   return stock;
 }
 
@@ -3361,7 +3361,9 @@ export default function Alderbrook() {
   };
   /* shelves are finite: every sale, theft, and meal comes out of these */
   const stockOf = (sim, bId, itemId) => sim.stock[bId]?.[itemId] ?? 0;
-  const addStock = (sim, bId, itemId, n) => { if (sim.stock[bId]) sim.stock[bId][itemId] = Math.min(30, stockOf(sim, bId, itemId) + n); };
+  // create the shelf bucket if it's missing — otherwise deliveries to a building that was never
+  // seeded (e.g. Ferndale's clinic) silently vanished, so its medicine could NEVER arrive.
+  const addStock = (sim, bId, itemId, n) => { (sim.stock[bId] = sim.stock[bId] || {})[itemId] = Math.min(30, stockOf(sim, bId, itemId) + n); };
   /* v7 Stage 5c: every appliance USE rolls against wear. One pipe: increments the counter,
      rolls 2% + 1%/prior-use, and flips `broken`. Broken appliances refuse service until a
      mechanic (player with part + minigame, or an NPC at dawn) puts them right. */
@@ -5338,6 +5340,15 @@ export default function Alderbrook() {
       const goods = Math.ceil(Object.entries(need).reduce((s, [it, q]) => s + ITEMS[it].price * q, 0) * CFG.STOCK.wholesale);
       if (owner) fineCoins(owner, goods);                 // wholesale billed up front
       sim.orders.push({ id: `${bId}_${sim.day}`, bId, items: need, state: "ready", day: sim.day });
+    }
+    /* CIVIC MEDICINE GUARANTEE: essential care must never run dry, even if the courier mail
+       stalls (dead postal staff) or a shelf was never seeded. Each dawn, medical facilities are
+       topped up DIRECTLY — bypassing the post — so illness stays treatable and a town can't
+       spiral into mass death over an empty medicine shelf. */
+    for (const fac of ["hospital", "clinic_a", "clinic_m", "clinic_f"]) {
+      if (!bld(fac)) continue;
+      if (stockOf(sim, fac, "medicine") < 3) addStock(sim, fac, "medicine", CFG.STOCK.meds);
+      if (fac === "hospital" && stockOf(sim, fac, "bandage") < 3) addStock(sim, fac, "bandage", CFG.STOCK.bandages);
     }
     /* ===== Stage 3: the cost of living ===== */
     // business bills — every BILLS.cycle days, out of the owner's pocket, into the local hall safe.
@@ -7414,11 +7425,17 @@ export default function Alderbrook() {
     bump();
   };
   const playerMenuDrop = (sim, bId, itemId) => { if (sim.menu[bId]) { delete sim.menu[bId][itemId]; bump(); } };
+  const stockInbound = (sim, bId, itemId) => (sim.orders || []).some(o => o.bId === bId && o.state !== "delivered" && o.items?.[itemId]);
   const playerOrderStock = (sim, bId, itemId) => {
+    // already on the way? don't stack duplicate parcels. (The old code keyed the order id on the
+    // frozen sim-clock while the panel was open, so spam-clicks made same-id copies — colliding
+    // React keys, "stale" haul buttons, and infinite orders. Guard + a unique id kill both.)
+    if (stockInbound(sim, bId, itemId)) { showToast(`${ITEMS[itemId].name} is already on the way.`); return; }
     const qty = CFG.SELFCARE.demandReorderQty;
     const cost = Math.ceil(ITEMS[itemId].price * qty * CFG.STOCK.wholesale);
     if (!spend(sim.player, cost)) return;
-    sim.orders.push({ id: `${bId}_p_${sim.day}_${Math.floor(sim.time)}_${itemId}`, bId, items: { [itemId]: qty }, state: "ready", day: sim.day });
+    sim.orderSeq = (sim.orderSeq || 0) + 1;
+    sim.orders.push({ id: `${bId}_p_${sim.day}_${sim.orderSeq}_${itemId}`, bId, items: { [itemId]: qty }, state: "ready", day: sim.day });
     sfx.coin(); showToast(`📦 Ordered ${qty}× ${ITEMS[itemId].name} (${cost}c wholesale) — arrives with the mail.`);
     bump();
   };
@@ -9363,6 +9380,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       {Object.keys(menu).filter(id => ITEMS[id]).map(id => {
                         const st = stockOf(sim2, bId, id), cooked = KITCHEN[bId]?.includes(id);
                         const orderCost = Math.ceil(ITEMS[id].price * CFG.SELFCARE.demandReorderQty * CFG.STOCK.wholesale);
+                        const inbound = stockInbound(sim2, bId, id);
                         return (
                           <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ fontSize: 18 }}>{ITEMS[id].emoji}</span>
@@ -9370,7 +9388,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                             <button style={S.smallBtn} onClick={() => playerSetPrice(sim2, bId, id, -1)}>−</button>
                             <b style={{ minWidth: 28, textAlign: "center" }}>{menu[id] ?? ITEMS[id].price}c</b>
                             <button style={S.smallBtn} onClick={() => playerSetPrice(sim2, bId, id, 1)}>+</button>
-                            {!cooked && st <= CFG.STOCK.low && <button style={{ ...S.smallBtn, background: "#5a7a9a" }} title={`order ${CFG.SELFCARE.demandReorderQty} at wholesale`} onClick={() => playerOrderStock(sim2, bId, id)}>📦 {orderCost}c</button>}
+                            {!cooked && st <= CFG.STOCK.low && (inbound
+                              ? <span style={{ fontSize: fs - 3, opacity: 0.6 }}>📦 on the way</span>
+                              : <button style={{ ...S.smallBtn, background: "#5a7a9a" }} title={`order ${CFG.SELFCARE.demandReorderQty} at wholesale`} onClick={() => playerOrderStock(sim2, bId, id)}>📦 {orderCost}c</button>)}
                             {cooked && st <= CFG.STOCK.low && <span style={{ fontSize: fs - 3, opacity: 0.6 }}>cook it</span>}
                             <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => playerMenuDrop(sim2, bId, id)}>✕</button>
                           </div>
