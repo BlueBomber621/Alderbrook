@@ -452,7 +452,12 @@ const CFG = {
   COMBAT: { roundMs: 700, fistDmg: [4, 9], fleeBase: 45 },
   ROBBERY: { take: 0.4, escapeBase: 40 },
   /* ===== the civic overhaul: elections, the robbable treasury, and trespass ===== */
-  ELECTION: { everyDays: 14, firstDay: 10, regFee: 5 },   // vote every 2 weeks; register at any hall for a small fee
+  ELECTION: { everyDays: 30, firstDay: 10, regFee: 5, reelectMin: 50, snapBelow: 15 },   // first vote day 10, then every 30 days; an incumbent needs ≥50% avg approval to keep the chair, and ≤15% riots a snap election
+  MAYOR: {                                                // Stage 9: the chair KNOWS it's the chair — perks, and the goodwill that excuses them
+    npcSalary: 2,                                         // a seated NPC mayor draws the same modest weekly stipend the player does
+    favorPerUpgrade: 2, favorPerTaxCut: 1, favorPerGift: 1, favorCap: 6, favorDecay: 1,   // goodwill earned by governing well; fades if you coast
+    perkDay: 3, perkChance: 0.4, perkCost: 2, skim: 8, perkApprovalHit: 9, tokens: 120,   // weekly temptation to help themselves (Claude decides in character); costs approval UNLESS goodwill covers it. perkChance is the no-AI fallback roll
+  },
   SAFE_ROB: { yield: 0.6, minLoot: 5 },                   // cracking a hall safe: 3★, Extreme-tier check, takes 60% of escrow
   TRESPASS: { graceMin: 25, reportMin: 60 },              // uninvited lingering in a private home: warning, then a 1★ report
   /* difficulty — set on the start screen or in ⚙️; only touches death & bills */
@@ -2116,6 +2121,11 @@ const provisionLine = (ent) => {
   const flag = (food < 2 || drink < 2) ? " ⚠LOW-SUPPLIES" : "";
   return `provisions: ${food} food, ${drink} drink, ${med} med${flag}`;
 };
+// the mayor governs the whole valley — their standing is the average approval across the towns that have a hall
+function mayorApprovalPct(sim) {
+  const vals = Object.values(sim.approval || {});
+  return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : CFG.APPROVAL.start;
+}
 
 /* chat — the FULL dossier: needs, health, hygiene, wallet, pockets,
    reputation & wanted status on both sides, who's standing nearby,
@@ -2126,7 +2136,7 @@ async function askNPC(npc, playerMsg, ctx, npcsById) {
   const prompt =
 `You are ${npc.name}, ${npc.desc} in the town of ${ctx.townName}. Personality: ${npc.personality}.
 Likes: ${npc.likes.join(", ")}. Dislikes: ${npc.dislikes.join(", ")}. Feelings: ${relLine(npc, npcsById)}.
-YOUR STATE — hunger ${ctx.hunger}/100, thirst ${ctx.thirst}/100, energy ${ctx.energy}/100, health: ${healthDesc(npc.health)}, hygiene: ${hygieneDesc(npc.hygiene)}. You have ${Math.floor(npc.coins)} coins and carry: ${invLine(npc)}. You are ${fameTier(npc.fame, npc.renown)}${npc.wanted > 0 ? ` and WANTED by the Watch (level ${npc.wanted})` : ""}. Currently: ${npc.activity}.${npc.intent ? ` Today you planned to: ${npc.intent}.` : ""}
+YOUR STATE — hunger ${ctx.hunger}/100, thirst ${ctx.thirst}/100, energy ${ctx.energy}/100, health: ${healthDesc(npc.health)}, hygiene: ${hygieneDesc(npc.hygiene)}. You have ${Math.floor(npc.coins)} coins and carry: ${invLine(npc)}. You are ${fameTier(npc.fame, npc.renown)}${npc.wanted > 0 ? ` and WANTED by the Watch (level ${npc.wanted})` : ""}. Currently: ${npc.activity}.${npc.intent ? ` Today you planned to: ${npc.intent}.` : ""}${npc.mayor ? ` You are the elected MAYOR of the valley — you set the business tax, fund civic upgrades from the town treasuries, preside over the weekly Council Call, and answer to public approval. Carry yourself with that authority${ctx.mayorApproval != null ? ` (approval is around ${ctx.mayorApproval}% right now)` : ""}.` : ""}
 ${mem}
 THE PLAYER — ${ctx.playerTier}${ctx.playerWanted > 0 ? `, currently wanted by the Watch (level ${ctx.playerWanted})` : ""}, looks ${healthDesc(ctx.playerHealth)}, hygiene: ${hygieneDesc(ctx.playerHygiene)}${ctx.playerArmed ? ", visibly carrying a weapon" : ""}.
 SCENE — ${ctx.clock}, day ${ctx.day}. Nearby: ${ctx.nearby || "no one else"}.${ctx.buzz ? ` Town buzz: "${ctx.buzz}".` : ""}${ctx.recent ? ` Recently: ${ctx.recent}.` : ""}
@@ -2140,7 +2150,7 @@ Only set remember for genuinely notable things. Only shift relationship if the p
 
 async function dailyPulse(town, npcs, dayLog, npcsById, playerTier) {
   const roster = npcs.map(n =>
-    `- ${n.id} (${n.name}): ${n.personality}. Feels: ${relLine(n, npcsById)}. Has ${Math.floor(n.coins)} coins, ${healthDesc(n.health)}.` +
+    `- ${n.id} (${n.name}): ${n.personality}.${n.mayor ? " ⭐THE ELECTED MAYOR of the valley — sets taxes, funds civic upgrades, answers to public approval." : ""} Feels: ${relLine(n, npcsById)}. Has ${Math.floor(n.coins)} coins, ${healthDesc(n.health)}.` +
     `${n.wanted > 0 ? ` WANTED lvl ${n.wanted}.` : ""}${n.memories.length ? ` Memories: ${n.memories.join("; ")}.` : ""}` +
     ` Needs h${Math.round(n.hunger)}/t${Math.round(n.thirst)}/e${Math.round(n.energy)}. ${provisionLine(n)}.`
   ).join("\n");
@@ -2157,6 +2167,7 @@ Respond ONLY with JSON, no markdown:
 "encounters":[{"a":"<id>","b":"<id>","lines":["Name: line","Name: line","Name: line"]}],
 "drift":[{"a":"<id>","b":"<id>","change":"warmer|cooler"}]}
 Rules: every resident gets an entry. Max 2 encounters between residents with history, lines under 12 words. Max 2 drifts, only if yesterday justifies one. Stay in character.
+IF A RESIDENT IS THE MAYOR: their intent should read like a mayor's — being seen around town, hearing folk out, showing up at the hall, tending to unrest or a project — fitting their character (dutiful, vain, scheming, generous, whatever they are).
 IMPORTANT — SELF-CARE: anyone marked ⚠LOW-SUPPLIES, or with a need below 30, should have an intent that gets them sorted: buying food/water to carry, stocking up, or heading to eat/drink. A resident keeping a few meals and drinks in their pocket is normal, sensible behavior — lean toward it. Nobody should wander idly while low on supplies or needs.`;
   return callClaude(prompt, CFG.PULSE_MAX_TOKENS);
 }
@@ -2200,6 +2211,23 @@ Decide: fund ONE listed upgrade id, or none. Then give a one-line public proclam
 Return ONLY JSON: {"buy":"<upgrade id or empty string>","say":"<proclamation>"}.`;
   const out = await callClaude(prompt, CFG.COUNCIL.tokens);
   return (out && typeof out.say === "string") ? out : null;
+}
+
+/* Stage 9 — the mayor's conscience: once a week the sitting NPC mayor decides, in character,
+   whether to abuse the office this week (free services for themselves + a quiet skim from the
+   safes). The goodwill they've EARNED by governing well is what makes it defensible — a greedy
+   mayor helps themselves regardless; a principled one won't unless they've truly earned it.
+   Returns { indulge, line }; null on a bad/empty response so the caller falls back locally. */
+async function mayorConduct(mayorPersona, favor, favorCap, need, approval, treasuryTotal, recent) {
+  const prompt =
+`You are ${mayorPersona}, mayor of the whole valley — you set taxes, fund civic upgrades, and answer to public approval, which stands at ${approval}%.
+This week you're tempted to abuse the office: take free services for yourself (dine, rest, ride — all on the house) and quietly skim some coin from the town safes (they hold about ${treasuryTotal}c between them).
+Your GOODWILL with the towns is ${favor} out of ${favorCap} — goodwill you've EARNED by funding upgrades, cutting taxes, and giving gifts. At ${need}+ banked, the towns would shrug off a little self-indulgence as fair; with less, they'll read it as corruption and turn on you (approval drops hard, and a furious town can riot you into an early election).
+Lately around the valley: ${recent || "a quiet week"}.
+Decide IN CHARACTER whether you help yourself this week.
+Return ONLY JSON, no markdown: {"indulge":<true|false>,"line":"<what you mutter as you do it, or wave the idea off — under 18 words, in character>"}`;
+  const out = await callClaude(prompt, CFG.MAYOR.tokens);
+  return (out && typeof out.indulge === "boolean") ? out : null;
 }
 
 /* Stage 7 — the Heist Nudge: Claude PLANS a crime. Given desperate/outlaw candidates and the
@@ -2629,6 +2657,7 @@ export default function Alderbrook() {
       homePlacements: {},                               // furniture on the floor: {homeId: {"x,y": furnId}}
       election: { nextDay: CFG.ELECTION.firstDay, playerRunning: false, last: null },   // the ballot cycle
       taxRate: CFG.TAX.rate, playerMayor: false,        // the mayor's dials (player-adjustable in office)
+      mayorFavor: 0,                                     // Stage 9: goodwill the sitting mayor has banked (funds/cuts/gifts); excuses the odd perk
       bizQuotes: {},                                    // today's business asking prices {bId: {day, price, say}}
       settings: { difficulty: difficultyChoice || "normal", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6, apiKey: USER_API_KEY || "" },  // 99 = unlimited; carry any key set on the title screen
     };
@@ -2652,7 +2681,7 @@ export default function Alderbrook() {
       treeChops: sim.treeChops || {}, playerFurniture: sim.player.furniture || [], contracts: sim.contracts || [],
       appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
       homePlacements: sim.homePlacements || {}, election: sim.election,
-      taxRate: sim.taxRate, playerMayor: !!sim.playerMayor,
+      taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
       npcs: Object.fromEntries(sim.npcs.map(n => [n.id, {
@@ -2716,6 +2745,7 @@ export default function Alderbrook() {
     sim.election = data.election || { nextDay: Math.max(sim.day + 3, CFG.ELECTION.firstDay), playerRunning: false, last: null };
     sim.taxRate = data.taxRate ?? CFG.TAX.rate;
     sim.playerMayor = !!data.playerMayor;
+    sim.mayorFavor = data.mayorFavor || 0;
     sim.bizQuotes = {};
     if (!sim.treasury.ferndale) sim.treasury.ferndale = CFG.TREASURY_SEED;   // pre-Ferndale saves
     sim.opening = data.opening || null; sim.interviewBans = data.interviewBans || {};
@@ -3532,6 +3562,7 @@ export default function Alderbrook() {
     const toName = to.id ? to.name : "the player";
     const g = gradeGift(value);
     const grubby = from.hygiene < CFG.HYGIENE.social;   // hard to warm up to someone who reeks
+    if (from.mayor && value >= 3) sim.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim.mayorFavor || 0) + CFG.MAYOR.favorPerGift);   // a generous mayor banks goodwill the town remembers
 
     if (to.id) {
       to.bubble = { text: value >= 100 ? `...I— ${what}?! Are you SERIOUS?!` : value >= 10 ? `${what}! You shouldn't have!` : `Oh! Thanks for the ${what}.`, until: performance.now() / 1000 + 5 };
@@ -3551,6 +3582,43 @@ export default function Alderbrook() {
       sim.dayLog = [...sim.dayLog, `${g.legend ? "LEGENDARY: " : "SHOCKING: "}${fromName} gave ${toName} ${what}`].slice(-12);
     } else if (g.buzz) sim.buzz = { text: `${fromName} gave ${toName} ${what} — generous!`, day: sim.day };
     return true;
+  };
+
+  /* Stage 9: the mayor helps themselves — free services (food/rest, on the house) plus a quiet skim
+     from the town safes. The valley wears it ONLY if the mayor has banked real goodwill; otherwise
+     approval craters and folk sour on them. Shared by the NPC mayor's weekly temptation and the
+     player-mayor's own hand. Returns { took, deserved, msg } for the caller to surface. */
+  const claimMayorPerk = (sim, mayor, isPlayer) => {
+    const key = isPlayer ? "player" : mayor.id;
+    const who = isPlayer ? "the mayor" : mayor.name;
+    let took = 0;                                        // a skim across the safes, capped
+    for (const t of Object.keys(sim.treasury)) {
+      if (took >= CFG.MAYOR.skim) break;
+      const grab = Math.min(CFG.MAYOR.skim - took, sim.treasury[t] || 0);
+      sim.treasury[t] = (sim.treasury[t] || 0) - grab; took += grab;
+    }
+    mayor.coins = Math.min(9999, (mayor.coins || 0) + took);
+    mayor.hunger = 100; mayor.thirst = 100; mayor.energy = clamp((mayor.energy || 0) + 25, 0, 100);   // wined, dined, and ferried for free
+    const deserved = (sim.mayorFavor || 0) >= CFG.MAYOR.perkCost;
+    if (deserved) {                                     // they've given so much lately that a little back is only fair
+      sim.mayorFavor = Math.max(0, (sim.mayorFavor || 0) - CFG.MAYOR.perkCost);
+      for (const t of Object.keys(sim.approval)) sim.approval[t] = clamp(sim.approval[t] - 1, 0, 100);
+      seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 4), { text: `${who} took a little for themselves — but they've given so much, who'd begrudge it`, subjectId: key, bad: false });
+      if (!isPlayer) mayor.memories = [...mayor.memories, "Treated myself on the town's coin — and the town didn't mind"].slice(-CFG.MAX_MEMORIES);
+      sim.dayLog.push(`${who} claimed mayoral privileges — the goodwill they'd earned smoothed it over`);
+      return { took, deserved, msg: `🎩 Claimed ${took}c and free comforts — you've been generous enough that folk let it slide.` };
+    }
+    // no goodwill in the bank — the town SEES it and resents it
+    for (const t of Object.keys(sim.approval)) sim.approval[t] = clamp(sim.approval[t] - CFG.MAYOR.perkApprovalHit, 0, 100);
+    const witnesses = sim.npcs.filter(n => n.alive && !n.minor && n.id !== mayor.id).sort(() => Math.random() - 0.5).slice(0, 4);
+    for (const w of witnesses) {
+      const cur = relIdx(w.relationships[key] || "neutral");
+      w.relationships[key] = REL_ORDER[clamp(cur - 1, 0, REL_ORDER.length - 1)];
+    }
+    seedGossip(sim, witnesses, { text: `${who} is helping themselves to free services and the town's coin`, subjectId: key, bad: true });
+    if (!isPlayer) mayor.memories = [...mayor.memories, "Helped myself to the town's purse — they noticed, and they're angry"].slice(-CFG.MAX_MEMORIES);
+    sim.dayLog.push(`${who} demanded free services and skimmed the safes — the towns are furious`);
+    return { took, deserved, msg: `🎩 Took ${took}c and free comforts — but you'd banked no goodwill. Approval drops hard.` };
   };
 
   // record a sale against a shop's recent-demand counter (drives mid-day restock)
@@ -5205,7 +5273,7 @@ export default function Alderbrook() {
      watch/clinic staff inherit the exemption automatically. One lean call
      covering the whole exempt roster; everyone else pulses via their town's
      tryPulse only while the player is home. */
-  const exemptPulse = (n) => (n.occupation?.owner && n.occupation?.bId) || n.enforcer || n.doctor;
+  const exemptPulse = (n) => (n.occupation?.owner && n.occupation?.bId) || n.enforcer || n.doctor || n.mayor;   // the chair has levers now — it plans wherever the player roams
   const tryOwnerPulse = (sim, world) => {
     if (!sim.settings.pulse || apiBusyRef.current) return;
     if (sim.ownerPulseDay === sim.day || (sim.time / 60) % 24 < 6) return;
@@ -5621,6 +5689,7 @@ export default function Alderbrook() {
       const seat = cands.length ? cands[Math.floor(Math.random() * cands.length)] : sim.npcs.find(n => n.id === "odell" && n.alive);
       if (seat) {
         seat.mayor = true;
+        sim.mayorFavor = 0;   // a fresh chair, a fresh slate of goodwill
         sim.dayLog.push(`${seat.name} was seated as mayor`);
         seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === seat.town).slice(0, 5), { text: `${seat.name} took the mayor's chair`, subjectId: null, bad: false });
       }
@@ -5633,11 +5702,20 @@ export default function Alderbrook() {
     if (sim.day >= sim.election.nextDay) {
       const el = sim.election;
       const incumbent = sim.npcs.find(n => n.mayor && n.alive);
-      const bench = sim.npcs.filter(n => n.alive && n.renown >= 12 && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
-        .sort((a, b) => b.renown - a.renown).slice(0, 2);
-      const cands = [...new Set([incumbent, ...bench].filter(Boolean))];
+      const incumbentId = sim.playerMayor ? "player" : (incumbent ? incumbent.id : null);
+      // an incumbent needs the valley behind them: below reelectMin average approval, they're off the ballot and someone new takes over
+      const approvalPct = mayorApprovalPct(sim);
+      const barred = incumbentId != null && approvalPct < CFG.ELECTION.reelectMin;
+      let bench = sim.npcs.filter(n => n.alive && n.renown >= 12 && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
+        .sort((a, b) => b.renown - a.renown);
+      if (barred && bench.length < 2)   // a barred incumbent MUST have a replacement — widen the field if the renowned bench is thin
+        bench = sim.npcs.filter(n => n.alive && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
+          .sort((a, b) => b.renown - a.renown);
+      bench = bench.slice(0, 2);
+      const cands = [...new Set([...(barred ? [] : [incumbent]), ...bench].filter(Boolean))];
+      const playerBarred = sim.playerMayor && barred;   // an unpopular player-mayor is booted off the ballot too
       const playerRuns = (el.playerRunning || sim.playerMayor) && !sim.player.jailedUntil && sim.player.alive !== false;
-      const options = [...cands.map(c => c.id), ...(playerRuns ? ["player"] : [])];
+      const options = [...cands.map(c => c.id), ...((playerRuns && !playerBarred) ? ["player"] : [])];
       if (options.length) {
         const votes = {};
         const relScore = { nemesis: -16, enemy: -12, hates: -8, dislikes: -4, neutral: 0, likes: 4, friend: 8, close: 12, beloved: 16 };
@@ -5661,14 +5739,16 @@ export default function Alderbrook() {
         const winNpc = sim.playerMayor ? null : cands.find(c => c.id === winId);
         if (winNpc) winNpc.mayor = true;
         const winnerName = sim.playerMayor ? "the player" : winNpc?.name || "nobody";
-        el.last = { day: sim.day, tally: tally.map(([id, v]) => ({ id, name: id === "player" ? "You" : cands.find(c => c.id === id)?.name || id, votes: v })) };
+        if (winId !== incumbentId) sim.mayorFavor = 0;   // a new mayor starts with a clean ledger of goodwill
+        const oustedNote = barred ? ` (the sitting mayor's ${approvalPct}% approval was too low to keep the seat)` : "";
+        el.last = { day: sim.day, tally: tally.map(([id, v]) => ({ id, name: id === "player" ? "You" : cands.find(c => c.id === id)?.name || id, votes: v })), barred };
         el.playerRunning = false;
         el.nextDay = sim.day + CFG.ELECTION.everyDays;
-        sim.dayLog.push(`ELECTION DAY — ${winnerName} won the mayoralty (${tally[0][1]} votes)`);
-        sim.buzz = { text: `Election day! ${winnerName === "the player" ? "The NEWCOMER" : winnerName} takes the mayor's chair.`, day: sim.day };
-        seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 6), { text: `${winnerName} won the election`, subjectId: null, bad: false });
+        sim.dayLog.push(`ELECTION DAY — ${winnerName} won the mayoralty (${tally[0][1]} votes)${oustedNote}`);
+        sim.buzz = { text: `Election day! ${winnerName === "the player" ? "The NEWCOMER" : winnerName} takes the mayor's chair${barred ? " — the old mayor was voted out." : "."}`, day: sim.day };
+        seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 6), { text: `${winnerName} won the election${barred ? " after the town turned on the last mayor" : ""}`, subjectId: null, bad: false });
         if (sim.playerMayor) { repEvent(sim, sim.player, 10, 15, "the player was elected mayor"); sfx.coin(); showToast("🏛️ YOU are the mayor of the valley! Govern from any hall's Mayor's desk."); }
-        else showToast(`🗳️ Election day: ${winnerName} won the mayoralty.`);
+        else showToast(`🗳️ Election day: ${winnerName} won the mayoralty${barred ? " — the last mayor's approval was too low to hold on." : "."}`);
       } else sim.election.nextDay = sim.day + CFG.ELECTION.everyDays;
     }
     /* the player-mayor draws a small weekly salary from the local safes */
@@ -5676,6 +5756,32 @@ export default function Alderbrook() {
       let pay = 0;
       for (const t of Object.keys(sim.treasury)) if ((sim.treasury[t] || 0) >= 1) { sim.treasury[t]--; pay++; }
       if (pay) { sim.player.coins += pay; showToast(`🏛️ Mayor's salary: ${pay}c from the hall safes.`); }
+    }
+    /* a seated NPC mayor: the same modest salary — and a weekly temptation to abuse the chair. Goodwill
+       (funded upgrades, tax cuts, gifts) buys forgiveness; without it, the towns turn on them. */
+    {
+      const mayorNpc = !sim.playerMayor && sim.npcs.find(n => n.mayor && n.alive);
+      if (mayorNpc && sim.day % 7 === CFG.COUNCIL.weekday) {
+        let pay = 0;
+        for (const t of Object.keys(sim.treasury)) { if (pay >= CFG.MAYOR.npcSalary) break; if ((sim.treasury[t] || 0) >= 1) { sim.treasury[t]--; pay++; } }
+        if (pay) mayorNpc.coins = Math.min(9999, mayorNpc.coins + pay);
+      }
+      if (mayorNpc && sim.day % 7 === CFG.MAYOR.perkDay && sim.day >= 7) {
+        const indulge = (line) => {   // the mayor decided to abuse the office this week
+          const r = claimMayorPerk(sim, mayorNpc, false);
+          mayorNpc.bubble = { text: (line || (r.deserved ? rand(["Rank has its comforts.", "I've earned this much."]) : rand(["Mayor's privilege.", "Who's going to stop me?"]))).slice(0, 120), until: performance.now() / 1000 + 6 };
+          if (townOfScene(worldRef.current, sim.player.scene) === mayorNpc.town) { sfx.alert(); showToast(`🎩 ${mayorNpc.name} ${r.deserved ? "treats themselves — and the town lets it slide." : "helps themselves to the town's coin. Folk are NOT pleased."}`); }
+        };
+        const localRoll = () => { if (Math.random() < CFG.MAYOR.perkChance) indulge(null); };   // no AI: a plain weekly temptation
+        if (USER_API_KEY && !apiBusyRef.current) {   // let Claude decide, in character, whether this mayor stoops to it
+          apiBusyRef.current = true;
+          const treasuryTotal = Object.values(sim.treasury).reduce((s, v) => s + (v || 0), 0);
+          mayorConduct(`Mayor ${mayorNpc.name} — ${mayorNpc.personality}`, sim.mayorFavor || 0, CFG.MAYOR.favorCap, CFG.MAYOR.perkCost, mayorApprovalPct(sim), treasuryTotal, (sim.dayLog || []).slice(-3).join("; "))
+            .then(out => { if (out) { if (out.indulge) indulge(out.line); } else localRoll(); })
+            .catch(() => localRoll())
+            .finally(() => { apiBusyRef.current = false; });
+        } else localRoll();
+      }
     }
     // Pass 3: weekly patrol assignment — Cole reads the crime picture and routes the Juniors.
     if (sim.day % 7 === CFG.WATCH_PLAN.weekday && sim.day >= 5) {
@@ -5755,10 +5861,12 @@ export default function Alderbrook() {
     }
     // Stage 8: weekly — approval drifts toward the wary baseline, and a furious town RIOTS.
     if (sim.day % 7 === CFG.COUNCIL.weekday && sim.day >= 7) {
+      sim.mayorFavor = Math.max(0, (sim.mayorFavor || 0) - CFG.MAYOR.favorDecay);   // Stage 9: goodwill fades unless the mayor keeps earning it
       for (const t of Object.keys(sim.approval)) {
         const a = sim.approval[t];
         sim.approval[t] = clamp(a + Math.sign(CFG.APPROVAL.revertTo - a) * Math.min(CFG.APPROVAL.revertStep, Math.abs(CFG.APPROVAL.revertTo - a)), 0, 100);
         if (sim.approval[t] < CFG.APPROVAL.riotBelow) {
+          const preVent = sim.approval[t];   // how deep the anger runs, before the riot lets off steam
           // ---- RIOT: bounded unrest — anger vents, mess spreads, the hall pays cleanup ----
           const locals = sim.npcs.filter(n => n.alive && n.town === t && !n.minor && !n.enforcer).slice(0, 6);
           const angry = locals.sort(() => Math.random() - 0.5).slice(0, 3);
@@ -5771,6 +5879,14 @@ export default function Alderbrook() {
           seedGossip(sim, angry, { text: `a riot broke out in ${t} — the town's had it with the mayor`, subjectId: null, bad: false });
           sim.dayLog.push(`unrest boiled over in ${t} — a riot in the streets`);
           if (townOfScene(worldRef.current, sim.player.scene) === t) { sfx.alert(); showToast("🔥 A RIOT breaks out — angry voices fill the street!"); }
+          // ---- SNAP ELECTION: at rock-bottom approval the riot forces the chair to the ballot early ----
+          const hasMayor = sim.playerMayor || sim.npcs.some(n => n.mayor && n.alive);
+          if (preVent <= CFG.ELECTION.snapBelow && hasMayor && sim.election.nextDay > sim.day + 1) {
+            sim.election.nextDay = sim.day + 1;
+            sim.buzz = { text: `The ${TOWN_DEFS[t]?.name || t} riot forces a SNAP ELECTION — the valley votes tomorrow!`, day: sim.day };
+            sim.dayLog.push(`the ${t} riot forced a snap election — a vote is called for tomorrow`);
+            sfx.alert(); showToast(`🗳️🔥 Approval at ${Math.round(preVent)}% in ${TOWN_DEFS[t]?.name || t} — the riot forces a snap election tomorrow!`);
+          }
         }
       }
     }
@@ -5787,6 +5903,7 @@ export default function Alderbrook() {
           sim.treasury[townId] -= u.cost; owned[id] = true;
           sim.dayLog.push(`the Council funded ${u.name} in ${townId}`);
           sim.approval[townId] = clamp(sim.approval[townId] + CFG.APPROVAL.upgradeBoost, 0, 100);   // Stage 8: visible spending soothes
+          if (!sim.playerMayor) sim.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim.mayorFavor || 0) + CFG.MAYOR.favorPerUpgrade);   // Stage 9: governing well banks goodwill
         } else sim.approval[townId] = clamp(sim.approval[townId] - CFG.APPROVAL.noFundHit, 0, 100);  // Stage 8: all talk, no funding
         const mayor = sim.npcs.find(n => n.mayor && n.alive);
         if (mayor && say) mayor.bubble = { text: say, until: performance.now() / 1000 + 6 };
@@ -8467,6 +8584,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       hunger: Math.round(npc.hunger), thirst: Math.round(npc.thirst), energy: Math.round(npc.energy),
       playerTier: fameTier(p.fame, p.renown), playerWanted: p.wanted,
       playerHealth: p.health, playerHygiene: p.hygiene, playerArmed: !!bestWeapon(p),
+      mayorApproval: npc.mayor ? mayorApprovalPct(sim) : null,   // the chair should speak from how the valley actually feels
       nearby, buzz: sim.buzz?.text || null, recent: sim.dayLog.slice(-3).join("; ") || null,
       interview: sim.interview?.npcId === npc.id ? {
         business: bld(sim.interview.bId).name,
@@ -8582,7 +8700,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       activity: n.alive ? (n.jailedUntil === Infinity ? "serving a life sentence in the cells" : n.activity) : "resting in the graveyard", intent: n.intent,
       sick: n.sick?.level || null,
       coins: Math.floor(n.coins), inv: invLine(n), tier: fameTier(n.fame, n.renown),
-      health: healthDesc(n.health), wanted: n.wanted,
+      health: healthDesc(n.health), wanted: n.wanted, mayor: !!n.mayor,
       toYou: n.relationships.player || "neutral",
       memories: [...n.memories], likes: n.likes, dislikes: n.dislikes,
       rels: Object.entries(n.relationships).filter(([id]) => id !== "player")
@@ -9686,6 +9804,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           if (Math.abs(nr - (sim2.taxRate ?? CFG.TAX.rate)) < 0.001) return;
           sim2.taxRate = Math.round(nr * 100) / 100;
           for (const tw of Object.keys(sim2.approval)) sim2.approval[tw] = clamp(sim2.approval[tw] + (d > 0 ? -2 : 1), 0, 100);
+          if (d < 0) sim2.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim2.mayorFavor || 0) + CFG.MAYOR.favorPerTaxCut);   // easing the burden banks goodwill
           showToast(d > 0 ? `📈 Business tax raised to ${Math.round(sim2.taxRate * 100)}%. Nobody claps.` : `📉 Business tax cut to ${Math.round(sim2.taxRate * 100)}%. The shopkeepers notice.`);
           sim2.dayLog.push(`the mayor set the business tax to ${Math.round(sim2.taxRate * 100)}%`);
           bump();
@@ -9695,6 +9814,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           if (!u || owned[id] || (sim2.treasury[t] || 0) < u.cost) return;
           sim2.treasury[t] -= u.cost; owned[id] = true;
           sim2.approval[t] = clamp((sim2.approval[t] ?? 65) + CFG.APPROVAL.upgradeBoost, 0, 100);
+          sim2.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim2.mayorFavor || 0) + CFG.MAYOR.favorPerUpgrade);   // funding the town banks goodwill
           sim2.dayLog.push(`Mayor's office funded ${u.name} in ${t}`);
           sim2.buzz = { text: `The mayor funded ${u.name} in ${TOWN_DEFS[t]?.name || t}!`, day: sim2.day };
           sfx.coin(); showToast(`📯 ${u.emoji} ${u.name} funded from the ${t} safe.`);
@@ -9726,10 +9846,12 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div style={{ ...S.folkCard }}>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>🗳️ Elections</div>
                   <div style={{ fontSize: fs - 1, lineHeight: 1.5 }}>
-                    Next election: <b>day {el.nextDay}</b> ({Math.max(0, el.nextDay - sim2.day)} day{el.nextDay - sim2.day === 1 ? "" : "s"} away)<br />
+                    Next election: <b>day {el.nextDay}</b> ({Math.max(0, el.nextDay - sim2.day)} day{el.nextDay - sim2.day === 1 ? "" : "s"} away) · then every {CFG.ELECTION.everyDays} days<br />
+                    {(sim2.playerMayor || mayorNpc) && <>Mayor's standing: <b style={{ color: mayorApprovalPct(sim2) >= CFG.ELECTION.reelectMin ? "#5a8a4a" : "#a05252" }}>{mayorApprovalPct(sim2)}% avg approval</b> — a sitting mayor needs ≥{CFG.ELECTION.reelectMin}% to keep the chair, or a challenger takes it.<br /></>}
+                    <span style={{ opacity: 0.7 }}>If any town's approval falls to ≤{CFG.ELECTION.snapBelow}%, a riot forces a snap election.</span><br />
                     Likely challengers: {bench.map(n => n.name).join(", ") || "nobody of note"}<br />
                     {el.playerRunning && <b>You are on the ballot. 🎗️</b>}
-                    {sim2.playerMayor && <b>You hold the chair — you're on the ballot automatically.</b>}
+                    {sim2.playerMayor && <b>You hold the chair — you're on the ballot automatically (if approval allows).</b>}
                   </div>
                   {el.last && (
                     <div style={{ fontSize: fs - 2, opacity: 0.75, marginTop: 4 }}>
@@ -9768,6 +9890,17 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         );
                       })}
                       <div style={{ fontSize: fs - 3, opacity: 0.6 }}>Visit each town's hall to spend that town's safe.</div>
+                    </div>
+                    <div style={{ ...S.folkCard }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>🎩 Mayoral privileges</div>
+                      <div style={{ fontSize: fs - 1, marginBottom: 6 }}>
+                        Help yourself to free services and a cut of the safes. Goodwill banked: <b>{sim2.mayorFavor || 0}</b>/{CFG.MAYOR.favorCap} <span style={{ opacity: 0.6 }}>— earned by funding upgrades, cutting taxes, and giving gifts.</span><br />
+                        <span style={{ opacity: 0.8 }}>{(sim2.mayorFavor || 0) >= CFG.MAYOR.perkCost ? "You've given enough that the towns would let this slide." : "You haven't earned it — folk will resent this and approval drops hard."}</span>
+                      </div>
+                      <button style={{ ...S.smallBtn, width: "100%", background: (sim2.mayorFavor || 0) >= CFG.MAYOR.perkCost ? "#7a6a4a" : "#8a4a4a" }}
+                        onClick={() => { const r = claimMayorPerk(sim2, sim2.player, true); sfx.coin(); showToast(r.msg); bump(); }}>
+                        🎩 Claim mayoral privileges
+                      </button>
                     </div>
                   </>
                 )}
@@ -10296,7 +10429,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div key={f.name} style={{ ...S.folkCard, opacity: f.alive ? 1 : 0.55 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 14, height: 14, borderRadius: 7, background: f.color, display: "inline-block" }} />
-                    <b>{f.name}</b>{!f.alive && " 🪦"}
+                    <b>{f.name}</b>{!f.alive && " 🪦"}{f.mayor && f.alive && <span title="Mayor of the valley" style={{ fontSize: fs - 2, color: "#c9a84a" }}> 🎖️ Mayor</span>}
                     <span style={{ opacity: 0.6, fontSize: fs - 2 }}>{f.mood} · 🪙 {f.coins} · {f.toYou === "neutral" ? "no opinion of you yet" : (REL_TOYOU[f.toYou] || `${f.toYou} you`)}{f.wanted > 0 && <span style={{ color: "#a05252" }}> · wanted {"★".repeat(Math.min(3, f.wanted))}</span>}</span>
                   </div>
                   <div style={{ fontSize: fs - 2, opacity: 0.8, marginTop: 4 }}>{f.intent ? `Today: ${f.intent}` : f.activity} · {f.tier} · {f.health}{f.sick && <span style={{ color: "#7a9a5f" }}> · 🤒 {f.sick}</span>}</div>
