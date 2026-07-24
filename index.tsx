@@ -456,7 +456,7 @@ const CFG = {
   MAYOR: {                                                // Stage 9: the chair KNOWS it's the chair — perks, and the goodwill that excuses them
     npcSalary: 2,                                         // a seated NPC mayor draws the same modest weekly stipend the player does
     favorPerUpgrade: 2, favorPerTaxCut: 1, favorPerGift: 1, favorCap: 6, favorDecay: 1,   // goodwill earned by governing well; fades if you coast
-    perkDay: 3, perkChance: 0.4, perkCost: 2, skim: 8, perkApprovalHit: 9,   // weekly temptation to help themselves; costs approval UNLESS goodwill covers it
+    perkDay: 3, perkChance: 0.4, perkCost: 2, skim: 8, perkApprovalHit: 9, tokens: 120,   // weekly temptation to help themselves (Claude decides in character); costs approval UNLESS goodwill covers it. perkChance is the no-AI fallback roll
   },
   SAFE_ROB: { yield: 0.6, minLoot: 5 },                   // cracking a hall safe: 3★, Extreme-tier check, takes 60% of escrow
   TRESPASS: { graceMin: 25, reportMin: 60 },              // uninvited lingering in a private home: warning, then a 1★ report
@@ -2211,6 +2211,23 @@ Decide: fund ONE listed upgrade id, or none. Then give a one-line public proclam
 Return ONLY JSON: {"buy":"<upgrade id or empty string>","say":"<proclamation>"}.`;
   const out = await callClaude(prompt, CFG.COUNCIL.tokens);
   return (out && typeof out.say === "string") ? out : null;
+}
+
+/* Stage 9 — the mayor's conscience: once a week the sitting NPC mayor decides, in character,
+   whether to abuse the office this week (free services for themselves + a quiet skim from the
+   safes). The goodwill they've EARNED by governing well is what makes it defensible — a greedy
+   mayor helps themselves regardless; a principled one won't unless they've truly earned it.
+   Returns { indulge, line }; null on a bad/empty response so the caller falls back locally. */
+async function mayorConduct(mayorPersona, favor, favorCap, need, approval, treasuryTotal, recent) {
+  const prompt =
+`You are ${mayorPersona}, mayor of the whole valley — you set taxes, fund civic upgrades, and answer to public approval, which stands at ${approval}%.
+This week you're tempted to abuse the office: take free services for yourself (dine, rest, ride — all on the house) and quietly skim some coin from the town safes (they hold about ${treasuryTotal}c between them).
+Your GOODWILL with the towns is ${favor} out of ${favorCap} — goodwill you've EARNED by funding upgrades, cutting taxes, and giving gifts. At ${need}+ banked, the towns would shrug off a little self-indulgence as fair; with less, they'll read it as corruption and turn on you (approval drops hard, and a furious town can riot you into an early election).
+Lately around the valley: ${recent || "a quiet week"}.
+Decide IN CHARACTER whether you help yourself this week.
+Return ONLY JSON, no markdown: {"indulge":<true|false>,"line":"<what you mutter as you do it, or wave the idea off — under 18 words, in character>"}`;
+  const out = await callClaude(prompt, CFG.MAYOR.tokens);
+  return (out && typeof out.indulge === "boolean") ? out : null;
 }
 
 /* Stage 7 — the Heist Nudge: Claude PLANS a crime. Given desperate/outlaw candidates and the
@@ -5749,10 +5766,21 @@ export default function Alderbrook() {
         for (const t of Object.keys(sim.treasury)) { if (pay >= CFG.MAYOR.npcSalary) break; if ((sim.treasury[t] || 0) >= 1) { sim.treasury[t]--; pay++; } }
         if (pay) mayorNpc.coins = Math.min(9999, mayorNpc.coins + pay);
       }
-      if (mayorNpc && sim.day % 7 === CFG.MAYOR.perkDay && sim.day >= 7 && Math.random() < CFG.MAYOR.perkChance) {
-        const r = claimMayorPerk(sim, mayorNpc, false);
-        mayorNpc.bubble = { text: r.deserved ? rand(["Rank has its comforts.", "I've earned this much."]) : rand(["Mayor's privilege.", "Who's going to stop me?"]), until: performance.now() / 1000 + 6 };
-        if (townOfScene(worldRef.current, sim.player.scene) === mayorNpc.town) { sfx.alert(); showToast(`🎩 ${mayorNpc.name} ${r.deserved ? "treats themselves — and the town lets it slide." : "helps themselves to the town's coin. Folk are NOT pleased."}`); }
+      if (mayorNpc && sim.day % 7 === CFG.MAYOR.perkDay && sim.day >= 7) {
+        const indulge = (line) => {   // the mayor decided to abuse the office this week
+          const r = claimMayorPerk(sim, mayorNpc, false);
+          mayorNpc.bubble = { text: (line || (r.deserved ? rand(["Rank has its comforts.", "I've earned this much."]) : rand(["Mayor's privilege.", "Who's going to stop me?"]))).slice(0, 120), until: performance.now() / 1000 + 6 };
+          if (townOfScene(worldRef.current, sim.player.scene) === mayorNpc.town) { sfx.alert(); showToast(`🎩 ${mayorNpc.name} ${r.deserved ? "treats themselves — and the town lets it slide." : "helps themselves to the town's coin. Folk are NOT pleased."}`); }
+        };
+        const localRoll = () => { if (Math.random() < CFG.MAYOR.perkChance) indulge(null); };   // no AI: a plain weekly temptation
+        if (USER_API_KEY && !apiBusyRef.current) {   // let Claude decide, in character, whether this mayor stoops to it
+          apiBusyRef.current = true;
+          const treasuryTotal = Object.values(sim.treasury).reduce((s, v) => s + (v || 0), 0);
+          mayorConduct(`Mayor ${mayorNpc.name} — ${mayorNpc.personality}`, sim.mayorFavor || 0, CFG.MAYOR.favorCap, CFG.MAYOR.perkCost, mayorApprovalPct(sim), treasuryTotal, (sim.dayLog || []).slice(-3).join("; "))
+            .then(out => { if (out) { if (out.indulge) indulge(out.line); } else localRoll(); })
+            .catch(() => localRoll())
+            .finally(() => { apiBusyRef.current = false; });
+        } else localRoll();
       }
     }
     // Pass 3: weekly patrol assignment — Cole reads the crime picture and routes the Juniors.
