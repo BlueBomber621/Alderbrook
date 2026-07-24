@@ -12,6 +12,15 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
                 carries a per-USE chance of coming apart for good. Rope
                 (4 grass bundles), a hard herbal-salve craft, sticks on the
                 forage table, and no wright will take a crude commission.
+   - Stage 9b:  THE WILD — the first thing in the valley that isn't a person
+                and still fights. Skittish Wild Hares (2 meat cuts) and rare
+                hostile Rogue Stags (5) live in sim.beasts, entirely outside
+                the social sim: drawing on game is hunting, not a crime, and
+                no witness reports it — hitting a PERSON still runs the whole
+                justice pipeline. A loose stag is Watch business: a free
+                officer is dispatched to cull it, at range if they carry it,
+                and the town's faith in them moves on the result. Meat cooks
+                into roast cuts, skewers and a hard game pie.
    - Stage 2:   occupations — 5 skill tracks, completeTask pay pipe,
                 Claude-run interviews, NPC job market with title ladders,
                 promotions, and the 15-min player headstart.
@@ -204,6 +213,24 @@ const CFG = {
     chopPerTree: 2,                            // GLOBAL daily cap per tree — across everyone
     stoneAxeWood: 1,                           // a stone axe brings down ONE piece; the steel hatchet takes 1-2
     stoneAxeMin: 14, hatchetMin: 8,            // ...and takes half again as long doing it
+  },
+  BEASTS: {   // Stage 9: the wild — the first thing in Alderbrook that fights back and isn't a person
+    /* Beasts live OUTSIDE the social sim entirely: no relationships, no jail, no case file.
+       Drawing on one is not a crime and no witness ever reports it — the justice pipeline is
+       for people. Hitting a person is still on you. */
+    spawnEveryS: 45,           // one spawn roll per outdoor town on this cadence (real seconds)
+    minFromPeople: 7,          // never materialize in someone's lap
+    despawnAtHp: 0,            // a beast leaves a carcass, not a body — no grave, no case
+    wanderEveryS: 6,           // how often an idle beast picks somewhere new to be
+    fleeS: 9,                  // how long a spooked hare bolts for
+    aggroCheckS: 1.2,          // how often a stag re-reads the room
+    attackEveryS: 3.2,         // and how often a charging one lands a blow
+    npcGoreMult: 0.6,          // a goring in passing, as a fraction of the full charge the player eats:
+                               // bad for a townsperson, but slow enough that the Watch can still arrive
+    cullFame: 4, cullRenown: 3,   // putting one down is the honest kind of famous
+    cullBounty: 14,            // ...and the hall pays a civilian for the antlers
+    cullApproval: 2,           // an officer culling one lifts the town's faith in the Watch
+    watchRespondS: 20,         // how long before an idle officer is sent after a sighted stag
   },
   CHAIR: { perMark: 3, markMin: 12, maxMarks: 5 },   // 3 energy per FULL 12-min mark, an hour tops, REAL time — no skip
   HILLS: { price: 500, trailAlder: { x: 32, y: 1 }, trailHills: { x: 2, y: 9 }, walkMin: 15 },   // the capstone: the house above your first town
@@ -562,6 +589,11 @@ const ITEMS = {
   sugar:        { name: "Sugar",          emoji: "🍬", price: 2,  cat: "ingredient" },   // Stage 3.6: baking staple
   dough:        { name: "Dough",          emoji: "🥣", price: 3,  cat: "ingredient" },   // Stage 3.6: a made ingredient — flour+water, then baked on
   veg:          { name: "Vegetables",     emoji: "🥕", price: 2,  cat: "ingredient", eat: { hunger: 12 } },
+  meat:         { name: "Meat Cut",       emoji: "🥩", price: 5,  cat: "ingredient" },   // off a carcass, not a shelf — and NO `eat`: raw game is not dinner. Cook it.
+  /* --- the game table: what the meat becomes once it's over a fire --- */
+  roast_meat:   { name: "Fire-Roast Cuts", emoji: "🍗", price: 11, cat: "food", eat: { hunger: 58, energy: 8 } },
+  meat_skewer:  { name: "Meat Skewers",   emoji: "🍢", price: 13, cat: "food", eat: { hunger: 50, energy: 14 } },
+  game_pie:     { name: "Game Pie",       emoji: "🫔", price: 21, cat: "food", eat: { hunger: 72, energy: 18 } },   // the hard one — the best plate of food in the valley
   /* cooked — where the value comes from */
   grilled_fish: { name: "Grilled Fish",   emoji: "🍥", price: 7,  cat: "food",   eat: { hunger: 45 } },
   veg_soup:     { name: "Veggie Soup",    emoji: "🥫", price: 4,  cat: "food",   eat: { hunger: 30, thirst: 10 } },   // 🍜→noodles, 🍲→meal, so soup takes the can
@@ -667,6 +699,9 @@ const RECIPES = {
   stew:         { needs: { fish: 1, veg: 1 },      tier: 0, label: "Simmer a stew" },
   salad:        { needs: { fruit: 1, veg: 1 },     tier: 0, label: "Toss a salad" },
   bland_salad:  { needs: { fiber: 1, veg: 1 },     tier: 0, label: "Toss a bland salad" },   // grass bundle + veg — easy, honest
+  /* --- game: the only ingredient in the valley you have to go out and TAKE --- */
+  roast_meat:   { needs: { meat: 2 },              tier: 0, label: "Roast cuts over the fire" },
+  meat_skewer:  { needs: { meat: 1, veg: 1, stick: 1 }, tier: 1, label: "Thread meat skewers" },
   candy_apple:  { needs: { sugar: 1, fruit: 1 },   tier: 1, label: "Dip a candy apple" },
   fish_sticks:  { needs: { fish: 1, flour: 1 },    tier: 1, label: "Fry fish sticks" },
   noodles:      { needs: { water: 1, flour: 1 },   tier: 0, label: "Pull noodles" },
@@ -676,6 +711,7 @@ const RECIPES = {
   taco:         { needs: { dough: 1, veg: 1, milk: 1 },    temp: 400, hard: true, tier: 2, label: "Build tacos" },
   sushi:        { needs: { fish: 1, flour: 1, veg: 1 },    temp: 220, hard: true, tier: 2, label: "Roll sushi" },
   croissant:    { needs: { fresh_bread: 1, milk: 1 },      temp: 375, hard: true, tier: 2, label: "Fold croissants" },
+  game_pie:     { needs: { meat: 2, dough: 1, herb: 1 },   temp: 400, hard: true, tier: 2, label: "Bake a game pie" },
   /* --- EXPERT (tier 3): gourmet cooking built on wild herbs & foraged greens. `expert` flips
      the knob game to the skill-gated rules: below Professional you must hit the temp EXACTLY in
      3s; Professional gets "close enough" in 3s; Expert/Master cook with no time rush. Below
@@ -727,7 +763,8 @@ const TOWN_LOCKUP = { alderbrook: "watchpost_a", mossford: "watchpost_m", stonec
 const LOCKUP_ORDER = ["hq", "watchpost_m", "watchpost_a"];   // overflow preference: main lockup first
 /* what venues buy back from the player, and for how much */
 const SELLABLE = { fish: 2, grilled_fish: 6, fresh_bread: 4, veg_soup: 3, hearty_stew: 7,
-  bland_salad: 3, herb_roast: 15, wild_stew: 12, herb_tart: 11, gourmet_platter: 18 };   // cook gourmet, sell it on
+  bland_salad: 3, herb_roast: 15, wild_stew: 12, herb_tart: 11, gourmet_platter: 18,
+  meat: 4, roast_meat: 8, meat_skewer: 10, game_pie: 16 };   // cook gourmet, sell it on — and the butcher's cut of a good hunt
 /* ===== Stage 4 — Hearth & Holt furniture catalog =====
    Furniture is a persistent home INSTALLATION (lives in ent.furniture[], not inventory).
    `store` = cash-storage cap; `secure` = burglary difficulty tier (2 Hard / 3 Extreme);
@@ -894,7 +931,7 @@ const SHOP_CANDIDATES = {
   grill_o:  ["mystery_stew", "stew", "coffee", "bread", "water"],
 };
 /* which candidate items are "baked/cooked" — plain stores may carry at most a couple */
-const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","bland_salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","herb_roast","wild_stew","herb_tart","gourmet_platter","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
+const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","bland_salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","herb_roast","wild_stew","herb_tart","gourmet_platter","roast_meat","meat_skewer","game_pie","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
 /* who owns each business — revenue flows to them, wages flow out of them.
    null = civic (post, HQ): the town mints those paychecks. */
 const OWNERS = { cafe: "marge", market: "theo", office: "bruno", fastfood: "rosa", post: "pete",
@@ -932,6 +969,7 @@ const TASK_DOMAIN = {
   taco: "savory", sushi: "savory", fish_sticks: "savory", stew: "savory", hearty_stew: "savory",
   noodles: "savory", salad: "savory", bland_salad: "savory", veg_soup: "savory", grilled_fish: "savory", meal: "savory",
   herb_roast: "savory", wild_stew: "savory", gourmet_platter: "savory", herb_tart: "pastry",   // the gourmet tier
+  roast_meat: "savory", meat_skewer: "savory", game_pie: "pastry",   // the game table
   // office
   printer: "paperwork",                 // coaxing the printer → paperwork expertise
   filing: "sorting", parcel: "sorting", letter: "sorting",   // file/post tasks → sorting expertise
@@ -1841,6 +1879,36 @@ const crudeBreak = (ent, id) => {       // true if the piece just gave out (and 
 };
 const brokeLine = (id) => `💥 Your ${ITEMS[id].name} gives out and comes apart in your hands.`;
 
+/* ===== Stage 9: the wild =====
+   Beasts are NOT people. They live in sim.beasts, never in sim.npcs, so nothing in the
+   social sim — relationships, gossip, jobs, cases, jail, the star ladder — can ever touch
+   one. That separation IS the design: drawing steel on a hare is hunting, and no witness
+   files a report over it. Draw on a neighbour and the whole justice pipeline still lands
+   on your head, exactly as before.
+   `hostile` beasts hunt people back; the Watch is expected to answer for them. */
+const BEAST_SPECIES = {
+  hare: {
+    name: "Wild Hare", emoji: "🐇", color: "#a89070",
+    hp: 24, meat: 2, speed: 2.4, hostile: false,
+    spook: 3.5,                    // bolts when anything gets this close — but slower than a person, so it CAN be run down
+    cap: 2, globalCap: 5, spawnChance: 0.34,   // two to a town, and they're the common sight
+    lifeS: 300,                    // drifts back into the woods if nothing comes of it
+    note: "skittish, harmless, and two good cuts",
+  },
+  stag: {
+    name: "Rogue Stag", emoji: "🦌", color: "#6d4a2c",
+    hp: 60, meat: 5, speed: 2.5, hostile: true,
+    dmg: [9, 16], aggro: 6.5,      // reads the field this far out, then charges — at 3.1 it can't catch a sprinting player
+    cap: 1, globalCap: 2, spawnChance: 0.03,   // RARE, and deliberately so: one to a town, two in the whole
+    lifeS: 360,                    // valley, and it moves on if nobody deals with it
+    note: "antlers down, and it saw you first",
+  },
+};
+const beastBite = (S9) => randInt(S9.dmg);      // what a hostile species hits for, per pass
+const goring = (S9) => Math.ceil(beastBite(S9) * CFG.BEASTS.npcGoreMult);   // ...and what it costs a bystander
+const beastAt = (sim, id) => (sim.beasts || []).find(b => b.id === id && b.alive) || null;
+const beastsIn = (sim, scene) => (sim.beasts || []).filter(b => b.alive && b.scene === scene);
+
 function findPath(gridInfo, sx, sy, gx, gy) {
   const { walk, w, h } = gridInfo;
   sx = Math.round(sx); sy = Math.round(sy); gx = Math.round(gx); gy = Math.round(gy);
@@ -2711,6 +2779,7 @@ export default function Alderbrook() {
       tradeQueue: [],   // pending NPC↔NPC trade offers awaiting a considered decision
       crime: { ticks: 0, blockedWatch: 0, blockedRoll: 0, blockedCap: 0, attempts: 0, arrests: 0 },   // the crime ledger (diagnosis + future town stats)
       foragedAt: {},    // v7 Stage 3: bush cooldowns (`t:town:x,y` → last foraged day)
+      beasts: [], beastSeq: 0, lastBeastSpawn: 0,   // Stage 9: the wild — hares and stags, outside the social sim entirely
       approval: { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start },   // Stage 8
       opening: null, interviewBans: {}, interview: null, // the job market: today's HIRING post + cooldowns
       crimeAlert: null,                                 // player-witnessed theft {thiefId, bId}
@@ -2738,6 +2807,8 @@ export default function Alderbrook() {
       cases: sim.cases, ethics: sim.ethics, bodies: sim.bodies,
       registers: sim.registers, upgrades: sim.upgrades, dishes: sim.dishes,
       townUpgrades: sim.townUpgrades, councilDay: sim.councilDay, approval: sim.approval, tradeQueue: sim.tradeQueue, foragedAt: sim.foragedAt,
+      beasts: (sim.beasts || []).filter(b => b.alive).map(b => ({ id: b.id, sp: b.sp, scene: b.scene, x: b.x, y: b.y, health: b.health })),
+      beastSeq: sim.beastSeq || 0,
       ownerOverrides: sim.ownerOverrides || {},
       treeChops: sim.treeChops || {}, playerFurniture: sim.player.furniture || [], contracts: sim.contracts || [],
       appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
@@ -2795,6 +2866,12 @@ export default function Alderbrook() {
     sim.approval = { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start, ...(data.approval || {}) };
     sim.tradeQueue = data.tradeQueue || [];
     sim.foragedAt = data.foragedAt || {};
+    // the wild reloads as it was standing: position and wounds, no memory of who it was chasing
+    sim.beasts = (data.beasts || []).filter(b => BEAST_SPECIES[b.sp])
+      .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
+        bornAt: performance.now() / 1000 }));
+    sim.beastSeq = data.beastSeq || sim.beasts.length;
+    sim.lastBeastSpawn = 0;
     sim.ownerOverrides = data.ownerOverrides || {};
     for (const [ob, oo] of Object.entries(sim.ownerOverrides)) OWNERS[ob] = oo;   // v7 Stage 5: deeds survive the save
     sim.treeChops = data.treeChops || {};
@@ -4298,6 +4375,38 @@ export default function Alderbrook() {
       const pw = bestWeapon(p0), pd = weaponDmg(p0);
       const lethal = ITEMS[pw || ""]?.lethal;
       const snapped = pw ? crudeBreak(p0, pw) : false;   // the blow lands first — then the stone gives
+
+      /* --- Stage 9: hunting rounds. A beast has no name to clear, no cell to fill and no
+         friends to testify, so the whole justice branch below simply doesn't apply. --- */
+      if (combatRef.current?.foeKind === "beast") {
+        const sim = simRef.current, p = sim.player;
+        const b = beastAt(sim, combatRef.current.foeId);
+        if (!b) { setCombat(c => c && { ...c, over: true, won: true }); return; }
+        const S9 = BEAST_SPECIES[b.sp];
+        b.health -= pd;
+        const dropped = b.health <= 0;
+        const beastHit = dropped || !S9.hostile ? 0 : beastBite(S9);
+        const playerDropped = beastHit > 0 && damage(p, beastHit);
+        if (dropped) huntKill(b);
+        else if (playerDropped && !p.dying && !p.incap) incapacitate(sim, p);
+        setCombat(c => {
+          if (!c || c.over) return c;
+          const log = [...c.log];
+          if (dropped) {
+            log.push(`You land it clean (${pd}). The ${S9.name.toLowerCase()} drops.`);
+            if (snapped) log.push(brokeLine(pw));
+            return { ...c, log, over: true, won: true };
+          }
+          log.push(`You hit for ${pd}.`);
+          if (snapped) log.push(brokeLine(pw));
+          if (!S9.hostile) { log.push(`It thrashes and tries to break away.`); return { ...c, log: log.slice(-6) }; }
+          if (playerDropped) { log.push(`Antlers catch you square (${beastHit}). The ground comes up fast.`); return { ...c, log, over: true, won: false }; }
+          log.push(`It gores you for ${beastHit}.`);
+          return { ...c, log: log.slice(-6) };
+        });
+        return;
+      }
+
       setCombat(c => {
         if (!c || c.over) return c;
         const sim = simRef.current;
@@ -4341,9 +4450,27 @@ export default function Alderbrook() {
   }, [combat?.foeId, combat?.over]); // eslint-disable-line
 
   const tryFlee = () => {
-    const p = simRef.current.player;
-    if (Math.random() * 100 < CFG.COMBAT.fleeBase + p.energy / 4) { setCombat(null); showToast("You break away and run!"); }
-    else { damage(p, weaponDmg(simRef.current.npcs.find(n => n.id === combatRef.current.foeId))); showToast("They catch you as you turn!"); bump(); }
+    const sim = simRef.current, p = sim.player, c = combatRef.current;
+    if (Math.random() * 100 < CFG.COMBAT.fleeBase + p.energy / 4) {
+      setCombat(null);
+      /* breaking off a hunt buys real distance — without this a stag simply re-charges on the
+         next tick and the panel reopens forever. It loses you for a few seconds; use them. */
+      if (c?.foeKind === "beast") {
+        const b = beastAt(sim, c.foeId);
+        if (b) { b.target = null; b.loseUntil = performance.now() / 1000 + 10; }
+      }
+      showToast(c?.foeKind === "beast" ? "You break contact — it loses you in the scrub. Move." : "You break away and run!");
+      return;
+    }
+    if (c?.foeKind === "beast") {
+      const b = beastAt(sim, c.foeId), S9 = b && BEAST_SPECIES[b.sp];
+      damage(p, S9?.hostile ? beastBite(S9) : 0);
+      showToast(S9?.hostile ? "It runs you down as you turn!" : "It slips your grip and darts past.");
+    } else {
+      damage(p, weaponDmg(sim.npcs.find(n => n.id === c.foeId)));
+      showToast("They catch you as you turn!");
+    }
+    bump();
   };
 
   /* murder, deliberately: attacking someone already down finishes them.
@@ -4691,8 +4818,12 @@ export default function Alderbrook() {
         npc.report = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "shaken, catching their breath";
       }
       else { const ex = world.interiors[npc.scene.slice(2)].exit; goal = { scene: npc.scene, x: ex.x, y: ex.y }; activity = "hurrying out"; }
-    } else if (npc.dispatch) {                           // enforcer duty: a target, or a body
-      if (npc.dispatch.bodyScene) {
+    } else if (npc.dispatch) {                           // enforcer duty: a target, a body — or an animal
+      if (npc.dispatch.beastId) {   // Stage 9: the cull. A loose stag is the Watch's problem now.
+        const b = beastAt(sim, npc.dispatch.beastId);
+        if (!b) { npc.dispatch = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "patrolling"; }
+        else { goal = { scene: b.scene, x: Math.round(b.x), y: Math.round(b.y) }; activity = `closing on a ${BEAST_SPECIES[b.sp].name.toLowerCase()}`; }
+      } else if (npc.dispatch.bodyScene) {
         goal = { scene: npc.dispatch.bodyScene, x: npc.dispatch.bodyX, y: npc.dispatch.bodyY }; activity = "responding to a report";
       } else {
         const t = npc.dispatch.targetId === "player" ? sim.player : sim.npcs.find(n => n.id === npc.dispatch.targetId);
@@ -4842,11 +4973,13 @@ export default function Alderbrook() {
        ground; everyone else finds somewhere else to be. (Keeps bystanders off the firing line,
        though a stray can still catch a slow mover.) */
     if (!npc.enforcer && !npc.dispatch && !npc.outlaw && npc.energy > 12 && npc.sick?.level !== "bad") {
-      const danger = sim.npcs.find(o => o.alive && o.id !== npc.id && o.scene === npc.scene && dist(o, npc) < 4
+      // Stage 9: a stag on the loose empties a street exactly like drawn steel does
+      const beast = beastsIn(sim, npc.scene).find(b => BEAST_SPECIES[b.sp].hostile && dist(b, npc) < 5);
+      const danger = beast || sim.npcs.find(o => o.alive && o.id !== npc.id && o.scene === npc.scene && dist(o, npc) < 4
         && (o.dying || (o.steelUntil && o.steelUntil > now)));
       if (danger) {
         const away = town.spots.graveyard || town.spots.park || town.spots.plaza;
-        goal = { scene: `t:${hereTown}`, ...away }; activity = "hurrying away from trouble"; hide = false;
+        goal = { scene: `t:${hereTown}`, ...away }; activity = beast ? "getting away from that stag" : "hurrying away from trouble"; hide = false;
       }
     }
 
@@ -6715,8 +6848,36 @@ export default function Alderbrook() {
             }
           }
 
+          /* Stage 9: the officer reaches the animal. Ranged first if they carry it (Cole's
+             crossbow earns its keep on a stag), otherwise antlers and a baton at close range. */
+          if (npc.enforcer && npc.dispatch?.beastId && !npc.incap && !npc.dying) {
+            const b = beastAt(sim, npc.dispatch.beastId);
+            if (!b) npc.dispatch = null;
+            else if (b.scene === npc.scene) {
+              const gapB = dist(npc, b);
+              const widB = bestWeapon(npc), wB = widB ? ITEMS[widB] : null;
+              const rangedB = wB && wB.range && (npc.inv[wB.ammo] || 0) > 0;
+              if (gapB < 1.5) { npc.steelUntil = now + 6; resolveFightBeast(sim, npc, b, now); }
+              else if (rangedB && gapB <= wB.range && (!npc._lastShot || now - npc._lastShot > 1.1)) {
+                npc._lastShot = now; npc.steelUntil = now + 6;
+                npc.inv[wB.ammo]--; if (npc.inv[wB.ammo] <= 0) delete npc.inv[wB.ammo];
+                spawnProjectile(sim, npc.scene, npc, b, wB.emoji || "➶");
+                b.health -= randInt(wB.dmg);
+                if (b.health <= 0) {
+                  const spN = BEAST_SPECIES[b.sp];
+                  killBeast(sim, b, npc);
+                  const townB = townOfScene(world, npc.scene);
+                  if (sim.approval && townB in sim.approval) sim.approval[townB] = clamp(sim.approval[townB] + CFG.BEASTS.cullApproval, 0, 100);
+                  repEvent(sim, npc, 2, 2, `${npc.name} shot down a ${spN.name.toLowerCase()} in ${townB}`);
+                  npc.dispatch = null; npc.goal = null;
+                  if (p.scene === npc.scene) showToast(`${spN.emoji} ${npc.name} drops the ${spN.name.toLowerCase()} at range.`);
+                }
+              }
+            }
+          }
+
           /* enforcer reaches their mark */
-          if (npc.enforcer && npc.dispatch) {
+          if (npc.enforcer && npc.dispatch && !npc.dispatch.beastId) {
             const t = npc.dispatch.targetId === "player" ? p : sim.npcs.find(n => n.id === npc.dispatch.targetId);
             if (t && !t.incap && t.scene === npc.scene && dist(npc, t) < 1.5) {
               // Stage 3.5: conviction happens HERE — an officer, a suspect, a case in hand
@@ -6783,7 +6944,10 @@ export default function Alderbrook() {
         // v7 Stage 1: DRAWN STEEL makes the street react — nerves, and the Watch's patience
         {
           const pp = sim.player;
-          if (pp.unsheathed && !modalRef.current && Math.floor(sim.time / 2) !== sim._steelTick) {
+          /* Stage 9: with a stag loose in the same street, ARMED IS SENSIBLE. Nobody flinches
+             at a drawn weapon and the Watch has bigger problems — no warning, no citation. */
+          const beastLoose = beastsIn(sim, pp.scene).some(b => BEAST_SPECIES[b.sp].hostile);
+          if (pp.unsheathed && !beastLoose && !modalRef.current && Math.floor(sim.time / 2) !== sim._steelTick) {
             sim._steelTick = Math.floor(sim.time / 2);   // check every ~2 game-min
             const nearFolk = sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.scene === pp.scene && !n.hidden && dist(n, pp) < 3.5 && !n.activity.includes("sleep"));
             const civ = nearFolk.find(n => !n.enforcer && !n.outlaw && Math.random() < 0.25);
@@ -6814,6 +6978,7 @@ export default function Alderbrook() {
             }
           } else if (sim.player.scene !== "t:outlands") sim._ambHr = hr9;
         }
+        beastTick(sim, world, dt, now);
         processTrades(sim);
         playDialogues(sim, now);
 
@@ -6850,6 +7015,196 @@ export default function Alderbrook() {
       if (tx < 0 || ty < 0 || tx >= w || ty >= h || !walk[ty][tx]) return false;
     }
     return true;
+  };
+
+  /* =====================================================================
+     STAGE 9 — THE WILD: hares, stags, and the Watch's newest headache
+     ===================================================================== */
+  /* Where a beast may appear: the treeline of an outdoor town, well clear of anyone.
+     Interiors never hold beasts, and neither does the Outlands camp (it has its own
+     predators, and they walk upright). */
+  const beastSpawnSpot = (sim, world, tid, town) => {
+    const scene = `t:${tid}`;
+    const trees = town.trees || [];
+    for (let tries = 0; tries < 14; tries++) {
+      const base = trees.length ? rand(trees) : null;
+      const x = base ? base[0] + (Math.random() * 4 - 2) : 1 + Math.random() * (town.w - 2);
+      const y = base ? base[1] + (Math.random() * 4 - 2) : 1 + Math.random() * (town.h - 2);
+      if (!isWalkable(world, scene, x, y)) continue;
+      const folk = [sim.player, ...sim.npcs].filter(e => e.alive && e.scene === scene);
+      if (folk.some(e => dist(e, { x, y }) < CFG.BEASTS.minFromPeople)) continue;
+      return { x, y };
+    }
+    return null;
+  };
+
+  const spawnBeast = (sim, world, tid, town, sp) => {
+    const spot = beastSpawnSpot(sim, world, tid, town); if (!spot) return null;
+    const S9 = BEAST_SPECIES[sp];
+    const b = { id: `bst${++sim.beastSeq}`, sp, scene: `t:${tid}`, x: spot.x, y: spot.y,
+      health: S9.hp, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
+      bornAt: performance.now() / 1000 };
+    (sim.beasts = sim.beasts || []).push(b);
+    return b;
+  };
+
+  /* a beast dies where it stands and leaves cuts, not a corpse — no case, no grave, no
+     inquest. `by` is the entity that put it down (player or NPC); they take the meat. */
+  const killBeast = (sim, b, by) => {
+    const S9 = BEAST_SPECIES[b.sp];
+    b.alive = false;
+    sim.beasts = (sim.beasts || []).filter(x => x !== b);
+    if (!by) return 0;
+    by.inv.meat = (by.inv.meat || 0) + S9.meat;
+    return S9.meat;
+  };
+
+  /* the hunt AI. Hares run from everything; stags run at it. Neither one is ever "wanted",
+     reported, arrested or mourned — none of that machinery knows they exist. */
+  const beastTick = (sim, world, dt, now) => {
+    sim.beasts = sim.beasts || [];
+    const p = sim.player;
+
+    /* --- spawning: a roll per outdoor town, on a slow cadence --- */
+    sim.lastBeastSpawn = (sim.lastBeastSpawn || 0) + dt;
+    if (sim.lastBeastSpawn >= CFG.BEASTS.spawnEveryS) {
+      sim.lastBeastSpawn = 0;
+      for (const [tid, town] of Object.entries(world.towns)) {
+        if (tid === "outlands") continue;                  // the camp's wildlife is already accounted for
+        for (const [sp, S9] of Object.entries(BEAST_SPECIES)) {
+          const here = sim.beasts.filter(b => b.alive && b.sp === sp && b.scene === `t:${tid}`).length;
+          const everywhere = sim.beasts.filter(b => b.alive && b.sp === sp).length;
+          if (here >= S9.cap || everywhere >= S9.globalCap || Math.random() >= S9.spawnChance) continue;
+          const b = spawnBeast(sim, world, tid, town, sp);
+          if (b && S9.hostile && p.scene === b.scene)
+            showToast(`${S9.emoji} A ${S9.name.toLowerCase()} comes out of the trees — ${S9.note}.`);
+        }
+      }
+    }
+
+    for (const b of [...sim.beasts]) {
+      if (!b.alive) continue;
+      const S9 = BEAST_SPECIES[b.sp];
+      /* nothing lingers forever: an animal nobody engaged wanders back out of town. Keeps the
+         valley from silting up with permanent stags, and keeps a sighting an EVENT. */
+      if (now - (b.bornAt || now) > S9.lifeS && !b.target && b.scene !== p.scene && b.health >= S9.hp) {
+        killBeast(sim, b, null); continue;
+      }
+      const folk = [p, ...sim.npcs].filter(e => e.alive && !e.incap && !e.dying && !e.jailedUntil
+        && e.scene === b.scene && !e.hidden);
+      let goal = null, speed = S9.speed;
+
+      if (S9.hostile) {
+        /* --- the stag: picks the nearest person and goes through them --- */
+        if (now < (b.loseUntil || 0)) b.target = null;   // it lost you in the trees — a real chance to walk away
+        else if (!b.aggroAt || now - b.aggroAt > CFG.BEASTS.aggroCheckS) {
+          b.aggroAt = now;
+          let best = null, bestD = S9.aggro;
+          for (const e of folk) { const d = dist(e, b); if (d < bestD) { best = e; bestD = d; } }
+          b.target = best ? (best === p ? "player" : best.id) : null;
+        }
+        const t = b.target === "player" ? p : sim.npcs.find(n => n.id === b.target);
+        const valid = t && t.alive && !t.incap && !t.dying && t.scene === b.scene;
+        if (valid) {
+          const gap = dist(t, b);
+          if (gap > 1.25) { goal = t; speed = S9.speed * 1.25; }   // a charge, not a stroll
+          else if (now - b.lastHit > CFG.BEASTS.attackEveryS) {
+            b.lastHit = now;
+            if (t === p) {
+              /* the player gets the real fight panel — this is what the combat screen is FOR */
+              if (!modalRef.current) {
+                sfx.alert();
+                setCombat({ foeId: b.id, foeKind: "beast", foeName: S9.name, foeEmoji: S9.emoji,
+                  aggressor: "beast", over: false, won: null,
+                  log: [`${S9.emoji} The ${S9.name.toLowerCase()} wheels and charges you!`] });
+              } else damage(p, goring(S9));   // busy in a menu — it still gets a glancing hit in
+            } else {
+              const hit = goring(S9);
+              if (damage(t, hit) && !t.dying && !t.incap) incapacitate(sim, t);
+              t.bubble = { text: rand(["AAH— it's ON me!", "Get it OFF!", "Somebody call the Watch!"]), until: now + 4 };
+              b.bubble = { text: "*antlers down*", until: now + 2 };
+            }
+          }
+        }
+      } else if (now < b.fleeUntil && b.fleeFrom) {
+        /* --- the hare: puts distance between itself and whatever spooked it --- */
+        goal = { x: b.x + (b.x - b.fleeFrom.x), y: b.y + (b.y - b.fleeFrom.y) };
+        speed = S9.speed * 1.5;
+      } else {
+        const near = folk.find(e => dist(e, b) < S9.spook);
+        if (near) { b.fleeUntil = now + CFG.BEASTS.fleeS; b.fleeFrom = { x: near.x, y: near.y }; }
+      }
+
+      /* --- idle wander --- */
+      if (!goal) {
+        if (!b.wanderTo || now - b.wanderAt > CFG.BEASTS.wanderEveryS || dist(b, b.wanderTo) < 0.8) {
+          b.wanderAt = now;
+          b.wanderTo = { x: b.x + (Math.random() * 8 - 4), y: b.y + (Math.random() * 8 - 4) };
+        }
+        goal = b.wanderTo; speed = S9.speed * 0.45;
+      }
+
+      /* --- movement: no pathfinder, just don't walk through walls --- */
+      const dx = goal.x - b.x, dy = goal.y - b.y, dd = Math.hypot(dx, dy);
+      if (dd > 0.15) {
+        const stepD = speed * dt;
+        const nx = b.x + (dx / dd) * stepD, ny = b.y + (dy / dd) * stepD;
+        if (isWalkable(world, b.scene, nx, b.y)) b.x = nx; else b.wanderTo = null;
+        if (isWalkable(world, b.scene, b.x, ny)) b.y = ny; else b.wanderTo = null;
+      }
+      if (b.bubble && now > b.bubble.until) b.bubble = null;
+    }
+
+    /* --- THE WATCH ANSWERS: a hostile beast loose in a town is Watch business.
+       This is a real duty, not flavour — a free officer is dispatched to the animal,
+       walks it down, and puts it down. It counts toward the town's faith in them. --- */
+    sim.beastWatch = (sim.beastWatch || 0) + dt;
+    if (sim.beastWatch >= CFG.BEASTS.watchRespondS) {
+      sim.beastWatch = 0;
+      for (const b of sim.beasts) {
+        if (!b.alive || !BEAST_SPECIES[b.sp].hostile) continue;
+        if (sim.npcs.some(n => n.alive && n.enforcer && n.dispatch?.beastId === b.id)) continue;
+        const officer = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch && !n.incap && !n.dying
+          && !n.jailedUntil && !n.activity.includes("sleep"));
+        if (!officer) continue;
+        officer.dispatch = { beastId: b.id, targetId: null };
+        officer.goal = null;
+        officer.bubble = { text: rand(["There's a stag in the street — with me!", "Clear the road. I'll handle it.", "Watch business. Stand back."]), until: now + 5 };
+        if (p.scene === b.scene) showToast(`🛡️ ${officer.name} is moving on the ${BEAST_SPECIES[b.sp].name.toLowerCase()}.`);
+      }
+    }
+  };
+
+  /* an officer (or any NPC) settles it with the animal, off-screen and quickly */
+  const resolveFightBeast = (sim, npc, b, now) => {
+    const S9 = BEAST_SPECIES[b.sp];
+    /* a BOUNDED exchange, not a duel to the death: three passes, then they back off and
+       close again next tick. A stag should cost the Watch a couple of approaches. */
+    let hpN = npc.health, hpB = b.health;
+    for (let round = 0; round < 3 && hpN > 0 && hpB > 0; round++) {
+      hpB -= weaponDmg(npc); if (hpB <= 0) break;
+      if (!S9.hostile) break;                                // a hare does not fight back
+      hpN -= beastBite(S9);
+    }
+    if (hpB <= 0) {
+      npc.health = Math.max(1, hpN);
+      const cuts = killBeast(sim, b, npc);
+      npc.bubble = { text: rand([`That's that. ${cuts} good cuts.`, "*wipes the blade* Town's clear.", "Nobody else gets gored today."]), until: now + 5 };
+      if (npc.enforcer) {
+        const town = townOfScene(worldRef.current, npc.scene);
+        if (sim.approval && town in sim.approval)
+          sim.approval[town] = clamp(sim.approval[town] + CFG.BEASTS.cullApproval, 0, 100);
+        repEvent(sim, npc, 2, 2, `${npc.name} put down a ${S9.name.toLowerCase()} in ${town}`);
+        seedGossip(sim, sim.npcs.filter(n => n.alive && n.scene === npc.scene),
+          { text: `${npc.name} put down a ${S9.name.toLowerCase()} before it hurt anyone`, subjectId: npc.id });
+      }
+      npc.dispatch = null; npc.goal = null;
+      if (sim.player.scene === npc.scene) showToast(`${S9.emoji} ${npc.name} brings the ${S9.name.toLowerCase()} down.`);
+    } else {
+      npc.health = Math.max(1, hpN); b.health = hpB;
+      if (npc.health <= 8) { incapacitate(sim, npc); npc.dispatch = null; }   // the animal won this round
+      else npc.bubble = { text: rand(["It's still up — hold the line!", "Nngh— tough beast.", "Again!"]), until: now + 4 };
+    }
   };
 
   /* =================== CONTEXT ACTIONS =================== */
@@ -8363,6 +8718,77 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       && dist(n, p) < rad && !n.activity.includes("sleep")
       && ((kind !== "threaten" && kind !== "attack") || !n.enforcer));   // the Watch doesn't get menaced (yet)
   };
+  /* --- brandishing at game. Perfectly respectable: a hare bolts, a stag takes it as an
+     invitation. Nobody reports you for this, because nobody reports a hunt. --- */
+  const spookBeast = (b) => {
+    const sim = simRef.current, p = sim.player, S9 = BEAST_SPECIES[b.sp], now = performance.now() / 1000;
+    if (S9.hostile) {
+      b.target = "player"; b.aggroAt = now; b.loseUntil = 0;
+      b.bubble = { text: "*lowers its antlers*", until: now + 3 };
+      sfx.alert(); showToast(`${S9.emoji} It doesn't scare. It squares up.`);
+    } else {
+      b.fleeUntil = now + CFG.BEASTS.fleeS * 1.5; b.fleeFrom = { x: p.x, y: p.y };
+      sfx.pop(); showToast(`${S9.emoji} It bolts for the treeline — you'll have to be quicker than that.`);
+    }
+    bump();
+  };
+
+  /* --- the hunt proper. Ranged opens at distance and can drop it outright; otherwise it's
+     the combat panel, same as any fight, which is what that screen was always for. --- */
+  /* it's down: cuts in the bag, and — for a hostile one — credit where the town can see it.
+     Shared by the ranged kill, the melee panel, and any other way it ends up dead. */
+  const huntKill = (b) => {
+    const sim = simRef.current, p = sim.player, S9 = BEAST_SPECIES[b.sp];
+    const cuts = killBeast(sim, b, p);
+    sfx.coin();
+    if (S9.hostile) {
+      p.coins += CFG.BEASTS.cullBounty;
+      repEvent(sim, p, CFG.BEASTS.cullFame, CFG.BEASTS.cullRenown, `the player put down a ${S9.name.toLowerCase()} that was loose in the streets`);
+      showToast(`${S9.emoji} The ${S9.name.toLowerCase()} goes down. ${cuts}× 🥩 Meat Cut — and ${CFG.BEASTS.cullBounty}c from the hall for the cull.`);
+    } else showToast(`${S9.emoji} A clean kill. ${cuts}× 🥩 Meat Cut.`);
+    const before = skillLevel(p, "foraging");
+    p.skills.foraging = (p.skills.foraging || 0) + taskXp("foraging", 0);   // hunting IS fieldcraft
+    if (skillLevel(p, "foraging") > before) showToast(`📈 ${SKILL_TRACKS.foraging} — now ${skillTierName(p, "foraging")}!`);
+    bump();
+  };
+
+  const huntBeast = (b) => {
+    const sim = simRef.current, p = sim.player, S9 = BEAST_SPECIES[b.sp];
+    const wid = bestWeapon(p), w = wid ? ITEMS[wid] : null;
+    const claim = () => huntKill(b);
+    if (w?.range && (p.inv[w.ammo] || 0) > 0 && dist(b, p) > 1.4) {
+      p.inv[w.ammo]--; if (p.inv[w.ammo] <= 0) delete p.inv[w.ammo];
+      spawnProjectile(sim, p.scene, p, b, w.emoji || "➶");
+      const dmg = randInt(w.dmg);
+      b.health -= dmg;
+      if (crudeBreak(p, wid)) { sfx.alert(); showToast(brokeLine(wid)); }
+      if (b.health <= 0) return claim();
+      showToast(`${S9.emoji} Hit for ${dmg} — and now it knows where you are.`);
+      if (S9.hostile) { b.target = "player"; b.aggroAt = performance.now() / 1000; b.loseUntil = 0; }
+      else { b.fleeUntil = performance.now() / 1000 + CFG.BEASTS.fleeS; b.fleeFrom = { x: p.x, y: p.y }; }
+      bump(); return;
+    }
+    setCombat({ foeId: b.id, foeKind: "beast", foeName: S9.name, foeEmoji: S9.emoji,
+      aggressor: "player", over: false, won: null,
+      log: [`You close on the ${S9.name.toLowerCase()}.`] });
+  };
+
+  /* Stage 9: game in reach. Hunting targets only ever show up under THREATEN and ATTACK —
+     there is nothing to say to a hare and nothing to trade it. */
+  const nearbyBeasts = (kind) => {
+    if (kind !== "threaten" && kind !== "attack") return [];
+    const sim = simRef.current, p = sim.player;
+    const bw = bestWeapon(p);
+    const rr = bw && ITEMS[bw].range && (p.inv[ITEMS[bw].ammo] || 0) > 0;
+    const rad = rr ? ITEMS[bw].range : CFG.TALK_RADIUS;
+    return beastsIn(sim, p.scene).filter(b => dist(b, p) < rad);
+  };
+  /* one list for the picker: people first, then whatever's grazing behind them */
+  const nearbyTargets = (kind) => [
+    ...nearbyPeople(kind).map(n => ({ id: n.id, name: n.name, color: n.color, activity: n.activity, beast: false })),
+    ...nearbyBeasts(kind).map(b => ({ id: b.id, name: BEAST_SPECIES[b.sp].name, color: BEAST_SPECIES[b.sp].color,
+      activity: BEAST_SPECIES[b.sp].note, beast: true, emoji: BEAST_SPECIES[b.sp].emoji })),
+  ];
   const toggleSheathe = () => {
     const p = simRef.current.player;
     if (!bestWeapon(p)) { showToast("Nothing to draw."); return; }
@@ -8372,12 +8798,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   };
   const openPicker = (kind) => {
     if ((kind === "threaten" || kind === "attack") && !simRef.current.player.unsheathed) return;
-    if (!nearbyPeople(kind).length) { showToast("No one close enough."); return; }
+    if (!nearbyTargets(kind).length) { showToast("Nothing close enough."); return; }
     setPicker({ kind });
   };
   const pickTarget = (npcId) => {
     const kind = picker?.kind; setPicker(null);
     if (!kind || !npcId) return;
+    /* --- game first: an animal is not a person, so NONE of the justice pipeline runs.
+       No witnesses, no incident call, no stars. Brandishing at a hare is hunting. --- */
+    const quarry = beastAt(simRef.current, npcId);
+    if (quarry) return kind === "threaten" ? spookBeast(quarry) : huntBeast(quarry);
     if (kind === "talk") return openChat(npcId);
     if (kind === "gift") { setPayPanel({ npcId }); setPayAmount(""); return; }
     if (kind === "trade") { setTradePanel({ npcId, giveC: 0, giveItem: "", giveQty: 1, askC: 0, askItem: "", askQty: 1, note: "" }); return; }
@@ -8844,6 +9274,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     }
     const ents = [
       ...sim.npcs.filter(n => n.alive && n.scene === scene && !n.hidden).map(n => ({ ...n, kind: "npc", ref: n })),
+      // Stage 9: the wild draws in the same depth-sorted pass as everyone else
+      ...beastsIn(sim, scene).map(b => ({ ...b, kind: "beast", name: BEAST_SPECIES[b.sp].name, color: BEAST_SPECIES[b.sp].color, ref: b })),
       { ...sim.player, kind: "player", name: "You", color: "#2e6fe0", ref: sim.player },
     ].sort((a, b) => a.y - b.y);
     for (const e of ents) drawEntity(ctx, e, T, px, py);
@@ -9006,6 +9438,24 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   /* one painter for everyone; the incapacitated lie flat where they fell */
   const drawEntity = (ctx, e, T, px, py) => {
     const cx = px(e.x) + T / 2, cy = py(e.y) + T / 2;
+    if (e.kind === "beast") {   // Stage 9: an animal, drawn as one — emoji, shadow, and a wound bar when it's bleeding
+      const S9 = BEAST_SPECIES[e.sp];
+      ctx.fillStyle = "rgba(0,0,0,0.22)";
+      ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.3, T * 0.3, T * 0.11, 0, 0, 7); ctx.fill();
+      ctx.font = `${Math.floor(T * 0.85)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(S9.emoji, cx, cy);
+      ctx.textBaseline = "alphabetic";
+      if (e.ref.health < S9.hp) {   // hurt game shows it — you can tell what's nearly down
+        const w = T * 0.62, frac = clamp(e.ref.health / S9.hp, 0, 1);
+        ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(cx - w / 2, cy - T * 0.52, w, T * 0.09);
+        ctx.fillStyle = S9.hostile ? "#d95a5a" : "#c9a84a"; ctx.fillRect(cx - w / 2, cy - T * 0.52, w * frac, T * 0.09);
+      }
+      if (S9.hostile) { ctx.fillStyle = "#d95a5a"; ctx.font = `700 ${T * 0.3}px system-ui`; ctx.textAlign = "center"; ctx.fillText("!", cx, cy - T * 0.6); }
+      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      ctx.font = `600 ${Math.max(8, T * 0.26)}px system-ui`; ctx.textAlign = "center";
+      ctx.fillText(S9.name, cx, cy + T * 0.62);
+      return;
+    }
     if (e.ref.incap || e.ref.dying) {
       ctx.fillStyle = e.color;
       ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.2, T * 0.42, T * 0.2, 0, 0, 7); ctx.fill();
@@ -9611,26 +10061,35 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
 
       {/* 🥊 combat */}
       {combat && sim && (() => {
-        const foe = sim.npcs.find(n => n.id === combat.foeId);
+        /* Stage 9: the same panel serves a brawl and a hunt — the foe is just read from a different
+           list, and a hunt keeps its quarry's NAME in the combat state so the header still reads
+           right after the animal is gone from the world. */
+        const isHunt = combat.foeKind === "beast";
+        const quarry = isHunt ? beastAt(sim, combat.foeId) : null;
+        const qSp = quarry && BEAST_SPECIES[quarry.sp];
+        const foe = isHunt ? quarry : sim.npcs.find(n => n.id === combat.foeId);
+        if (!isHunt && !foe) return null;
+        const foeName = isHunt ? (combat.foeName || "the animal") : foe.name;
+        const foePct = isHunt ? (quarry ? clamp((quarry.health / qSp.hp) * 100, 0, 100) : 0) : foe.health;
         return (
           <div style={S.chatOverlay}>
             <div style={{ ...S.chatPanel, maxWidth: 440 }}>
-              <div style={{ ...S.chatHeader, background: "#8a3a3a" }}>
-                <span style={{ fontWeight: 700 }}>🥊 vs {foe.name}</span>
+              <div style={{ ...S.chatHeader, background: isHunt ? "#5a6a3a" : "#8a3a3a" }}>
+                <span style={{ fontWeight: 700 }}>{isHunt ? `${combat.foeEmoji || "🦌"} hunting ${foeName}` : `🥊 vs ${foeName}`}</span>
               </div>
               <div style={S.chatBody}>
-                {[["You", player.health], [foe.name, foe.health]].map(([nm, hp]) => (
+                {[["You", player.health], [foeName, foePct]].map(([nm, hp]) => (
                   <div key={nm} style={S.barOuter}>
                     <div style={{ ...S.barInner, width: `${Math.max(0, hp)}%`, background: "#d95a5a" }} />
-                    <span style={S.barLabel}>{nm}: {Math.max(0, Math.round(hp))}</span>
+                    <span style={S.barLabel}>{nm}: {Math.max(0, Math.round(hp))}{nm === foeName && isHunt ? "%" : ""}</span>
                   </div>
                 ))}
                 <div style={{ ...S.folkCard, fontFamily: "monospace", fontSize: fs - 1, whiteSpace: "pre-wrap" }}>
                   {combat.log.join("\n")}
                 </div>
                 {combat.over
-                  ? <button style={{ ...S.binBtn, width: "100%", background: "#2e6fe0" }} onClick={() => setCombat(null)}>{combat.won ? "Walk away" : "..."}</button>
-                  : <button style={{ ...S.binBtn, width: "100%" }} onClick={tryFlee}>🏃 Try to flee</button>}
+                  ? <button style={{ ...S.binBtn, width: "100%", background: "#2e6fe0" }} onClick={() => setCombat(null)}>{combat.won ? (quarry ? "Field-dress it" : "Walk away") : "..."}</button>
+                  : <button style={{ ...S.binBtn, width: "100%" }} onClick={tryFlee}>{quarry ? "🏃 Break off" : "🏃 Try to flee"}</button>}
               </div>
             </div>
           </div>
@@ -10153,6 +10612,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const p = simRef.current?.player; if (!p) return null;
         const anyone = nearbyPeople("talk").length > 0;
         const armedNow = !!bestWeapon(p);
+        const quarryNear = nearbyBeasts("attack").length > 0;   // Stage 9: game counts as something to point a weapon at
         if (!anyone && !armedNow) return null;
         const btn = (label, on, show = true, hot = "") => show ? (
           <button key={label} onClick={on} style={{ padding: "10px 12px", borderRadius: 10, border: "none", background: "rgba(30,34,44,0.88)", color: "#fff", fontSize: 14, fontWeight: 700, textAlign: "left", boxShadow: "0 2px 6px rgba(0,0,0,0.35)" }}>
@@ -10165,8 +10625,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             {btn("🎁 Gift", () => openPicker("gift"), anyone, "G")}
             {btn("💬 Talk", () => openPicker("talk"), anyone, "T")}
             {btn("🤝 Trade", () => openPicker("trade"), anyone, "H")}
-            {btn("😠 Threaten", () => openPicker("threaten"), anyone && p.unsheathed, "B")}
-            {btn("⚔ Attack", () => openPicker("attack"), anyone && p.unsheathed && isPhone)}
+            {btn("😠 Threaten", () => openPicker("threaten"), (anyone || quarryNear) && p.unsheathed, "B")}
+            {btn(quarryNear && !anyone ? "🏹 Hunt" : "⚔ Attack", () => openPicker("attack"), (anyone || quarryNear) && p.unsheathed && (isPhone || quarryNear), "Z")}
           </div>
         );
       })()}
@@ -10182,12 +10642,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               <button style={S.closeBtn} onClick={() => setPicker(null)}>✕</button>
             </div>
             <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-              {nearbyPeople(picker.kind).map(n => (
+              {nearbyTargets(picker.kind).map(n => (
                 <button key={n.id} onClick={() => pickTarget(n.id)}
-                  style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#eef1f5", fontSize: 15, textAlign: "left", fontWeight: 600 }}>
-                  <span style={{ color: n.color }}>●</span> {n.name} <span style={{ opacity: 0.5, fontWeight: 400 }}>— {n.activity}</span>
+                  style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: n.beast ? "#e8f0e2" : "#eef1f5", fontSize: 15, textAlign: "left", fontWeight: 600 }}>
+                  <span style={{ color: n.color }}>{n.beast ? n.emoji : "●"}</span> {n.name} <span style={{ opacity: 0.5, fontWeight: 400 }}>— {n.activity}</span>
                 </button>
               ))}
+              {nearbyTargets(picker.kind).some(n => n.beast) && (picker.kind === "attack" || picker.kind === "threaten") && (
+                <div style={{ fontSize: 11, opacity: 0.55, padding: "0 4px" }}>Game is fair play — nobody reports a hunt. People are a different matter.</div>
+              )}
               <button onClick={() => setPicker(null)} style={{ padding: "10px 12px", borderRadius: 8, border: "none", background: "#d8d8d8", fontSize: 15, fontWeight: 700 }}>Cancel</button>
             </div>
           </div>
