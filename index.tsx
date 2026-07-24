@@ -5,6 +5,13 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
    Stage 1 map rollout (three towns ~2x area, each a real municipality:
    hall, Watch presence, clinic access, eateries, graveyard; Hearth & Holt
    in Mossford, Mayor Vance in Stonecross) v6 now carries:
+   - Stage 9:   the STONE AGE — a crude craft tier below easy, made from
+                foraged sticks, rocks and grass with no tools at all. Every
+                crude tool deputizes for one metal tool (flint/awl/maul/axe)
+                and every crude weapon undercuts the forged one, but each
+                carries a per-USE chance of coming apart for good. Rope
+                (4 grass bundles), a hard herbal-salve craft, sticks on the
+                forage table, and no wright will take a crude commission.
    - Stage 2:   occupations — 5 skill tracks, completeTask pay pipe,
                 Claude-run interviews, NPC job market with title ladders,
                 promotions, and the 15-min player headstart.
@@ -136,16 +143,31 @@ const CFG = {
   HEIST: { everyDays: 4, startDay: 7, tokens: 180, minLoot: 20 },   // Stage 7: planned burglaries — start after week 1 so the job market absorbs newcomers first
   WATCH_PLAN: { weekday: 5, tokens: 200, dwellMin: 300 },
   TRADE: { tokens: 110, noteMax: 120, maxCoins: 30 },   // trade offers: coins/items both ways + an optional favor note
-  CRAFT: {   // v7 Stage 5: the workshop. tier: easy (1 drag, 1 button) / medium (2 drags, 2 buttons)
-    // / hard (BALANCE pre-stage + 3 drags + 3 buttons). tools = required in inventory. furn = output
-    // is furniture, not an item. Craft at the workshop bench, or at home with a Workbench placed.
+  CRAFT: {   // v7 Stage 5: the workshop. tier: crude (forgiving balance, 1 lashing) / easy (1 drag, 1
+    // button) / medium (2 drags, 2 buttons) / hard (BALANCE pre-stage + 3 drags + 3 buttons).
+    // tools = required in inventory. furn = output is furniture, not an item.
+    // Craft at the workshop bench, or at home with a Workbench placed.
     recipes: {   // "many different crafts, like a lot" — every recipe is self-craft OR commission
+      /* --- CRUDE: the stone age, before anyone sold you a saw. Sticks, rocks, grass and
+         lashing — no tools needed to START, and every crude piece stands in for the metal
+         tool it apes until the day it snaps. Nobody takes coin for this work: crude crafts
+         are self-made only (see the commission gate in the workbench panel). --- */
+      sharprock: { tier: "crude",  mats: { rock: 2 },                      tools: [] },   // knapped flint — a saw that bites once too often
+      stoneawl:  { tier: "crude",  mats: { rock: 1, stick: 1 },            tools: [] },
+      stonemaul: { tier: "crude",  mats: { rock: 2, stick: 1, fiber: 1 },  tools: [] },
+      stonespear:{ tier: "crude",  mats: { stick: 2, rock: 1, fiber: 1 },  tools: [] },
+      sling:     { tier: "crude",  mats: { rope: 1, fiber: 2 },            tools: [] },
+      /* the LATE crude pair — these come after the maul, and they're the ones that finally
+         reach cut wood. The axe fells it (less per swing than a real hatchet, and it breaks);
+         the stave bow is the one crude craft that SPENDS a piece of that wood. */
+      stoneaxe:  { tier: "crude",  mats: { rock: 2, stick: 2, rope: 1 },   tools: ["hammer"] },
+      crudebow:  { tier: "crude",  mats: { wood: 1, rope: 1, fiber: 1 },   tools: ["saw"] },
       toy:       { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
       frame:     { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
-      whistle:   { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
-      club:      { tier: "easy",   mats: { wood: 1 },           tools: ["saw"] },
-      broom:     { tier: "easy",   mats: { wood: 1, fiber: 1 }, tools: ["saw"] },
-      arrow:     { tier: "easy",   mats: { wood: 1 },           tools: ["saw"], out: 3 },
+      whistle:   { tier: "easy",   mats: { stick: 2 },          tools: ["saw"] },   // it's a reed whistle — a stick and a knife's worth of patience
+      club:      { tier: "easy",   mats: { stick: 3 },          tools: ["saw"] },
+      broom:     { tier: "easy",   mats: { stick: 2, fiber: 1 },tools: ["saw"] },
+      arrow:     { tier: "easy",   mats: { stick: 1 },          tools: ["saw"], out: 3 },
       bat:       { tier: "easy",   mats: { wood: 2 },           tools: ["saw"] },
       knife:     { tier: "medium", mats: { wood: 1, ore: 1 },   tools: ["saw", "hammer"] },
       hatchet:   { tier: "medium", mats: { wood: 1, ore: 2 },   tools: ["hammer"] },
@@ -154,10 +176,12 @@ const CFG = {
       birdhouse: { tier: "medium", mats: { wood: 2 },           tools: ["saw", "hammer"] },
       drum:      { tier: "medium", mats: { wood: 1, fiber: 1 }, tools: ["saw", "hammer"] },
       ore:       { tier: "medium", mats: { rock: 3 },           tools: ["hammer"] },   // forge 3 round rocks into iron bits (medium craft; the workshop furnace is the other route)
+      rope:      { tier: "medium", mats: { fiber: 4 },           tools: [] },   // four grass bundles, twisted down into one honest coil
       bandage:   { tier: "easy",   mats: { fiber: 1, herb: 1 }, tools: [] },   // an herbal dressing — grass to bind, a wild herb to soothe
       pipe:      { tier: "easy",   mats: { ore: 1 },            tools: ["hammer"] },
       nozzle:    { tier: "medium", mats: { ore: 1, fiber: 1 },  tools: ["screwdriver"] },
       heatcoil:  { tier: "medium", mats: { ore: 2 },            tools: ["hammer", "screwdriver"] },
+      salve:     { tier: "hard",   mats: { herb: 3, fiber: 1, water: 1 }, tools: ["hammer"] },   // wild herbs ground under the hammer, bound and steeped — the apothecary's craft
       bow:       { tier: "hard",   mats: { wood: 2, fiber: 1 }, tools: ["saw", "screwdriver"] },
       hardware:  { tier: "hard",   mats: { ore: 2, fiber: 1 },  tools: ["screwdriver", "hammer"] },
       chair:     { tier: "hard",   mats: { wood: 2, ore: 1 },   tools: ["saw", "hammer", "screwdriver"], furn: true },
@@ -166,16 +190,20 @@ const CFG = {
        hard: LARGER range and you only see the MIN — the max is yours to find. Ranges always
        overlap (mins cap below maxes' floor), so a common middle value ALWAYS exists. */
     balance: {
+      crude:  { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 3, showMax: true },   // eyeballed, not measured
       easy:   { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 1, showMax: true },
       medium: { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 0, showMax: true },
       hard:   { minLo: 1, minHi: 15, maxLo: 45, maxHi: 60, tol: 0, showMax: false },
     },
-    labor: { easy: 8, medium: 14, hard: 24 },  // commission labor on top of material value
-    daysByTier: { easy: 1, medium: 2, hard: 3 },
+    labor: { crude: 3, easy: 8, medium: 14, hard: 24 },  // commission labor on top of material value (crude is never commissioned — kept for the material readout)
+    daysByTier: { crude: 1, easy: 1, medium: 2, hard: 3 },
     letterFee: 2,                              // Garrick posts you a note when it's ready
     smelt: { rocks: 3, fee: 3 },               // the owner turns 3 round rocks into 1 iron bits (fee waived if YOU own it)
     holdMs: 1000,                              // per SCREW — held one at a time, like actually screwing something in
+    crudeHoldMs: 650,                          // a lashing is quicker than a screw — it's just cord and a knot
     chopPerTree: 2,                            // GLOBAL daily cap per tree — across everyone
+    stoneAxeWood: 1,                           // a stone axe brings down ONE piece; the steel hatchet takes 1-2
+    stoneAxeMin: 14, hatchetMin: 8,            // ...and takes half again as long doing it
   },
   CHAIR: { perMark: 3, markMin: 12, maxMarks: 5 },   // 3 energy per FULL 12-min mark, an hour tops, REAL time — no skip
   HILLS: { price: 500, trailAlder: { x: 32, y: 1 }, trailHills: { x: 2, y: 9 }, walkMin: 15 },   // the capstone: the house above your first town
@@ -569,6 +597,16 @@ const ITEMS = {
   screwdriver:  { name: "Screwdriver",    emoji: "🪛", price: 18, cat: "tool" },
   hatchet:      { name: "Hatchet",        emoji: "🪓", price: 34, cat: "tool" },   // craftable; also the wood-chopping tool
   wood:         { name: "Cut Wood",       emoji: "🪵", price: 4,  cat: "gift" },
+  /* ===== the stone age: what you can make before you can afford a saw =====
+     `crude` is the per-USE chance the piece gives out and is gone for good. Every crude
+     tool stands in for one metal tool (see TOOL_ALT); every crude weapon hits softer than
+     the forged thing it apes. Cheap to make, cheap to lose — that's the whole bargain. */
+  stick:        { name: "Sticks",         emoji: "🥢", price: 1,  cat: "gift" },   // foraged from the hedgerows, no hatchet required
+  rope:         { name: "Coil of Rope",   emoji: "🪢", price: 5,  cat: "gift" },   // four grass bundles, twisted tight
+  sharprock:    { name: "Sharp Flint",    emoji: "🗿", price: 3,  cat: "tool", crude: 0.22 },   // stands in for a saw
+  stoneawl:     { name: "Stone Awl",      emoji: "🪡", price: 4,  cat: "tool", crude: 0.20 },   // stands in for a screwdriver
+  stonemaul:    { name: "Stone Maul",     emoji: "⚒️", price: 5,  cat: "tool", crude: 0.18 },   // stands in for a hammer
+  stoneaxe:     { name: "Stone Axe",      emoji: "⛏️", price: 9,  cat: "tool", crude: 0.15 },   // stands in for a hatchet — fells less, slower, and not for long
   ore:          { name: "Iron Bits",      emoji: "🔩", price: 6,  cat: "gift" },   // smelted from 3 round rocks
   toy:          { name: "Wooden Toy",     emoji: "🧸", price: 9,  cat: "gift" },
   bat:          { name: "Club Bat",       emoji: "🏏", price: 14, cat: "gift", dmg: [10, 20] },
@@ -590,12 +628,18 @@ const ITEMS = {
   pizza:        { name: "Pizza",          emoji: "🍕", price: 6,  cat: "food",   eat: { hunger: 60, thirst: 5, energy: 12 } },   // Stage 3.8
   medicine:     { name: "Medicine",       emoji: "💊", price: 6,  cat: "med",    cure: true },
   bandage:      { name: "Bandage",        emoji: "🩹", price: 3,  cat: "med",    heal: 20 },
+  salve:        { name: "Herbal Salve",   emoji: "🫙", price: 18, cat: "med",    heal: 35, cure: true },   // the hard herb craft: dresses a wound AND breaks a fever. Not sold anywhere — you make it.
   /* weapons — enforcement carries batons free; the mart sells one under the counter */
   club:         { name: "Walking Club",   emoji: "🏏", price: 10, cat: "weapon", dmg: [12, 22] },
   knife:        { name: "Boning Knife",   emoji: "🔪", price: 14, cat: "weapon", dmg: [18, 30], lethal: true },  // will NOT stop at incapacitation
   /* v7 Stage 2 — the ranged ladder: range = engagement tiles, ammo gates the opening shot */
   slingshot:    { name: "Slingshot",      emoji: "🪃", price: 10,  cat: "weapon", dmg: [8, 16],  range: 4, ammo: "rock" },
   bow:          { name: "Hunting Bow",    emoji: "🏹", price: 42,  cat: "weapon", dmg: [16, 28], range: 6, ammo: "arrow" },
+  /* the crude arms — every one of them worse than the thing it imitates, and every one of
+     them one bad swing from kindling. A stone age is survivable, not comfortable. */
+  stonespear:   { name: "Stone Spear",    emoji: "🔱", price: 7,   cat: "weapon", dmg: [11, 19], crude: 0.12 },
+  sling:        { name: "Cord Sling",     emoji: "🧶", price: 6,   cat: "weapon", dmg: [6, 12],  range: 3, ammo: "rock",  crude: 0.10 },
+  crudebow:     { name: "Bent-Stave Bow", emoji: "🏹", price: 20,  cat: "weapon", dmg: [12, 22], range: 5, ammo: "arrow", crude: 0.08 },
   crossbow:     { name: "Crossbow",       emoji: "🎯", price: 200, cat: "weapon", dmg: [26, 40], range: 7, ammo: "bolt", lethal: true },   // the world's status weapon — Watch-issue or black market only
   arrow:        { name: "Arrow",          emoji: "🪶", price: 2,   cat: "gift" },
   bolt:         { name: "Crossbow Bolt",  emoji: "🔩", price: 4,   cat: "gift" },
@@ -1779,6 +1823,23 @@ const bestWeapon = (ent) => {
   return best;
 };
 const weaponDmg = (ent) => randInt(bestWeapon(ent) ? ITEMS[bestWeapon(ent)].dmg : CFG.COMBAT.fistDmg);
+
+/* ===== the stone age layer =====
+   A crude piece does the job of the metal tool it stands in for — until it doesn't.
+   TOOL_ALT maps each real tool to the knapped-stone thing that can deputize for it;
+   crudeBreak() is the roll every USE makes against the piece surviving that use. */
+const TOOL_ALT = { saw: "sharprock", hammer: "stonemaul", screwdriver: "stoneawl", hatchet: "stoneaxe" };
+const toolInHand = (ent, t) =>          // the real tool first — nobody reaches for flint with a saw on the bench
+  (ent.inv?.[t] || 0) > 0 ? t : (TOOL_ALT[t] && (ent.inv?.[TOOL_ALT[t]] || 0) > 0 ? TOOL_ALT[t] : null);
+const hasTool = (ent, t) => !!toolInHand(ent, t);
+const crudeBreak = (ent, id) => {       // true if the piece just gave out (and is gone)
+  const odds = ITEMS[id]?.crude;
+  if (!odds || !(ent.inv?.[id] > 0) || Math.random() >= odds) return false;
+  ent.inv[id]--;
+  if (ent.inv[id] <= 0) { delete ent.inv[id]; if (ent.equipped === id) ent.equipped = null; }
+  return true;
+};
+const brokeLine = (id) => `💥 Your ${ITEMS[id].name} gives out and comes apart in your hands.`;
 
 function findPath(gridInfo, sx, sy, gx, gy) {
   const { walk, w, h } = gridInfo;
@@ -4230,15 +4291,21 @@ export default function Alderbrook() {
   useEffect(() => {
     if (!combat || combat.over) return;
     const iv = setInterval(() => {
+      if (combatRef.current?.over) return;
+      /* the swing is rolled OUT here, not in the updater: a crude weapon giving out CONSUMES the
+         piece, and React re-runs updaters in StrictMode. One round, one roll, one snapped haft. */
+      const p0 = simRef.current.player;
+      const pw = bestWeapon(p0), pd = weaponDmg(p0);
+      const lethal = ITEMS[pw || ""]?.lethal;
+      const snapped = pw ? crudeBreak(p0, pw) : false;   // the blow lands first — then the stone gives
       setCombat(c => {
         if (!c || c.over) return c;
         const sim = simRef.current;
         const p = sim.player, foe = sim.npcs.find(n => n.id === c.foeId);
         const log = [...c.log];
-        const pd = weaponDmg(p);
         if (damage(foe, pd)) {                            // foe drops
-          const lethal = ITEMS[bestWeapon(p) || ""]?.lethal;
           log.push(lethal ? `You land the finish (${pd}). ${foe.name} collapses — that blade cut DEEP.` : `You land the finish (${pd}). ${foe.name} goes down.`);
+          if (snapped) log.push(brokeLine(pw));
           if (lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);   // knives don't stop at down
           if (c.aggressor === "player") {
             const o = takedownOutcome(sim, foe);
@@ -4257,6 +4324,7 @@ export default function Alderbrook() {
           return { ...c, log, over: true, won: true };
         }
         log.push(`You hit for ${pd}.`);
+        if (snapped) log.push(brokeLine(pw));   // ...and now you're swinging whatever's left, or your fists
         const fd = weaponDmg(foe);
         if (damage(p, fd)) {                              // player drops
           const foeLethal = ITEMS[bestWeapon(foe) || ""]?.lethal;
@@ -6797,14 +6865,15 @@ export default function Alderbrook() {
         out.push({ id: "discharge", label: `🚪 Check out (pay ${p.hospitalBill}c)` });
       return out;
     }
-    if (p.scene.startsWith("t:") && (p.inv.hatchet || 0) > 0) {   // v7 Stage 5: wood, if you brought the hatchet
+    if (p.scene.startsWith("t:") && toolInHand(p, "hatchet")) {   // v7 Stage 5: wood, if you brought a hatchet — or knapped an axe
       const twn = world.towns[p.scene.slice(2)];
       const tr = (twn.trees || []).find(([tx, ty]) => Math.abs(tx - p.x) < 1.6 && Math.abs(ty - p.y) < 1.6);
       if (tr) {
         const key = `${p.scene.slice(2)}:${tr[0]},${tr[1]}`;
         const rec = (sim.treeChops = sim.treeChops || {})[key];
         const used = rec?.day === sim.day ? rec.n : 0;
-        if (used < CFG.CRAFT.chopPerTree) out.push({ id: "chopwood", label: `🪓 Chop wood (${CFG.CRAFT.chopPerTree - used} left today)`, chopKey: key });
+        const axe = toolInHand(p, "hatchet");
+        if (used < CFG.CRAFT.chopPerTree) out.push({ id: "chopwood", label: `${ITEMS[axe].emoji} Chop wood (${CFG.CRAFT.chopPerTree - used} left today)`, chopKey: key });
       }
     }
     { // v7 Stage 5: the hill path — Alderbrook's NE corner up to the manor gate
@@ -7314,11 +7383,17 @@ export default function Alderbrook() {
         const rec = (sim.treeChops = sim.treeChops || {})[a.chopKey];
         const used = rec?.day === sim.day ? rec.n : 0;
         if (used >= CFG.CRAFT.chopPerTree) { showToast("This tree's given all it has today."); break; }
+        const axe = toolInHand(p, "hatchet");
+        if (!axe) { showToast("You've nothing to chop with."); break; }
         sim.treeChops[a.chopKey] = { day: sim.day, n: used + 1 };
-        const got = 1 + (Math.random() < 0.5 ? 1 : 0);
+        // a knapped stone axe DOES fell wood — one piece, slowly, and it may not survive the trip
+        const stone = axe === "stoneaxe";
+        const got = stone ? CFG.CRAFT.stoneAxeWood : 1 + (Math.random() < 0.5 ? 1 : 0);
         p.inv.wood = (p.inv.wood || 0) + got;
-        sim.time += 8; sfx.pop();
-        showToast(`🪵 ${got} cut wood. The tree, improbably, is fine.`);
+        sim.time += stone ? CFG.CRAFT.stoneAxeMin : CFG.CRAFT.hatchetMin; sfx.pop();
+        showToast(stone ? `🪵 ${got} cut wood — hacked out the hard way. The tree, improbably, is fine.`
+                        : `🪵 ${got} cut wood. The tree, improbably, is fine.`);
+        if (crudeBreak(p, axe)) { sfx.alert(); showToast(brokeLine(axe)); }
         bump(); break;
       }
       case "buybiz": {   // the handshake now starts with a CONVERSATION — the owner names their price
@@ -7433,9 +7508,10 @@ export default function Alderbrook() {
         const bite = Math.max(0.04, 0.10 - lv * 0.015), snake = Math.max(0.02, 0.05 - lv * 0.008);
         if (r < snake) { p.health = Math.max(1, p.health - 10); sfx.alert(); showToast("🐍 A lil snake gets you! (-10 hp)"); }
         else if (r < snake + bite) { p.health = Math.max(1, p.health - 4); showToast("🐜 Something bites you. (-4 hp)"); }
-        else if (r < snake + bite + 0.30) { const q = 1 + (Math.random() < 0.4 ? 1 : 0); p.inv.rock = (p.inv.rock || 0) + q; showToast(`🪨 Found ${q} round rock${q > 1 ? "s" : ""}.`); }
-        else if (r < snake + bite + 0.48) { p.inv.fiber = (p.inv.fiber || 0) + 1; showToast("🌾 A tidy grass bundle."); }
-        else if (r < snake + bite + 0.62) { p.inv.herb = (p.inv.herb || 0) + 1; showToast("🌿 A wild herb — good for what ails you."); }
+        else if (r < snake + bite + 0.19) { const q = 1 + (Math.random() < 0.4 ? 1 : 0); p.inv.rock = (p.inv.rock || 0) + q; showToast(`🪨 Found ${q} round rock${q > 1 ? "s" : ""}.`); }
+        else if (r < snake + bite + 0.38) { const q = 1 + (Math.random() < 0.5 ? 1 : 0); p.inv.stick = (p.inv.stick || 0) + q; showToast(`🥢 ${q > 1 ? "A good armful of sticks" : "A fallen stick"} — deadfall, free for the taking.`); }
+        else if (r < snake + bite + 0.52) { p.inv.fiber = (p.inv.fiber || 0) + 1; showToast("🌾 A tidy grass bundle."); }
+        else if (r < snake + bite + 0.63) { p.inv.herb = (p.inv.herb || 0) + 1; showToast("🌿 A wild herb — good for what ails you."); }
         else if (r < snake + bite + 0.70) { const c = 1 + Math.floor(Math.random() * 3); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
         else if (r < snake + bite + 0.72) { p.inv.ring = (p.inv.ring || 0) + 1; sfx.coin(); showToast("💍 A tarnished ring — someone lost this…"); }
         else showToast("🍃 Nothing but leaves this time.");
@@ -8347,6 +8423,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         } else {
           setCombat({ foeId: npcId, aggressor: "player", log: [`Your ${ITEMS[w.ammo].name.toLowerCase()} strikes from range (${dmg}). ${foe.name} closes in!`], over: false, won: null });
         }
+        if (crudeBreak(p, wid)) { sfx.alert(); showToast(brokeLine(wid)); }   // a stave bow or a cord sling only draws so many times
         return;
       }
       setCombat({ foeId: npcId, aggressor: "player", log: ["You strike first."], over: false, won: null });
@@ -10537,11 +10614,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       {craftPanel && sim && (() => {
         const cp = craftPanel, R = CFG.CRAFT.recipes;
         const inv = player.inv || {};
-        const hasTools = (r) => r.tools.every(t => (inv[t] || 0) > 0);
+        const hasTools = (r) => r.tools.every(t => hasTool(player, t));   // a knapped stand-in counts
         const hasMats = (r) => Object.entries(r.mats).every(([m, n]) => (inv[m] || 0) >= n);
         const tierOf = (r) => r.tier;
-        const AREAS = { easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"] };
-        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" } };
+        const TIER_ORDER = { crude: 0, easy: 1, medium: 2, hard: 3 };
+        const TIER_HEAD = {   // the ladder, oldest craft first
+          crude:  { label: "Crude — stone, stick and cord", note: "No tools to start. Rough work, and it doesn't last." },
+          easy:   { label: "Easy", note: "" }, medium: { label: "Medium", note: "" }, hard: { label: "Hard", note: "" },
+        };
+        const AREAS = { crude: ["lash"], easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"] };
+        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" }, lash: { label: "Lashing", emoji: "🪢" } };
         const start = (rid) => {   // EVERY tier opens on the balance scale — graded by tier
           const r = R[rid], tier = tierOf(r), B = CFG.CRAFT.balance[tier];
           const mk = () => { const min = B.minLo + Math.floor(Math.random() * (B.minHi - B.minLo + 1)), max = B.maxLo + Math.floor(Math.random() * (B.maxHi - B.maxLo + 1)); return { min, max, v: min + Math.floor(Math.random() * (max - min + 1)) }; };
@@ -10550,7 +10632,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const beginAssembly = (rid, tier) => {
           const areas = tier === "easy" ? ["wood", "screw"] : AREAS[tier];   // easy still SHOWS two areas — either accepts the one chip
           const chips = tier === "easy" ? [Math.random() < 0.5 ? "wood" : "screw"] : AREAS[tier];
-          setCraftPanel({ stage: "assembly", recipeId: rid, tier, areas, chips: chips.map(c => ({ kind: c, placed: false })), screws: tier === "easy" ? 1 : tier === "medium" ? 2 : 3, done: {}, holding: null });
+          const screws = tier === "crude" || tier === "easy" ? 1 : tier === "medium" ? 2 : 3;   // crude binds ONE lashing — no metal in it anywhere
+          setCraftPanel({ stage: "assembly", recipeId: rid, tier, areas, chips: chips.map(c => ({ kind: c, placed: false })), screws, done: {}, holding: null });
         };
         const quoteBase = (r) => Object.entries(r.mats).reduce((s, [m, n]) => s + (ITEMS[m]?.price || 2) * n, 0) + CFG.CRAFT.labor[r.tier];
         const commission = (rid) => {   // Garrick plans it — API voice, local math
@@ -10585,6 +10668,12 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + 1;
             showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name} — made by hand.`);
           }
+          /* a crude tool that did the job may not survive having done it — rolled per tool, after
+             the piece is safely in hand, so a snapped flint never costs you the craft itself */
+          for (const t of r.tools) {
+            const used = toolInHand(p2, t);
+            if (used && crudeBreak(p2, used)) { sfx.alert(); showToast(brokeLine(used)); }
+          }
           const before = skillLevel(p2, "crafting");
           p2.skills.crafting = (p2.skills.crafting || 0) + taskXp("crafting", 0);
           if (skillLevel(p2, "crafting") > before) showToast(`📈 ${SKILL_TRACKS.crafting} — now ${skillTierName(p2, "crafting")}!`);
@@ -10599,28 +10688,42 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             </div>
             {cp.stage === "pick" && (
               <div style={{ ...S.chatBody, gap: 6 }}>
-                {Object.entries(R).map(([rid, r]) => {
+                {Object.entries(R)
+                  .sort((a, b) => (TIER_ORDER[a[1].tier] ?? 9) - (TIER_ORDER[b[1].tier] ?? 9))
+                  .map(([rid, r], i, list) => {
                   const ok = hasTools(r) && hasMats(r);
                   const atShop = player.scene === "i:workshop_s";
+                  const crude = r.tier === "crude";
                   const thing = r.furn ? FURNITURE[rid] : ITEMS[rid];
+                  const head = i === 0 || list[i - 1][1].tier !== r.tier ? TIER_HEAD[r.tier] : null;
                   return (
-                    <div key={rid} style={{ ...S.folkCard, textAlign: "left" }}>
-                      <b>{thing.emoji} {thing.name}</b> <span style={{ opacity: 0.6, fontSize: 12 }}>({r.tier}{r.out ? ` · makes ${r.out}` : ""})</span>
+                    <React.Fragment key={rid}>
+                    {head && (
+                      <div style={{ fontWeight: 700, fontSize: 12, opacity: 0.7, marginTop: i ? 8 : 0 }}>
+                        {head.label}{head.note && <span style={{ fontWeight: 400, opacity: 0.75 }}> — {head.note}</span>}
+                      </div>
+                    )}
+                    <div style={{ ...S.folkCard, textAlign: "left", ...(crude ? { borderLeft: "4px solid #8a7a5a" } : {}) }}>
+                      <b>{thing.emoji} {thing.name}</b> <span style={{ opacity: 0.6, fontSize: 12 }}>({r.tier}{r.out ? ` · makes ${r.out}` : ""}{ITEMS[rid]?.crude ? ` · breaks ~${Math.round(ITEMS[rid].crude * 100)}% per use` : ""})</span>
                       <div style={{ fontSize: 12, opacity: 0.75 }}>
-                        needs: {Object.entries(r.mats).map(([m, n]) => `${n}× ${ITEMS[m].name}`).join(", ")} · tools: {r.tools.map(t => ITEMS[t].emoji).join(" ")}
+                        needs: {Object.entries(r.mats).map(([m, n]) => `${n}× ${ITEMS[m].name}`).join(", ")} · tools: {r.tools.length
+                          ? r.tools.map(t => `${ITEMS[t].emoji}${TOOL_ALT[t] ? `/${ITEMS[TOOL_ALT[t]].emoji}` : ""}`).join(" ")
+                          : "none — bare hands"}
                       </div>
                       <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
                         <button disabled={!ok} onClick={() => start(rid)}
                           style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: ok ? "#5a7a4a" : "#444", color: "#fff", fontSize: 12, opacity: ok ? 1 : 0.5 }}>🛠️ Make it</button>
-                        {atShop && OWNERS.workshop_s !== "player" && (
-                          <button onClick={() => commission(rid)}
-                            style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: "#5a4a7a", color: "#fff", fontSize: 12 }}>📜 Commission (~{quoteBase(r)}c)</button>
+                        {atShop && OWNERS.workshop_s !== "player" && (crude
+                          ? <span style={{ flex: 1, fontSize: 11, opacity: 0.55, alignSelf: "center" }}>No commission — no wright sells stone-age work.</span>
+                          : <button onClick={() => commission(rid)}
+                              style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: "#5a4a7a", color: "#fff", fontSize: 12 }}>📜 Commission (~{quoteBase(r)}c)</button>
                         )}
                       </div>
                     </div>
+                    </React.Fragment>
                   );
                 })}
-                <div style={{ fontSize: 11, opacity: 0.55 }}>Make it yourself (tools + materials), or pay the wright and come back. Every job opens on the balance scale — graded by difficulty.</div>
+                <div style={{ fontSize: 11, opacity: 0.55 }}>Make it yourself (tools + materials), or pay the wright and come back — except the crude tier, which is yours to make or do without. A knapped stand-in (🗿 🪡 ⚒️ ⛏️) works anywhere its metal twin does, and may not survive the job. Every craft opens on the balance scale — graded by difficulty.</div>
               </div>
             )}
             {cp.stage === "quote" && (
@@ -10662,6 +10765,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             })()}
             {cp.stage === "assembly" && (() => {
               const allPlaced = cp.chips.every(c => c.placed);
+              const crude = cp.tier === "crude";   // no screws in the stone age — you bind it with cord and hope
+              const holdMs = crude ? CFG.CRAFT.crudeHoldMs : CFG.CRAFT.holdMs;
               return (
                 <div style={{ ...S.chatBody, gap: 12 }}>
                   {!allPlaced && <div style={{ fontSize: 12, opacity: 0.7 }}>Tap a part, then tap where it goes.</div>}
@@ -10692,7 +10797,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   {allPlaced && (
                     <>
                       <div style={{ fontSize: 12, opacity: 0.7, textAlign: "center" }}>
-                        Screw {Math.min(Object.values(cp.done).filter(Boolean).length + 1, cp.screws)} of {cp.screws} — hold it for 1 second. One at a time, like real work.
+                        {crude
+                          ? `Lashing ${Math.min(Object.values(cp.done).filter(Boolean).length + 1, cp.screws)} of ${cp.screws} — hold it while you pull the cord tight.`
+                          : `Screw ${Math.min(Object.values(cp.done).filter(Boolean).length + 1, cp.screws)} of ${cp.screws} — hold it for 1 second. One at a time, like real work.`}
                       </div>
                       <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
                         {Array.from({ length: cp.screws }).map((_, i) => (
@@ -10702,11 +10809,11 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                             onPointerLeave={() => setCraftPanel(s => ({ ...s, holding: null }))}
                             style={{ width: 60, height: 60, borderRadius: "50%", border: "none", fontSize: 24,
                               background: cp.done[i] ? "#4a9a5a" : cp.holding?.i === i ? "#c9a84a" : "#4a4d58", color: "#fff", touchAction: "none" }}>
-                            {cp.done[i] ? "✓" : "🔩"}
+                            {cp.done[i] ? "✓" : crude ? "🪢" : "🔩"}
                           </button>
                         ))}
                       </div>
-                      <HoldMeter holdT={cp.holding?.t || null} ms={CFG.CRAFT.holdMs}
+                      <HoldMeter holdT={cp.holding?.t || null} ms={holdMs}
                         onDone={() => setCraftPanel(s => {
                           const done = { ...s.done, [s.holding.i]: true };
                           if (Object.values(done).filter(Boolean).length >= s.screws) { setTimeout(finish, 60); }
