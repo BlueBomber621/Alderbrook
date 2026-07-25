@@ -187,6 +187,8 @@ const CFG = {
   },
   OFFICE_ROUNDS: 6, DISH_PLATES: 4,
   FISH_PERIOD_MS: 1200, FISH_ZONE: 0.17, FISH_TENSION_MS: 3200,   // tension bar oscillates slower than the hook
+  FISH_PULLS: 5,        // clean pulls to land a HARD catch — it was landing on a single hook, which is not a fight
+  FISH_PULLS_MIN: 3,    // ...eased down to this by skill: a Master reels one in faster
   COOK_PERIOD_MS: 1500, COOK_ZONE: 0.15,          // the "don't burn it" window
   MESS: { ambient: 0.8, perOccupant: 2.5, npcSweepAt: 55, npcSweepAmount: 30, npcSweepCooldownH: 2, playerSweep: 30, broomSweep: 25 },
   INN_BED: 5,                                      // rent a bed anywhere but home
@@ -230,7 +232,7 @@ const CFG = {
       whistle:   { tier: "easy",   mats: { stick: 2 },          tools: ["saw"] },   // it's a reed whistle — a stick and a knife's worth of patience
       club:      { tier: "easy",   mats: { stick: 3 },          tools: ["saw"] },
       broom:     { tier: "easy",   mats: { stick: 2, fiber: 1 },tools: ["saw"] },
-      arrow:     { tier: "easy",   mats: { stick: 1 },          tools: ["saw"], out: 3 },
+      arrow:     { tier: "easy",   mats: { stick: 1, sharprock: 1 }, tools: ["saw"], out: 3 },   // a knapped head, lashed to a shaft — commission it and the wright knaps their own flint
       bat:       { tier: "easy",   mats: { wood: 2 },           tools: ["saw"] },
       knife:     { tier: "medium", mats: { wood: 1, ore: 1 },   tools: ["saw", "hammer"] },
       hatchet:   { tier: "medium", mats: { wood: 1, ore: 2 },   tools: ["hammer"] },
@@ -240,6 +242,7 @@ const CFG = {
       drum:      { tier: "medium", mats: { wood: 1, fiber: 1 }, tools: ["saw", "hammer"] },
       ore:       { tier: "medium", mats: { rock: 3 },           tools: ["hammer"] },   // forge 3 round rocks into iron bits (medium craft; the workshop furnace is the other route)
       rope:      { tier: "medium", mats: { fiber: 4 },           tools: [] },   // four grass bundles, twisted down into one honest coil
+      bedroll:   { tier: "medium", mats: { fiber: 10 },          tools: [] },   // ten bundles, woven flat — a bed for whoever's staying over
       bandage:   { tier: "easy",   mats: { fiber: 1, herb: 1 }, tools: [] },   // an herbal dressing — grass to bind, a wild herb to soothe
       pipe:      { tier: "easy",   mats: { ore: 1 },            tools: ["hammer"] },
       nozzle:    { tier: "medium", mats: { ore: 1, fiber: 1 },  tools: ["screwdriver"] },
@@ -249,6 +252,23 @@ const CFG = {
       hardware:  { tier: "hard",   mats: { ore: 2, fiber: 1 },  tools: ["screwdriver", "hammer"] },
       chair:     { tier: "hard",   mats: { wood: 2, ore: 1 },   tools: ["saw", "hammer", "screwdriver"], furn: true },
     },
+    /* ===== THE TIER LADDER — the shape every minigame family should follow =====
+       Recorded from the design brief so it survives; EXPERT is not built yet.
+         easy    — one task, forgiving.
+         medium  — the SAME one task, a touch harder.
+         hard    — two tasks: the first one much harder, plus a hands-on specific task.
+         expert  — three tasks. A crazy-hard, very hands-on precision task WITH FAIL STATES,
+                   then the hard-specific task (harder again), then the first task as a pure
+                   precision test. Crafting runs that order; DRINKS runs it inverted —
+                   first task, then the hard-specific, then the expert task last.
+       Failure at EXPERT costs half the materials, not all of them: you may retry if you still
+       hold enough. And the whole ladder is read through the skill tracks, so the same recipe
+       feels different depending who's holding the tools:
+         Professional — a real trial, hard but never impossible.
+         Expert       — normal. Comfortably doable.
+         Master       — a crossbow is an everyday project. Fail states barely present.
+       Some families have their own task shapes rather than these (office, mechanic).
+       (easy/medium as they stand today are fine and want no changes.) */
     /* the balance scale, graded by tier. easy: ±1 counts. medium: exact, both ends shown.
        hard: LARGER range and you only see the MIN — the max is yours to find. Ranges always
        overlap (mins cap below maxes' floor), so a common middle value ALWAYS exists. */
@@ -805,6 +825,7 @@ const ITEMS = {
      `crude` is the per-USE chance the piece gives out and is gone for good. Every crude
      tool stands in for one metal tool (see TOOL_ALT); every crude weapon hits softer than
      the forged thing it apes. Cheap to make, cheap to lose — that's the whole bargain. */
+  bedroll:      { name: "Sleeping Bag",   emoji: "🛌", price: 12, cat: "tool" },   // Stage 11: what a guest sleeps in — bought, or woven from ten grass bundles
   stick:        { name: "Sticks",         emoji: "🥢", price: 1,  cat: "gift" },   // foraged from the hedgerows, no hatchet required
   rope:         { name: "Coil of Rope",   emoji: "🪢", price: 5,  cat: "gift" },   // four grass bundles, twisted tight
   sharprock:    { name: "Sharp Flint",    emoji: "🗿", price: 3,  cat: "tool", crude: 0.22 },   // stands in for a saw
@@ -941,7 +962,7 @@ const SHOP_STOCK = {
   fastfood: ["combo", "pizza"],
   diner:    ["stew", "cider", "tea", "grilled_fish"],
   inn:      ["stew", "cider", "tea"],
-  furn:     ["candle", "broom", "paint"],   // Stage 4: only small homewares stock here; furniture is fixed-catalog (FURNITURE)
+  furn:     ["candle", "broom", "paint", "bedroll"],   // Stage 4: only small homewares stock here; furniture is fixed-catalog (FURNITURE)
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk"],
   mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],   // Stage 3.6: cake/pie now come from eateries, not the mart shelf
 };
@@ -1116,7 +1137,7 @@ const SHOP_CANDIDATES = {
   inn:      ["stew", "salad", "cider", "tea", "bread", "milk"],
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk", "bread", "chocolate", "broom", "paint"],
   mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],
-  furn:     ["piggy", "safe", "bedup", "fridge", "fountain", "chest", "oven", "drinkbar", "table", "candle", "broom", "paint"],   // Stage 4: furniture (fixed-price) + small homewares (menu)
+  furn:     ["piggy", "safe", "bedup", "fridge", "fountain", "chest", "oven", "drinkbar", "table", "candle", "broom", "paint", "bedroll"],   // Stage 4: furniture (fixed-price) + small homewares (menu)
   cafe_s:   ["coffee", "tea", "milk", "choco_milk", "hot_choc", "milkshake", "lemonade", "mocha", "trop_shake", "nutrient", "cookies", "bread", "fresh_bread", "croissant"],   // Stage 3.8
   store_f:  ["bread", "water", "veg", "flour", "milk", "chocolate", "candle"],
   grill_f:  ["stew", "bread", "coffee", "tea", "grilled_fish", "meal"],
@@ -9251,7 +9272,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     // hard fight → the tension mini-game; leniency still scales with skill
     const redMax = pr.gap >= 2 ? 2 : 1;
     const yellowMax = clamp(3 + (pr.gap >= 1 ? pr.gap : 0), 3, 5);
-    setMinigame({ type: "fishhard", catch: catch_, start: Date.now(), zone, redHits: 0, yellowHits: 0, redMax, yellowMax });
+    // a big one comes in over several pulls; skill shortens the fight but never to a single tug
+    const need = clamp(CFG.FISH_PULLS - Math.max(0, pr.gap), CFG.FISH_PULLS_MIN, CFG.FISH_PULLS);
+    setMinigame({ type: "fishhard", catch: catch_, start: Date.now(), zone, redHits: 0, yellowHits: 0, redMax, yellowMax, pulls: 0, need });
   };
   const grantCatch = (sim, catch_) => {
     const p = sim.player, give = catch_.give;
@@ -9283,14 +9306,22 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         if (redHits >= mg.redMax) { setMinigame(null); sfx.fail(); showToast("🎣💥 Too much tension — the line SNAPPED."); return; }
         setMinigame({ ...mg, redHits }); showToast("⚠️ Careful — tension's in the red!"); return;
       }
+      let yellowHits = mg.yellowHits;
       if (band === "yellow") {
-        const yellowHits = mg.yellowHits + 1;
+        yellowHits = mg.yellowHits + 1;
         if (yellowHits >= mg.yellowMax) { setMinigame(null); sfx.fail(); showToast("🎣💥 Line snapped — too many hard pulls."); return; }
-        // fall through to the hook check, but record the yellow pull
         if (Math.abs(pos - 0.5) > mg.zone) { setMinigame({ ...mg, yellowHits }); showToast("Missed the hook — and straining the line."); return; }
-        // hooked in yellow — lands it
       } else {   // white — a clean pull; buys back a yellow allowance
-        if (Math.abs(pos - 0.5) > mg.zone) { setMinigame({ ...mg, yellowHits: Math.max(0, mg.yellowHits - 1) }); showToast("Eased the line — but missed the hook."); return; }
+        yellowHits = Math.max(0, mg.yellowHits - 1);
+        if (Math.abs(pos - 0.5) > mg.zone) { setMinigame({ ...mg, yellowHits }); showToast("Eased the line — but missed the hook."); return; }
+      }
+      /* a good pull GAINS GROUND. The fish only comes in once you've won enough of them. */
+      const pulls = mg.pulls + 1;
+      if (pulls < mg.need) {
+        setMinigame({ ...mg, pulls, yellowHits });
+        sfx.reel();
+        showToast(`🎣 Gaining on it — ${pulls}/${mg.need} pulls.`);
+        return;
       }
     } else {
       // Entry / Simple: just the hook window
@@ -10397,8 +10428,13 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               <div style={{ width: "20%", background: "#d85a4a" }} />
               <div style={{ position: "absolute", top: -2, width: 4, height: 26, background: "#222", borderRadius: 2, animation: `fishslide ${CFG.FISH_TENSION_MS}ms linear infinite` }} />
             </div>
-            <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>
+            <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
               Yellow pulls: {minigame.yellowHits}/{minigame.yellowMax} · a WHITE pull eases the line back
+            </div>
+            {/* the fight itself: clean pulls bring it in */}
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 3 }}>Bringing it in — {minigame.pulls}/{minigame.need} pulls</div>
+            <div style={{ height: 10, borderRadius: 5, background: "#2a2d36", overflow: "hidden", marginBottom: 10 }}>
+              <div style={{ height: "100%", width: `${(minigame.pulls / minigame.need) * 100}%`, background: "#4a9a5a", transition: "width 0.15s" }} />
             </div>
             {/* hook bar (faster) */}
             <div style={S.fishTrack}>
@@ -11924,8 +11960,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             setPlacePanel({ furnId: cp.recipeId });
             showToast(`🪑 You built a ${FURNITURE[cp.recipeId]?.name || cp.recipeId}! Pick where it stands.`);
           } else {
-            p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + 1;
-            showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name} — made by hand.`);
+            const yield_ = r.out || 1;   // `out` was ignored here — "makes 3" quietly made one
+            p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + yield_;
+            showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name}${yield_ > 1 ? ` ×${yield_}` : ""} — made by hand.`);
           }
           /* a crude tool that did the job may not survive having done it — rolled per tool, after
              the piece is safely in hand, so a snapped flint never costs you the craft itself */
