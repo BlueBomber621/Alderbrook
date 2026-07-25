@@ -251,6 +251,10 @@ const CFG = {
       bow:       { tier: "hard",   mats: { wood: 2, fiber: 1 }, tools: ["saw", "screwdriver"] },
       hardware:  { tier: "hard",   mats: { ore: 2, fiber: 1 },  tools: ["screwdriver", "hammer"] },
       chair:     { tier: "hard",   mats: { wood: 2, ore: 1 },   tools: ["saw", "hammer", "screwdriver"], furn: true },
+      /* --- EXPERT: the only recipe at this tier, and it earns it. Three chained tasks, and a
+         botch costs you half the pile. Contraband, so the wright won't take the job unless the
+         Watch has formally requisitioned one (see sim.watchReq). --- */
+      crossbow:  { tier: "expert", mats: { ore: 5, hardware: 1, wood: 4, rope: 2, pipe: 1 }, tools: ["saw", "hammer", "screwdriver"] },
     },
     /* ===== THE TIER LADDER — the shape every minigame family should follow =====
        Recorded from the design brief so it survives; EXPERT is not built yet.
@@ -274,12 +278,28 @@ const CFG = {
        overlap (mins cap below maxes' floor), so a common middle value ALWAYS exists. */
     balance: {
       crude:  { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 3, showMax: true },   // eyeballed, not measured
+      expert: { minLo: 1, minHi: 10, maxLo: 60, maxHi: 85, tol: 0, showMax: false },   // a huge blind range, dead exact — pure precision
       easy:   { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 1, showMax: true },
       medium: { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 0, showMax: true },
       hard:   { minLo: 1, minHi: 15, maxLo: 45, maxHi: 60, tol: 0, showMax: false },
     },
-    labor: { crude: 3, easy: 8, medium: 14, hard: 24 },  // commission labor on top of material value (crude is never commissioned — kept for the material readout)
-    daysByTier: { crude: 1, easy: 1, medium: 2, hard: 3 },
+    labor: { crude: 3, easy: 8, medium: 14, hard: 24, expert: 60 },  // commission labor on top of material value (crude is never commissioned — kept for the material readout)
+    daysByTier: { crude: 1, easy: 1, medium: 2, hard: 3, expert: 5 },
+    /* EXPERT's opening task: seating the mechanism. A marker sweeps, the window narrows and the
+       sweep quickens with every part you seat, and a miss is a STRIKE. Strike out and the piece
+       is ruined — which costs half the materials, not all of them, so you can go again if you
+       still hold enough. Everything here is read through the crafting skill: a Professional gets
+       one spare strike and a tight window (a real trial), an Expert three and a fair one
+       (normal), a Master four and a generous one (barely a task at all). */
+    expert: {
+      seatings: 3, seatingsMaster: 2,     // parts to seat; a Master needs fewer
+      windowBase: 0.15, windowShrink: 0.68,   // starting half-width, multiplied per success
+      sweepMs: 1500, sweepQuicken: 0.82,      // and it gets faster
+      strikesPro: 2, strikesExpert: 3, strikesMaster: 4, strikesGreen: 1,
+      windowByLevel: { green: 0.8, pro: 1.05, expert: 1.5, master: 2.3 },
+      lossFrac: 0.5,                      // a ruined attempt costs HALF the pile
+      holdMs: 1400, screws: 4,            // the assembly step is longer and has a fourth fitting
+    },
     letterFee: 2,                              // Garrick posts you a note when it's ready
     smelt: { rocks: 3, fee: 3 },               // the owner turns 3 round rocks into 1 iron bits (fee waived if YOU own it)
     holdMs: 1000,                              // per SCREW — held one at a time, like actually screwing something in
@@ -296,6 +316,17 @@ const CFG = {
        feel like a story, not a coin flip. */
     priceWeight: 0.45,
     braggableAt: 20,           // a haul worth this much per item earns its own line
+  },
+  REQUISITION: {   // Stage 11: how a contraband commission becomes legal
+    /* A wright will not take an order for a crossbow — it's contraband and their licence is
+       worth more than the fee. The exception is a formal Watch requisition: a high-ranking
+       officer puts in for one, and while that paper is open the job is legitimate. */
+    minRank: 2,               // "Officer" and up on the civic ladder
+    dailyChance: 0.14,        // a roll each dawn, lifted when the town is having a bad week
+    crimeLift: 0.25,          // ...plus this much when there are open violent cases
+    days: 6,                  // how long the paper stays open
+    payMult: 1.6,             // the Watch pays over the odds — it's an armoury order
+    items: ["crossbow", "bolt"],
   },
   ODDJOBS: {   // Stage 10: the jobless don't just draw the dole — they go and EARN
     /* Honest work you can pick up without an employer: hauling at the dock, tidying the
@@ -3003,6 +3034,7 @@ export default function Alderbrook() {
       tradeQueue: [],   // pending NPC↔NPC trade offers awaiting a considered decision
       crime: { ticks: 0, blockedWatch: 0, blockedRoll: 0, blockedCap: 0, attempts: 0, arrests: 0 },   // the crime ledger (diagnosis + future town stats)
       foragedAt: {},    // v7 Stage 3: bush cooldowns (`t:town:x,y` → last foraged day)
+      watchReq: null,   // Stage 11: an open Watch armoury order — the one way contraband is commissionable
       beasts: [], beastSeq: 0, lastBeastSpawn: 0,   // Stage 9: the wild — hares and stags, outside the social sim entirely
       approval: { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start },   // Stage 8
       opening: null, interviewBans: {}, interview: null, // the job market: today's HIRING post + cooldowns
@@ -3034,7 +3066,7 @@ export default function Alderbrook() {
       registers: sim.registers, upgrades: sim.upgrades, dishes: sim.dishes,
       townUpgrades: sim.townUpgrades, councilDay: sim.councilDay, approval: sim.approval, tradeQueue: sim.tradeQueue, foragedAt: sim.foragedAt,
       beasts: (sim.beasts || []).filter(b => b.alive).map(b => ({ id: b.id, sp: b.sp, scene: b.scene, x: b.x, y: b.y, health: b.health })),
-      beastSeq: sim.beastSeq || 0,
+      beastSeq: sim.beastSeq || 0, watchReq: sim.watchReq || null,
       ownerOverrides: sim.ownerOverrides || {},
       treeChops: sim.treeChops || {}, playerFurniture: sim.player.furniture || [], contracts: sim.contracts || [],
       appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
@@ -3100,6 +3132,7 @@ export default function Alderbrook() {
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
         bornAt: performance.now() / 1000 }));
     sim.beastSeq = data.beastSeq || sim.beasts.length;
+    sim.watchReq = data.watchReq || null;
     sim.lastBeastSpawn = 0;
     sim.ownerOverrides = data.ownerOverrides || {};
     for (const [ob, oo] of Object.entries(sim.ownerOverrides)) OWNERS[ob] = oo;   // v7 Stage 5: deeds survive the save
@@ -6664,6 +6697,22 @@ export default function Alderbrook() {
           && Object.keys(CFG.FARES[o.town] || {}).length));   // and nobody buses OUT to the camp either
       const far = farAll.length ? rand(farAll) : null;   // .find() meant the same friend, every single time
       if (far) n.visitPlan = { targetId: far[0], phase: "go" };
+    }
+    /* ===== Stage 11: the Watch armoury requisition =====
+       A wright will not take an order for contraband — their licence is worth more than the fee.
+       A high-ranking officer putting in for one is the exception that makes the job legal, and
+       the paper is only good for a few days. */
+    if (sim.watchReq && sim.day - sim.watchReq.day >= CFG.REQUISITION.days) sim.watchReq = null;
+    if (!sim.watchReq) {
+      const Q = CFG.REQUISITION;
+      const brass = sim.npcs.find(n => n.alive && n.enforcer && !n.jailedUntil && (n.occupation?.rank || 0) >= Q.minRank);
+      const unrest = sim.cases.some(c => c.state === "open" && ["murder", "robbery", "vigilante"].includes(c.type));
+      if (brass && Math.random() < Q.dailyChance + (unrest ? Q.crimeLift : 0)) {
+        const itemId = rand(Q.items);
+        sim.watchReq = { itemId, byId: brass.id, day: sim.day };
+        sim.buzz = { text: `${brass.name} has put in an armoury requisition — ${ITEMS[itemId].name}. The workshop can take that order.`, day: sim.day };
+        sim.dayLog = [...sim.dayLog, `${brass.name} requisitioned ${ITEMS[itemId].name} for the Watch armoury`].slice(-12);
+      }
     }
     if (sim.day % CFG.ETHICS.everyDays === 0) sim.inspectDue = true;   // the ledger gets its look
 
@@ -11912,22 +11961,60 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const hasTools = (r) => r.tools.every(t => hasTool(player, t));   // a knapped stand-in counts
         const hasMats = (r) => Object.entries(r.mats).every(([m, n]) => (inv[m] || 0) >= n);
         const tierOf = (r) => r.tier;
-        const TIER_ORDER = { crude: 0, easy: 1, medium: 2, hard: 3 };
+        const TIER_ORDER = { crude: 0, easy: 1, medium: 2, hard: 3, expert: 4 };
         const TIER_HEAD = {   // the ladder, oldest craft first
           crude:  { label: "Crude — stone, stick and cord", note: "No tools to start. Rough work, and it doesn't last." },
           easy:   { label: "Easy", note: "" }, medium: { label: "Medium", note: "" }, hard: { label: "Hard", note: "" },
+          expert: { label: "Expert", note: "Three stages, and a botch costs half the materials." },
         };
-        const AREAS = { crude: ["lash"], easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"] };
-        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" }, lash: { label: "Lashing", emoji: "🪢" } };
-        const start = (rid) => {   // EVERY tier opens on the balance scale — graded by tier
-          const r = R[rid], tier = tierOf(r), B = CFG.CRAFT.balance[tier];
+        const AREAS = { crude: ["lash"], easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"], expert: ["wood", "screw", "fitting", "spring"] };
+        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" }, lash: { label: "Lashing", emoji: "🪢" }, spring: { label: "Spring", emoji: "🌀" } };
+        /* how an expert job reads to THIS pair of hands. tierTargetLevel puts expert's comfort
+           at level 6, so Professional sits at gap −1 (a trial), Expert at 0 (normal) and Master
+           at +1 (a formality) — exactly the curve the tier is supposed to have. */
+        const expertBand = () => { const lv = skillLevel(player, "crafting"); return lv >= 7 ? "master" : lv >= 6 ? "expert" : lv >= 5 ? "pro" : "green"; };
+        const expertRules = () => {
+          const E = CFG.CRAFT.expert, band = expertBand();
+          return { band,
+            strikes: band === "master" ? E.strikesMaster : band === "expert" ? E.strikesExpert : band === "pro" ? E.strikesPro : E.strikesGreen,
+            window: E.windowBase * E.windowByLevel[band],
+            seatings: band === "master" ? E.seatingsMaster : E.seatings };
+        };
+        const beginBalance = (rid, tier, final) => {
+          const B = CFG.CRAFT.balance[tier];
           const mk = () => { const min = B.minLo + Math.floor(Math.random() * (B.minHi - B.minLo + 1)), max = B.maxLo + Math.floor(Math.random() * (B.maxHi - B.maxLo + 1)); return { min, max, v: min + Math.floor(Math.random() * (max - min + 1)) }; };
-          setCraftPanel({ stage: "balance", recipeId: rid, tier, tol: B.tol, showMax: B.showMax, L: mk(), Rr: mk() });
+          setCraftPanel({ stage: "balance", recipeId: rid, tier, tol: B.tol, showMax: B.showMax, final: !!final, L: mk(), Rr: mk() });
+        };
+        /* the expert opener: seat the mechanism. Hands-on, precision, and it can be FAILED. */
+        const beginTemper = (rid, tier) => {
+          const ru = expertRules();
+          setCraftPanel({ stage: "temper", recipeId: rid, tier, seated: 0, strikes: 0,
+            maxStrikes: ru.strikes, need: ru.seatings, band: ru.band,
+            window: ru.window, sweep: CFG.CRAFT.expert.sweepMs, start: Date.now() });
+        };
+        const start = (rid) => {   // crude→hard open on the scale; EXPERT opens on the hard part
+          const r = R[rid], tier = tierOf(r);
+          if (tier === "expert") return beginTemper(rid, tier);
+          beginBalance(rid, tier, false);
+        };
+        /* a ruined expert attempt: half the pile, kept as whole units, and you may go again */
+        const ruinAttempt = (rid) => {
+          const r = R[rid], p2 = simRef.current.player;
+          const lost = [];
+          for (const m of Object.keys(r.mats)) {
+            const n = Math.max(1, Math.floor(r.mats[m] * CFG.CRAFT.expert.lossFrac));
+            const take = Math.min(p2.inv[m] || 0, n);
+            if (take > 0) { p2.inv[m] -= take; if (p2.inv[m] <= 0) delete p2.inv[m]; lost.push(`${take}× ${ITEMS[m].name}`); }
+          }
+          sfx.fail();
+          showToast(`💥 Ruined. You lose ${lost.join(", ") || "nothing salvageable"} — the rest is still on the bench.`);
+          setCraftPanel({ stage: "pick" });
+          bump();
         };
         const beginAssembly = (rid, tier) => {
           const areas = tier === "easy" ? ["wood", "screw"] : AREAS[tier];   // easy still SHOWS two areas — either accepts the one chip
           const chips = tier === "easy" ? [Math.random() < 0.5 ? "wood" : "screw"] : AREAS[tier];
-          const screws = tier === "crude" || tier === "easy" ? 1 : tier === "medium" ? 2 : 3;   // crude binds ONE lashing — no metal in it anywhere
+          const screws = tier === "crude" || tier === "easy" ? 1 : tier === "medium" ? 2 : tier === "expert" ? CFG.CRAFT.expert.screws : 3;   // crude binds ONE lashing — no metal in it anywhere
           setCraftPanel({ stage: "assembly", recipeId: rid, tier, areas, chips: chips.map(c => ({ kind: c, placed: false })), screws, done: {}, holding: null });
         };
         const quoteBase = (r) => Object.entries(r.mats).reduce((s, [m, n]) => s + (ITEMS[m]?.price || 2) * n, 0) + CFG.CRAFT.labor[r.tier];
@@ -11984,14 +12071,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             </div>
             {cp.stage === "pick" && (
               <div style={{ ...S.chatBody, gap: 6 }}>
-                {Object.entries(R)
-                  .sort((a, b) => (TIER_ORDER[a[1].tier] ?? 9) - (TIER_ORDER[b[1].tier] ?? 9))
-                  .map(([rid, r], i, list) => {
+                {Object.keys(R)
+                  .sort((a, b) => (TIER_ORDER[R[a].tier] ?? 9) - (TIER_ORDER[R[b].tier] ?? 9))
+                  .map((rid, i, list) => {
+                  const r = R[rid];
                   const ok = hasTools(r) && hasMats(r);
                   const atShop = player.scene === "i:workshop_s";
                   const crude = r.tier === "crude";
                   const thing = r.furn ? FURNITURE[rid] : ITEMS[rid];
-                  const head = i === 0 || list[i - 1][1].tier !== r.tier ? TIER_HEAD[r.tier] : null;
+                  const head = i === 0 || R[list[i - 1]].tier !== r.tier ? TIER_HEAD[r.tier] : null;
                   return (
                     <React.Fragment key={rid}>
                     {head && (
@@ -12011,14 +12099,24 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                           style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: ok ? "#5a7a4a" : "#444", color: "#fff", fontSize: 12, opacity: ok ? 1 : 0.5 }}>🛠️ Make it</button>
                         {atShop && OWNERS.workshop_s !== "player" && (crude
                           ? <span style={{ flex: 1, fontSize: 11, opacity: 0.55, alignSelf: "center" }}>No commission — no wright sells stone-age work.</span>
+                          : ITEMS[rid]?.contraband && sim.watchReq?.itemId !== rid
+                          ? <span style={{ flex: 1, fontSize: 11, opacity: 0.55, alignSelf: "center" }}>Contraband — no wright takes this order without a Watch requisition.</span>
                           : <button onClick={() => commission(rid)}
-                              style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: "#5a4a7a", color: "#fff", fontSize: 12 }}>📜 Commission (~{quoteBase(r)}c)</button>
+                              style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: ITEMS[rid]?.contraband ? "#4a5a7a" : "#5a4a7a", color: "#fff", fontSize: 12 }}>
+                              {ITEMS[rid]?.contraband ? "🛡️ Requisition order" : "📜 Commission"} (~{Math.round(quoteBase(r) * (ITEMS[rid]?.contraband ? CFG.REQUISITION.payMult : 1))}c)
+                            </button>
                         )}
                       </div>
                     </div>
                     </React.Fragment>
                   );
                 })}
+                {sim.watchReq && (
+                  <div style={{ ...S.folkCard, borderLeft: "4px solid #4a6a9a", fontSize: 12 }}>
+                    🛡️ <b>Watch requisition open</b> — {ITEMS[sim.watchReq.itemId].emoji} {ITEMS[sim.watchReq.itemId].name}, put in by {sim.npcs.find(n => n.id === sim.watchReq.byId)?.name || "the Watch"}.
+                    Contraband is a legal order while this paper stands.
+                  </div>
+                )}
                 <div style={{ fontSize: 11, opacity: 0.55 }}>Make it yourself (tools + materials), or pay the wright and come back — except the crude tier, which is yours to make or do without. A knapped stand-in (🗿 🪡 ⚒️ ⛏️) works anywhere its metal twin does, and may not survive the job. Every craft opens on the balance scale — graded by difficulty.</div>
               </div>
             )}
@@ -12034,11 +12132,56 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 )}
               </div>
             )}
+            {cp.stage === "temper" && (() => {
+              /* SEAT THE MECHANISM — the expert opener. The marker sweeps; commit while it's
+                 inside the window. Every part you seat narrows the window and quickens the
+                 sweep. Miss and it's a strike; strike out and the piece is ruined. */
+              const E = CFG.CRAFT.expert;
+              const seat = () => {
+                const t = ((Date.now() - cp.start) % cp.sweep) / cp.sweep;
+                const pos = t < 0.5 ? t * 2 : 2 - t * 2;          // 0..1 triangle sweep
+                if (Math.abs(pos - 0.5) <= cp.window) {           // seated
+                  const seated = cp.seated + 1;
+                  if (seated >= cp.need) { sfx.pop(); setTimeout(() => beginAssembly(cp.recipeId, cp.tier), 60); setCraftPanel(s2 => ({ ...s2, seated })); return; }
+                  sfx.pop();
+                  setCraftPanel(s2 => ({ ...s2, seated, window: s2.window * E.windowShrink, sweep: Math.max(600, s2.sweep * E.sweepQuicken), start: Date.now() }));
+                  showToast(`⚙️ Seated ${seated}/${cp.need} — tighter now.`);
+                } else {
+                  const strikes = cp.strikes + 1;
+                  if (strikes > cp.maxStrikes) return ruinAttempt(cp.recipeId);
+                  sfx.alert();
+                  setCraftPanel(s2 => ({ ...s2, strikes, start: Date.now() }));
+                  showToast(`✖ Slipped. ${cp.maxStrikes - strikes + 1} more and it's scrap.`);
+                }
+              };
+              const bandNote = { green: "You are out of your depth here.", pro: "A real trial at your level.",
+                expert: "Comfortable work for your hands.", master: "You could do this in your sleep." }[cp.band];
+              return (
+                <div style={{ ...S.chatBody, gap: 10 }}>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>
+                    <b>Stage 1 of 3 — seat the mechanism.</b> Commit while the needle is in the window. It narrows each time.
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.55 }}>{bandNote}</div>
+                  <div style={{ display: "flex", gap: 10, fontSize: 12 }}>
+                    <span>Seated <b>{cp.seated}/{cp.need}</b></span>
+                    <span style={{ color: cp.strikes ? "#d95a5a" : "inherit" }}>Strikes <b>{cp.strikes}/{cp.maxStrikes + 1}</b></span>
+                  </div>
+                  <div style={S.fishTrack}>
+                    <div style={{ ...S.fishZone, left: `${50 - cp.window * 100}%`, width: `${cp.window * 200}%` }} />
+                    <div style={{ ...S.fishMarker, animation: `fishslide ${cp.sweep}ms linear infinite` }} />
+                  </div>
+                  <button onClick={seat} style={{ ...S.binBtn, width: "100%", background: "#7a5a3a" }}>SEAT IT{!isPhone ? " (Space)" : ""}</button>
+                  <div style={{ fontSize: 10, opacity: 0.45 }}>Ruin it and you lose half the materials — not all of them. You can try again if you still hold enough.</div>
+                </div>
+              );
+            })()}
             {cp.stage === "balance" && (() => {
               const diff = cp.L.v - cp.Rr.v, deg = clamp(diff * 2.2, -45, 45), even = Math.abs(diff) <= cp.tol;
               return (
                 <div style={{ ...S.chatBody, alignItems: "center", gap: 14 }}>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>Balance the scale — match the two weights exactly.</div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {cp.final ? <><b>Stage 3 of 3 — true the piece.</b> Both ends blind. Dead exact.</> : "Balance the scale — match the two weights exactly."}
+                  </div>
                   <div style={{ height: 8, width: 200, background: even ? "#4a9a5a" : "#c9a84a", borderRadius: 4, transform: `rotate(${deg}deg)`, transition: "transform 0.15s, background 0.2s" }} />
                   <div style={{ display: "flex", gap: 40, alignItems: "center" }}>
                     {[["L", cp.L], ["Rr", cp.Rr]].map(([side, sl]) => (
@@ -12051,9 +12194,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       </div>
                     ))}
                   </div>
-                  <button disabled={!even} onClick={() => beginAssembly(cp.recipeId, cp.tier)}
+                  <button disabled={!even} onClick={() => cp.final ? finish() : beginAssembly(cp.recipeId, cp.tier)}
                     style={{ ...S.binBtn, width: "100%", background: even ? "#4a9a5a" : "#666", opacity: even ? 1 : 0.5 }}>
-                    {even ? "Balanced — to the bench" : "Not level yet…"}
+                    {even ? (cp.final ? "Trued — finish the piece" : "Balanced — to the bench") : "Not level yet…"}
                   </button>
                   {cp.tol > 0 && <div style={{ fontSize: 10, opacity: 0.45 }}>close enough counts (±{cp.tol})</div>}
                 </div>
@@ -12062,10 +12205,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             {cp.stage === "assembly" && (() => {
               const allPlaced = cp.chips.every(c => c.placed);
               const crude = cp.tier === "crude";   // no screws in the stone age — you bind it with cord and hope
-              const holdMs = crude ? CFG.CRAFT.crudeHoldMs : CFG.CRAFT.holdMs;
+              const holdMs = crude ? CFG.CRAFT.crudeHoldMs : cp.tier === "expert" ? CFG.CRAFT.expert.holdMs : CFG.CRAFT.holdMs;
               return (
                 <div style={{ ...S.chatBody, gap: 12 }}>
-                  {!allPlaced && <div style={{ fontSize: 12, opacity: 0.7 }}>Tap a part, then tap where it goes.</div>}
+                  {!allPlaced && <div style={{ fontSize: 12, opacity: 0.7 }}>{cp.tier === "expert" ? <><b>Stage 2 of 3 — fit it together.</b> Tap a part, then tap where it goes.</> : "Tap a part, then tap where it goes."}</div>}
                   <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                     {cp.areas.map(ar => {
                       const need = cp.chips.find(c => !c.placed && (cp.chips.length === 1 || c.kind === ar));
@@ -12112,7 +12255,11 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       <HoldMeter holdT={cp.holding?.t || null} ms={holdMs}
                         onDone={() => setCraftPanel(s => {
                           const done = { ...s.done, [s.holding.i]: true };
-                          if (Object.values(done).filter(Boolean).length >= s.screws) { setTimeout(finish, 60); }
+                          if (Object.values(done).filter(Boolean).length >= s.screws) {
+                            // expert has one more stage after this: truing the piece on the scale
+                            if (s.tier === "expert") setTimeout(() => beginBalance(s.recipeId, s.tier, true), 80);
+                            else setTimeout(finish, 60);
+                          }
                           return { ...s, done, holding: null };
                         })} />
                     </>
