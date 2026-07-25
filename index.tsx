@@ -12,6 +12,18 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
                 carries a per-USE chance of coming apart for good. Rope
                 (4 grass bundles), a hard herbal-salve craft, sticks on the
                 forage table, and no wright will take a crude commission.
+   - Stage 10c: CONTRABAND + DEFENSIVE MURDER. `contraband: true` keeps a
+                thing out of every luck pool — the crossbow (and its bolts) is
+                Watch-issue, black-market or taken, never fished out of a
+                crate. And the ladder gains two rungs between assault and
+                murder: they came at YOU, you won, and you left them to bleed.
+                Unprovoked defensive murder (your hands were clean) is 3* —
+                one under dirty vigilante; provoked (you were already wanted)
+                is 4*, level with it. Both route through convictStars, so
+                standing above that mark keeps and escalates as normal.
+                Recorded at the killing blow, since that's the only moment the
+                sim knows who swung first. Executing someone already down is
+                still plain murder.
    - Stage 10b: THE HOME ECONOMY — NPCs stop being customers only. They buy
                 ovens/drink stations FOR A REASON now (homeCraftTick): shop a
                 market for raw ingredients, cook a real RECIPES plate at their
@@ -407,7 +419,15 @@ const CFG = {
   WANTED: { arrestAt: 2, finePerLevel: 6, stealFineMult: 3,
     jailHours: { 2: 14, 3: 36, 4: 168 }, debtFine: { 3: 15, 4: 30 },   // 2★ 12-16h (scaled by repetition), 3★ 36h, 4★ a week
     twoStarLo: 12, twoStarHi: 16,   // the 2★ custody band; each prior stint nudges it up
-    bounty: { 2: 5, 3: 12, 4: 18, 5: 24 } },   // paid per star for a LIVE takedown delivery; 2★ is the "petty" rate
+    bounty: { 2: 5, 3: 12, 4: 18, 5: 24 },   // paid per star for a LIVE takedown delivery; 2★ is the "petty" rate
+    /* DEFENSIVE MURDER: they came at YOU, you won, and you walked away leaving them to bleed.
+       That is not murder — you didn't go looking for it — but it isn't nothing either, because
+       you could have carried them in and chose not to. Two charges, by how clean your own
+       hands were: unprovoked (you'd done nothing wrong) sits one rung UNDER dirty vigilante;
+       provoked (you were already carrying stars — you'd hurt someone, you're not innocent
+       here) sits level with it. Both run through convictStars, so if you were already wanted
+       above that mark you keep what you had and escalate as normal. */
+    defensiveStars: 3, defensiveProvokedStars: 4 },
   DYING_WINDOW_MIN: 32,            // lethal wounds: found fast, or not at all (32: drag at 12 + cries-carry need real margin under v7 crime volume)
   SICK: { baseHr: 0.0008, lowNeedHr: 0.018, hygieneMult: 3, contam: 0.06,
           burn: 0.35, burnBad: 0.2, mildEnergyMult: 1.5, badHealthHr: 1.5,
@@ -781,9 +801,13 @@ const ITEMS = {
   stonespear:   { name: "Stone Spear",    emoji: "🔱", price: 7,   cat: "weapon", dmg: [11, 19], crude: 0.12 },
   sling:        { name: "Cord Sling",     emoji: "🧶", price: 6,   cat: "weapon", dmg: [6, 12],  range: 3, ammo: "rock",  crude: 0.10 },
   crudebow:     { name: "Bent-Stave Bow", emoji: "🏹", price: 20,  cat: "weapon", dmg: [12, 22], range: 5, ammo: "arrow", crude: 0.08 },
-  crossbow:     { name: "Crossbow",       emoji: "🎯", price: 200, cat: "weapon", dmg: [26, 40], range: 7, ammo: "bolt", lethal: true },   // the world's status weapon — Watch-issue or black market only
+  /* `contraband` keeps a thing out of every LUCK pool. The crossbow's whole character is that
+     you can't just come by one — Watch-issue, or bought dirty in the Outlands, or taken off
+     somebody. Price-weighting made it rare; this makes it earned. Fishing a lethal weapon out
+     of a crate was never the story this item was written for. */
+  crossbow:     { name: "Crossbow",       emoji: "🎯", price: 200, cat: "weapon", dmg: [26, 40], range: 7, ammo: "bolt", lethal: true, contraband: true },   // the world's status weapon — Watch-issue or black market only
   arrow:        { name: "Arrow",          emoji: "🪶", price: 2,   cat: "gift" },
-  bolt:         { name: "Crossbow Bolt",  emoji: "🔩", price: 4,   cat: "gift" },
+  bolt:         { name: "Crossbow Bolt",  emoji: "🔩", price: 4,   cat: "gift", contraband: true },   // ammo for a contraband weapon is contraband
   fiber:        { name: "Grass Bundle",   emoji: "🌾", price: 1,   cat: "gift" },
   herb:         { name: "Wild Herb",      emoji: "🌿", price: 3,   cat: "gift", heal: 6 },
   ring:         { name: "Tarnished Ring", emoji: "💍", price: 8,   cat: "gift" },
@@ -3828,7 +3852,10 @@ export default function Alderbrook() {
     sim.cases.push({ id: `c${sim.day}_${sim.cases.length}`, type, day: sim.day, state: "open", evidence: 0, interrogated: {}, ...data });
   };
   /* conviction weight BY CRIME — a cracked till is not a murder (it used to sentence 5★ life for everything) */
-  const caseStars = (kase) => kase.type === "murder" || kase.type === "vigilante" ? 5
+  const caseStars = (kase) => kase.type === "murder" ? 5
+    : kase.type === "vigilante" ? 4
+    : kase.type === "provoked defensive murder" ? CFG.WANTED.defensiveProvokedStars
+    : kase.type === "unprovoked defensive murder" ? CFG.WANTED.defensiveStars
     : ["burglary", "register_robbery", "safe_robbery"].includes(kase.type) ? 3
     : kase.type === "trespassing" ? 1 : 2;
   /* gift grading — per Blaine: ~100-200 should be shocking, not mythic */
@@ -4005,10 +4032,16 @@ export default function Alderbrook() {
   };
   /* lethal force doesn't stop at incapacitation: the DYING clock is short,
      and if it runs out, whoever held the knife committed murder */
-  const setDying = (sim, ent, byId) => {
+  /* `defended` = the person now bleeding is the one who STARTED it. Recorded at the killing
+     blow, because that's the only moment the sim still knows who swung first — by the time a
+     body is found, the fight is long over. `killerDirty` freezes whether the survivor was
+     already carrying stars, which is what separates the two defensive charges. */
+  const setDying = (sim, ent, byId, defended = false) => {
     if (ent.dying) return;
     ent.incap = null;
-    ent.dying = { since: sim.time + sim.day * 1440, byId: byId ?? null };
+    const killer = byId === "player" ? sim.player : byId ? sim.npcs.find(n => n.id === byId) : null;
+    ent.dying = { since: sim.time + sim.day * 1440, byId: byId ?? null,
+      defended: !!defended && !!byId, killerDirty: (killer?.wanted || 0) > 0 };
     if (ent.id) { ent.legs = []; ent.path = []; ent.goal = null; ent.activity = "bleeding out"; }
     // Stage 6: collapse-from-exhaustion (no assailant) becomes traveling gossip
     if (!byId) {
@@ -4180,9 +4213,11 @@ export default function Alderbrook() {
   const killEntity = (sim, ent, cause, killerId = null) => {
     if (ent.id) {
       const hadWitness = [sim.player, ...sim.npcs].some(o => o !== ent && (o.id ? o.alive && !o.incap && !o.dying && !o.hidden : true) && o.scene === ent.scene);
+      const wasDefence = !!ent.dying?.defended, killerDirty = !!ent.dying?.killerDirty;   // read BEFORE the dying state is cleared
       ent.alive = false; ent.incap = null; ent.dying = null; ent.hidden = true;
       sim.bodies.push({ name: ent.name, npcId: ent.id, scene: ent.scene, x: ent.x, y: ent.y, day: sim.day, cause, killerId, discovered: false,
-        victimStars: ent.wanted || 0 });   // the DIRTY VIGILANTE test: what the victim was wanted for, at the moment they died
+        victimStars: ent.wanted || 0,      // the DIRTY VIGILANTE test: what the victim was wanted for, at the moment they died
+        defended: wasDefence, killerDirty });   // ...and the DEFENSIVE MURDER test: who started it, and whose hands were clean
       { // Stage 8: a death shakes the town — but a five-star outlaw's death barely dents it (relief cuts the grief)
         const dt8 = townOfScene(worldRef.current, ent.scene);
         const hit = (ent.wanted || 0) >= 5 ? 1 : CFG.APPROVAL.deathHit;
@@ -4238,7 +4273,16 @@ export default function Alderbrook() {
          sentence) but it IS a charge, and the town's opinion splits: rid of a menace, afraid
          of you. The dilemma is the point. */
       const vigilante = (body.victimStars || 0) >= 5;
-      openCase(sim, vigilante ? "vigilante" : "murder", { victim: body.name, scene: body.scene, x: body.x, y: body.y,
+      /* DEFENSIVE MURDER: they started it, you finished it, and you left them there. A lesser
+         charge than murder because you didn't go looking for it — but a charge, because you
+         could have carried them in. Which of the two depends on whether YOUR hands were clean
+         when it happened. A five-star outlaw still reads as vigilante first: that's a bigger
+         story about the town than about you. */
+      const defensive = !vigilante && body.defended;
+      const caseType = vigilante ? "vigilante"
+        : defensive ? (body.killerDirty ? "provoked defensive murder" : "unprovoked defensive murder")
+        : "murder";
+      openCase(sim, caseType, { victim: body.name, scene: body.scene, x: body.x, y: body.y,
         killerId: body.killerId, suspectId: openAndShut ? body.killerId : null, state: openAndShut ? "solved" : "open",
         evidence: strongEvidence ? 3 : 0 });               // caught red-handed = max evidence on the record
       if (openAndShut && killer) {
@@ -4247,6 +4291,15 @@ export default function Alderbrook() {
           convictStars(sim, killer, 4, `${who} left ${body.name}, a five-star outlaw, to die instead of hauling them in`);
           repEvent(sim, killer, 4, 6, `${who} put down ${body.name} the hard way`);   // infamy AND standing: feared, not respected
           if (body.killerId === "player") showToast("🩸 Dirty Vigilante. The town is safer. The town is also afraid of you.");
+        } else if (defensive) {
+          const stars = body.killerDirty ? CFG.WANTED.defensiveProvokedStars : CFG.WANTED.defensiveStars;
+          convictStars(sim, killer, stars, body.killerDirty
+            ? `${who} was already wanted when ${body.name} came at them — and left them to bleed out`
+            : `${who} was set upon by ${body.name}, won, and left them to bleed out`);
+          repEvent(sim, killer, -2, 2, `${who} let ${body.name} die after defending themselves`);
+          if (body.killerId === "player") showToast(body.killerDirty
+            ? `🩸 Provoked Defensive Murder (${stars}★). They started it — but you were no innocent either, and you walked away.`
+            : `🩸 Unprovoked Defensive Murder (${stars}★). They came at you. You still could have carried them in.`);
         } else {
           const why = witnessed ? "was seen committing" : "was caught, weapon in hand, at the scene of";
           convictStars(sim, killer, 5, `${who} ${why} the murder of ${body.name}`);
@@ -4486,7 +4539,7 @@ export default function Alderbrook() {
     // …but a burglar caught by a CIVILIAN mostly grabs and RUNS — the panic-stab is the
     // exception (40%), not the rule. Criminals and the Watch get no such mercy.
     const civilianLoser = !loser.outlaw && !loser.enforcer;
-    if (lethal && (!civilianLoser || Math.random() < 0.4)) setDying(sim, loser, winner.id); else incapacitate(sim, loser);
+    if (lethal && (!civilianLoser || Math.random() < 0.4)) setDying(sim, loser, winner.id, winner === b); else incapacitate(sim, loser);
     // a BOUNTY takedown: if the loser was a wanted fugitive (2★+), whoever downed them collects
     // the bounty and the fugitive is hauled straight to a cell — lawful, no stars for the hunter.
     if ((loser.wanted || 0) >= 2 && !loser.enforcer) {
@@ -4595,7 +4648,7 @@ export default function Alderbrook() {
         if (damage(foe, pd)) {                            // foe drops
           log.push(lethal ? `You land the finish (${pd}). ${foe.name} collapses — that blade cut DEEP.` : `You land the finish (${pd}). ${foe.name} goes down.`);
           if (snapped) log.push(brokeLine(pw));
-          if (lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);   // knives don't stop at down
+          if (lethal) setDying(sim, foe, "player", c.aggressor !== "player" || wrongedPlayer(sim, foe.id)); else incapacitate(sim, foe);   // knives don't stop at down
           if (c.aggressor === "player") {
             const o = takedownOutcome(sim, foe);
             if (o.lawful) {
@@ -4619,7 +4672,7 @@ export default function Alderbrook() {
           const foeLethal = ITEMS[bestWeapon(foe) || ""]?.lethal;
           log.push(`${foe.name} hits for ${fd}. Everything goes dark.`);
           if (c.aggressor !== "player") transferCoins(sim, p, foe, Math.floor(p.coins * CFG.ROBBERY.take));
-          if (foeLethal) setDying(sim, p, foe.id); else incapacitate(sim, p);   // lethal foes leave you DYING
+          if (foeLethal) setDying(sim, p, foe.id, c.aggressor === "player"); else incapacitate(sim, p);   // lethal foes leave you DYING
           return { ...c, log, over: true, won: false };
         }
         log.push(`${foe.name} hits for ${fd}.`);
@@ -4660,6 +4713,11 @@ export default function Alderbrook() {
     const sim = simRef.current;
     const victim = sim.npcs.find(n => n.id === npcId);
     if (!victim || (!victim.incap && !victim.dying)) return;
+    /* Walking over to a person already on the ground and finishing them is the most deliberate
+       killing in the game — so it can NEVER be a defensive charge, even if they were the one who
+       started the fight that put them there. Clear the flag the killing blow left behind, or
+       executing your own attacker would be sentenced as defensive murder instead of murder. */
+    if (victim.dying) victim.dying.defended = false;
     victim.health = 0;
     const witnesses = sim.npcs.some(n => n.alive && n !== victim && !n.incap && !n.dying && !n.hidden && n.scene === victim.scene);
     killEntity(sim, victim, "murdered", "player");
@@ -8730,7 +8788,7 @@ export default function Alderbrook() {
     if (itemId === "goodie_crate") {   // Stage 6: open for 3 random items
       if (!(p.inv.goodie_crate > 0)) return;
       p.inv.goodie_crate -= 1; if (p.inv.goodie_crate <= 0) delete p.inv.goodie_crate;
-      const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && id !== "sludge" && id !== "burnt");
+      const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && !ITEMS[id].contraband && id !== "sludge" && id !== "burnt");
       /* price-weighted, gently: cheap tat stays common, and something dear is a story. */
       const wOf = (id) => 1 / Math.pow(ITEMS[id].price, CFG.CRATE.priceWeight);
       const total = pool.reduce((sum, id) => sum + wOf(id), 0);
@@ -9333,7 +9391,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const dmg = randInt(w.dmg);
         foe.health = Math.max(0, foe.health - dmg);
         if (foe.health <= 5) {   // dropped at range — same justice as a won fight, minus the looting
-          if (w.lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);
+          if (w.lethal) setDying(sim, foe, "player", wrongedPlayer(sim, foe.id)); else incapacitate(sim, foe);   // shooting the one who mugged you still reads as defence
           const o = takedownOutcome(sim, foe);
           if (o.lawful) {
             if (o.fame || o.renown) repEvent(sim, p, o.fame, o.renown, `the player brought down ${foe.name}${(foe.wanted || 0) ? `, a ${foe.wanted}-star fugitive` : ""}`);
@@ -11861,7 +11919,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               {[...sim.cases].reverse().slice(0, 12).map(c => {
                 const who = c.suspectId === "player" ? "You" : sim.npcs.find(n => n.id === c.suspectId)?.name;
                 return (
-                  <div key={c.id} style={{ ...S.folkCard, borderLeft: `4px solid ${c.type === "murder" ? "#8a3a3a" : c.type === "vigilante" ? "#6a4a8a" : c.type === "robbery" ? "#a0763a" : "#5a7a9a"}` }}>
+                  <div key={c.id} style={{ ...S.folkCard, borderLeft: `4px solid ${c.type === "murder" ? "#8a3a3a" : c.type === "vigilante" ? "#6a4a8a" : c.type.includes("defensive") ? "#a05a6a" : c.type === "robbery" ? "#a0763a" : "#5a7a9a"}` }}>
                     <b style={{ textTransform: "uppercase" }}>{c.type}</b> · day {c.day} · {c.state === "open" ? "🔍 OPEN" : c.state === "cold" ? "🧊 cold" : "✅ solved"}
                     <div style={{ fontSize: fs - 2, opacity: 0.8 }}>
                       victim: {c.victim || "—"}{c.state !== "open" && who ? ` · culprit: ${who}` : c.state === "open" ? ` · evidence: ${"▪".repeat(c.evidence) || "none"}` : ""}
