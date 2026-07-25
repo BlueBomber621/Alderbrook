@@ -187,6 +187,28 @@ const CFG = {
   },
   OFFICE_ROUNDS: 6, DISH_PLATES: 4,
   FISH_PERIOD_MS: 1200, FISH_ZONE: 0.17, FISH_TENSION_MS: 3200,   // tension bar oscillates slower than the hook
+  /* Stage 12 — the EXPERT fishing chain. Same shape as the expert craft tier: a precision task
+     with fail states first, then the hard fight made harder, then one final unforgiving window. */
+  /* Stage 12 — the shared EXPERT precision stage, used by cooking and drinks. Same idea as the
+     craft opener and the fishing drag: a narrowing window, a quickening sweep, and strikes that
+     can actually lose you the dish. Cooking runs it FIRST (expert task, then the oven dial, then
+     the timing peak). Drinks run it LAST — sliders, then the fill, then this — which is the
+     inversion the design brief calls for. */
+  PREP: {
+    sets: 3, setsMaster: 2,
+    window: 0.14, sweepMs: 1400, shrink: 0.70, quicken: 0.84,
+    strikes: { green: 1, pro: 2, expert: 3, master: 4 },
+    windowByBand: { green: 0.8, pro: 1.05, expert: 1.5, master: 2.3 },
+  },
+  FISH_EXPERT: {
+    sets: 3, setsMaster: 2,          // drag settings to nail before the fight starts
+    dragWindow: 0.13, dragSweepMs: 1300, dragShrink: 0.72, dragQuicken: 0.85,
+    strikes: { green: 1, pro: 2, expert: 3, master: 4 },      // a slip costs line; run out and it's gone
+    windowByBand: { green: 0.8, pro: 1.05, expert: 1.5, master: 2.3 },
+    pullsBonus: 3,                   // ...on top of the hard fight's pulls
+    tensionTighten: 0.75,            // and the line is less forgiving throughout
+    gaffWindow: 0.07,                // the final window, before skill widens it
+  },
   FISH_PULLS: 5,        // clean pulls to land a HARD catch — it was landing on a single hook, which is not a fight
   FISH_PULLS_MIN: 3,    // ...eased down to this by skill: a Master reels one in faster
   COOK_PERIOD_MS: 1500, COOK_ZONE: 0.15,          // the "don't burn it" window
@@ -806,6 +828,7 @@ const ITEMS = {
   /* ingredients — cheap, low direct value, meant for the stove */
   fish:         { name: "Raw Fish",       emoji: "🐟", price: 3,  cat: "ingredient", eat: { hunger: 8 } },   // edible in desperation. barely.
   tropical_fish:{ name: "Tropical Fish",  emoji: "🐠", price: 12, cat: "ingredient", eat: { hunger: 12 } },   // Stage 6: a rare hard-fishing catch
+  river_titan:  { name: "River Titan",    emoji: "🐋", price: 48, cat: "ingredient", eat: { hunger: 30 } },   // Stage 12: the EXPERT catch — three stages of fight for one of these
   goodie_crate: { name: "Goodie Crate",   emoji: "🎲", price: 0,  cat: "misc",    use: "goodie" },            // Stage 6: open for 3 random items
   fish_stew:    { name: "Hearty Fish Stew", emoji: "🫕", price: 16, cat: "food",   eat: { hunger: 75, energy: 15 } },   // Stage 6: hard cook from tropical fish
   flour:        { name: "Flour",          emoji: "🌾", price: 2,  cat: "ingredient" },
@@ -955,7 +978,7 @@ const RECIPES = {
   lemonade:     { needs: { water: 1, fruit: 1 },           drink: true, tier: 0, label: "Squeeze lemonade" },
   mocha:        { needs: { coffee: 1, chocolate: 1, sugar: 1 }, drink: true, temp: 190, hard: true, tier: 2, label: "Pull a mocha" },
   trop_shake:   { needs: { milk: 1, fruit: 2, sugar: 1 },  drink: true, temp: 200, hard: true, tier: 2, label: "Blend a tropical shake" },
-  nutrient:     { needs: { fruit: 2, veg: 2, water: 1, flour: 1 }, drink: true, temp: 320, hard: true, tier: 3, label: "Formulate a nutrient drink" },
+  nutrient:     { needs: { fruit: 2, veg: 2, water: 1, flour: 1 }, drink: true, temp: 320, hard: true, expert: true, tier: 3, label: "Formulate a nutrient drink" },   // Stage 12: the EXPERT drink — sliders, fill, THEN the finish
 };
 const COOK_TEMP_TOL = 20;   // Stage 3.6.1: ±°F window on the oven dial — a bit forgiving for drag aiming
 
@@ -1011,7 +1034,7 @@ const TOWN_LOCKUP = { alderbrook: "watchpost_a", mossford: "watchpost_m", stonec
 const LOCKUP_ORDER = ["hq", "watchpost_m", "watchpost_a"];   // overflow preference: main lockup first
 /* what venues buy back from the player, and for how much */
 const SELLABLE = { fish: 2, grilled_fish: 6, fresh_bread: 4, veg_soup: 3, hearty_stew: 7,
-  bland_salad: 3, herb_roast: 15, wild_stew: 12, herb_tart: 11, gourmet_platter: 18,
+  bland_salad: 3, herb_roast: 15, wild_stew: 12, herb_tart: 11, gourmet_platter: 18, river_titan: 44,
   meat: 4, roast_meat: 8, meat_skewer: 10, game_pie: 16 };   // cook gourmet, sell it on — and the butcher's cut of a good hunt
 /* ===== Stage 4 — Hearth & Holt furniture catalog =====
    Furniture is a persistent home INSTALLATION (lives in ent.furniture[], not inventory).
@@ -9361,12 +9384,14 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     { id: "coin_pouch",   give: { coins: 6, maybe: "water" }, rarity: 2, diff: 1, gate: 1 },
     { id: "tropical_fish",give: { tropical_fish: 1 },         rarity: 3, diff: 2, gate: 3 },
     { id: "goodie_crate", give: { goodie_crate: 1 },          rarity: 4, diff: 2, gate: 5 },
+    { id: "river_titan",  give: { river_titan: 1, coins: 10 }, rarity: 5, diff: 3, gate: 6 },   // Expert fishing only — diff 3 routes it to the three-stage fight
   ];
   // depths: label, min fishing level to fish here, and the rarity CEILING they can pull
   const FISH_DEPTH = [
     { key: "shallows", label: "Shallows",   emoji: "🐟", gate: 0, ceil: 1, blurb: "calm water — a common catch" },
     { key: "channel",  label: "The Channel",emoji: "🎣", gate: 1, ceil: 2, blurb: "faster water — coins, maybe a bottle" },
     { key: "deep",     label: "Deep Water", emoji: "🌊", gate: 3, ceil: 4, blurb: "the good stuff fights back" },
+    { key: "trench",   label: "The Trench",  emoji: "🕳️", gate: 6, ceil: 5, blurb: "something down there is bigger than you" },
   ];
   const fishingLevel = () => skillLevel(simRef.current.player, "fishing");
   // roll a catch: everything at/below the depth ceiling AND within the player's gate, skill-weighted to the rare tail
@@ -9391,6 +9416,21 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     // hook range tightens with the catch's difficulty, widens with skill
     const zone = clamp([0.20, 0.15, 0.11][catch_.diff] * pr.goalW, 0.06, 0.42);
     if (catch_.diff < 2) { setMinigame({ type: "fish", catch: catch_, start: Date.now(), zone }); return; }
+    /* ===== EXPERT: three stages, and only the last one lands it =====
+       Stage 1 SET THE DRAG — the hands-on precision task with real fail states, run FIRST, as
+       the crafting expert tier does. Stage 2 is the hard fight, tougher. Stage 3 is the opening
+       task stripped to pure precision: one gaff, one window, no second chance at it.
+       Read through the fishing track, so a Professional is tried and a Master is barely. */
+    if (catch_.diff >= 3) {
+      const lv = skillLevel(p, "fishing");
+      const band = lv >= 7 ? "master" : lv >= 6 ? "expert" : lv >= 5 ? "pro" : "green";
+      const E = CFG.FISH_EXPERT;
+      setMinigame({ type: "fishdrag", catch: catch_, start: Date.now(), band,
+        set: 0, need: band === "master" ? E.setsMaster : E.sets,
+        strikes: 0, maxStrikes: E.strikes[band],
+        window: E.dragWindow * E.windowByBand[band], sweep: E.dragSweepMs, zone });
+      return;
+    }
     // hard fight → the tension mini-game; leniency still scales with skill
     const redMax = pr.gap >= 2 ? 2 : 1;
     const yellowMax = clamp(3 + (pr.gap >= 1 ? pr.gap : 0), 3, 5);
@@ -9409,6 +9449,60 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     return parts.join(", ");
   };
   const FISH_TIER = 0;
+  /* stage 1: SET THE DRAG. A sweep and a narrowing window, exactly the shape of the expert
+     craft opener — because it's the same idea: precision, hands-on, and losable. */
+  const fishDrag = () => {
+    const mg = minigameRef.current; if (!mg || mg.type !== "fishdrag") return;
+    const E = CFG.FISH_EXPERT, p = simRef.current.player;
+    const t = ((Date.now() - mg.start) % mg.sweep) / mg.sweep;
+    const pos = t < 0.5 ? t * 2 : 2 - t * 2;
+    if (Math.abs(pos - 0.5) <= mg.window) {
+      const set = mg.set + 1;
+      if (set >= mg.need) {   // drag is set — now the fight, and it's meaner than the hard one
+        const pr = taskParams(p, "fishing", 3);
+        const redMax = pr.gap >= 2 ? 2 : 1;
+        const yellowMax = clamp(3 + (pr.gap >= 1 ? pr.gap : 0), 3, 5);
+        sfx.reel(); showToast("🎣 Drag set. Now hold on.");
+        setMinigame({ type: "fishhard", expert: true, band: mg.band, catch: mg.catch, start: Date.now(),
+          zone: mg.zone * E.tensionTighten, redHits: 0, yellowHits: 0, redMax, yellowMax,
+          pulls: 0, need: clamp(CFG.FISH_PULLS - Math.max(0, pr.gap), CFG.FISH_PULLS_MIN, CFG.FISH_PULLS) + E.pullsBonus });
+        return;
+      }
+      sfx.pop();
+      setMinigame({ ...mg, set, window: mg.window * E.dragShrink, sweep: Math.max(560, mg.sweep * E.dragQuicken), start: Date.now() });
+      showToast(`🎚️ Drag ${set}/${mg.need} — finer now.`);
+    } else {
+      const strikes = mg.strikes + 1;
+      if (strikes > mg.maxStrikes) {
+        setMinigame(null); sfx.fail();
+        p.energy = clamp(p.energy - CFG.WORK_COST.fish.energy, 0, 100);
+        simRef.current.time += CFG.WORK_COST.fish.min;
+        showToast("🎣💥 The drag slipped and the line went slack. Whatever that was, it's gone.");
+        bump(); return;
+      }
+      sfx.alert(); setMinigame({ ...mg, strikes, start: Date.now() });
+      showToast(`✖ Slipped a notch. ${mg.maxStrikes - strikes + 1} left.`);
+    }
+  };
+  /* stage 3: GAFF IT. One window, very tight, and missing loses the fish outright. */
+  const fishGaff = () => {
+    const mg = minigameRef.current; if (!mg || mg.type !== "fishgaff") return;
+    const sim = simRef.current, p = sim.player;
+    const t = ((Date.now() - mg.start) % CFG.FISH_PERIOD_MS) / CFG.FISH_PERIOD_MS;
+    const pos = t < 0.5 ? t * 2 : 2 - t * 2;
+    setMinigame(null);
+    p.energy = clamp(p.energy - CFG.WORK_COST.fish.energy, 0, 100);
+    sim.time += CFG.WORK_COST.fish.min;
+    if (Math.abs(pos - 0.5) > mg.zone) { sfx.fail(); showToast("🎣💥 The gaff glanced off — it rolled once and was gone."); bump(); return; }
+    sfx.splash();
+    const got = grantCatch(sim, mg.catch);
+    const before = skillLevel(p, "fishing");
+    p.skills.fishing = (p.skills.fishing || 0) + taskXp("fishing", 3);
+    showToast(`🎣🏆 LANDED IT — ${got}. Three stages of fight and it's yours.`);
+    if (skillLevel(p, "fishing") > before) showToast(`📈 ${SKILL_TRACKS.fishing} — now ${skillTierName(p, "fishing")}!`);
+    bump();
+  };
+
   const fishHook = () => {
     const mg = minigameRef.current;
     if (!mg || (mg.type !== "fish" && mg.type !== "fishhard")) return;
@@ -9439,6 +9533,13 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       }
       /* a good pull GAINS GROUND. The fish only comes in once you've won enough of them. */
       const pulls = mg.pulls + 1;
+      if (pulls >= mg.need && mg.expert) {   // fought to the boat — but it still has to be gaffed
+        const lv = skillLevel(p, "fishing");
+        const w = CFG.FISH_EXPERT.gaffWindow * CFG.FISH_EXPERT.windowByBand[mg.band || "pro"];
+        sfx.reel(); showToast("🎣 It's alongside — GAFF IT.");
+        setMinigame({ type: "fishgaff", catch: mg.catch, start: Date.now(), zone: w });
+        return;
+      }
       if (pulls < mg.need) {
         setMinigame({ ...mg, pulls, yellowHits });
         sfx.reel();
@@ -9481,6 +9582,48 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     setMinigame(null);
   };
   const DRINK_FILL_TARGET = 78;
+  /* which band of hands this is — the ladder, read off the kitchen track */
+  const prepBand = () => { const lv = skillLevel(simRef.current.player, "kitchen"); return lv >= 7 ? "master" : lv >= 6 ? "expert" : lv >= 5 ? "pro" : "green"; };
+  /* `then` decides what a clean run leads to: "cook" hands off to the oven dial, "drink" pours
+     the finished glass. The stage itself is identical either way. */
+  const startPrep = (recipeId, chefB, then_) => {
+    const P = CFG.PREP, band = prepBand();
+    setMinigame({ type: "prep", recipe: recipeId, bId: chefB, mode: chefB ? "chef" : null, then: then_,
+      band, set: 0, need: band === "master" ? P.setsMaster : P.sets,
+      strikes: 0, maxStrikes: P.strikes[band],
+      window: P.window * P.windowByBand[band], sweep: P.sweepMs, start: Date.now() });
+  };
+  const prepStep = () => {
+    const mg = minigameRef.current; if (!mg || mg.type !== "prep") return;
+    const P = CFG.PREP;
+    const t = ((Date.now() - mg.start) % mg.sweep) / mg.sweep;
+    const pos = t < 0.5 ? t * 2 : 2 - t * 2;
+    if (Math.abs(pos - 0.5) <= mg.window) {
+      const set = mg.set + 1;
+      if (set >= mg.need) {
+        sfx.pop();
+        if (mg.then === "drink") { showToast("🍸 Finished clean."); drinkDeliver(mg.recipe, mg.bId, true); }
+        else { showToast("🔪 Prepped. Now the oven."); startCook(mg.recipe, { bId: mg.bId }); }
+        return;
+      }
+      sfx.pop();
+      setMinigame({ ...mg, set, window: mg.window * P.shrink, sweep: Math.max(560, mg.sweep * P.quicken), start: Date.now() });
+      showToast(`🔪 ${set}/${mg.need} — finer now.`);
+    } else {
+      const strikes = mg.strikes + 1;
+      if (strikes > mg.maxStrikes) {
+        sfx.fail(); setMinigame(null);
+        const p = simRef.current.player;
+        if (mg.mode !== "chef") p.inv.burnt = (p.inv.burnt || 0) + 1;
+        showToast(mg.then === "drink" ? "🫗 Butchered the finish — that's a Sludge." : "😞 Ruined the prep. Nothing worth cooking left.");
+        if (mg.then === "drink") { p.inv.burnt = Math.max(0, (p.inv.burnt || 0) - 1); p.inv.sludge = (p.inv.sludge || 0) + 1; }
+        bump(); return;
+      }
+      sfx.alert(); setMinigame({ ...mg, strikes, start: Date.now() });
+      showToast(`✖ Slipped. ${mg.maxStrikes - strikes + 1} left.`);
+    }
+  };
+
   const startDrink = (recipeId, chefB) => {
     const r = RECIPES[recipeId];
     const tier = r.tier ?? (r.hard ? 2 : 1);              // drink difficulty tier
@@ -9520,6 +9663,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       return setMinigame({ ...mg, pass: mg.pass + 1, required, pulled: Array(mg.n).fill(false) });
     }
     if (mg.hard) setMinigame({ ...mg, phase: "fill", fill: 0, holding: false });   // part 2: the fill
+    else if (RECIPES[mg.recipe].expert) startPrep(mg.recipe, mg.bId, "drink");   // no fill on an easy expert drink
     else drinkDeliver(mg.recipe, mg.bId, true);
   };
   // hold-fill (hard part 2): fill rises while held; release inside the target band = success
@@ -9538,6 +9682,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   const drinkHoldEnd = () => {
     const mg = minigameRef.current; if (!mg || mg.type !== "drink" || mg.phase !== "fill" || !mg.holding) return;
     const ok = Math.abs(mg.fill - DRINK_FILL_TARGET) <= (mg.fillBand ?? 8);
+    // EXPERT drinks get the precision stage LAST — the inverted order
+    if (ok && RECIPES[mg.recipe].expert) return startPrep(mg.recipe, mg.bId, "drink");
     drinkDeliver(mg.recipe, mg.bId, ok);
   };
 
@@ -9821,15 +9967,20 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     }
   };
 
-  const startCook = (recipeId) => {
+  /* `resume` is set when re-entering after the expert prep stage: the ingredients are already
+     spent and the chef context has to be carried back in, since the panel is long closed. */
+  const startCook = (recipeId, resume) => {
     const sim = simRef.current, p = sim.player;
-    const chefB = cookPanelRef.current?.chef || null;    // chef shifts: house supplies the ingredients
+    const chefB = resume ? resume.bId : (cookPanelRef.current?.chef || null);   // chef shifts: house supplies the ingredients
     const r = RECIPES[recipeId];
-    if (!chefB) {
+    if (!chefB && !resume) {
       for (const [ing, n] of Object.entries(r.needs)) if ((p.inv[ing] || 0) < n) return showToast(`Missing ${ITEMS[ing].name}.`);
       for (const [ing, n] of Object.entries(r.needs)) p.inv[ing] -= n;
     }
     setCookPanel(false);
+    /* EXPERT cooking opens on the precision task — the expert stage FIRST, then the oven dial,
+       then the timing peak. Drinks invert this; see startPrep. */
+    if (r.expert && !r.drink && !resume) return startPrep(recipeId, chefB, "cook");
     const r2 = RECIPES[recipeId];
     if (r2.drink) {   // Stage 6: drinks get their own slider minigames (easy = 3 sliders, hard = 4 + hold-fill)
       startDrink(recipeId, chefB);
@@ -10075,6 +10226,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       if (e.key === " " || e.code === "Space") {
         const mt = minigameRef.current?.type;
         if (mt === "fish" || mt === "fishhard") { e.preventDefault(); fishHook(); return; }
+        if (mt === "fishdrag") { e.preventDefault(); fishDrag(); return; }
+        if (mt === "prep") { e.preventDefault(); prepStep(); return; }
+        if (mt === "fishgaff") { e.preventDefault(); fishGaff(); return; }
         if (mt === "cook") { e.preventDefault(); cookStop(); return; }
         if (mt === "cooktemp") { e.preventDefault(); cookTempLock(); return; }
       }
@@ -10540,9 +10694,73 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           </div>
         )}
 
+        {minigame?.type === "prep" && (() => {
+          const note = { green: "You are out of your depth. Genuinely.", pro: "This will test you.",
+            expert: "Steady hands. You know this one.", master: "Formality." }[minigame.band];
+          const drink = minigame.then === "drink";
+          return (
+            <div style={S.gamePanel}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {drink ? "🍸 The finish." : "🔪 Mise en place."}{" "}
+                <span style={{ opacity: 0.7, fontWeight: 400 }}>{drink ? "Stage 3 of 3" : "Stage 1 of 3"} — {RECIPES[minigame.recipe]?.label}</span>
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>{note}</div>
+              <div style={{ display: "flex", gap: 10, fontSize: 12, marginBottom: 6 }}>
+                <span>Done <b>{minigame.set}/{minigame.need}</b></span>
+                <span style={{ color: minigame.strikes ? "#d95a5a" : "inherit" }}>Slips <b>{minigame.strikes}/{minigame.maxStrikes + 1}</b></span>
+              </div>
+              <div style={S.fishTrack}>
+                <div style={{ ...S.fishZone, left: `${50 - minigame.window * 100}%`, width: `${minigame.window * 200}%` }} />
+                <div style={{ ...S.fishMarker, animation: `fishslide ${minigame.sweep}ms linear infinite` }} />
+              </div>
+              <button style={{ ...S.binBtn, marginTop: 10, background: "#7a5a3a", width: "100%" }} onClick={prepStep}>
+                {drink ? "POUR" : "CUT"}{!isPhone ? " (Space)" : ""}
+              </button>
+              <div style={{ fontSize: 10, opacity: 0.45, marginTop: 6 }}>
+                {drink ? "Botch the finish and it's a Sludge — after all that." : "Slip too often and there's nothing left worth cooking."}
+              </div>
+            </div>
+          );
+        })()}
+
+        {minigame?.type === "fishdrag" && (() => {
+          const note = { green: "You are out of your depth. Genuinely.", pro: "This will test you.",
+            expert: "Steady hands. You know this one.", master: "Formality." }[minigame.band];
+          return (
+            <div style={S.gamePanel}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>🐋 Something enormous. <span style={{ opacity: 0.7, fontWeight: 400 }}>Stage 1 of 3 — set the drag</span></div>
+              <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>{note}</div>
+              <div style={{ display: "flex", gap: 10, fontSize: 12, marginBottom: 6 }}>
+                <span>Set <b>{minigame.set}/{minigame.need}</b></span>
+                <span style={{ color: minigame.strikes ? "#d95a5a" : "inherit" }}>Slips <b>{minigame.strikes}/{minigame.maxStrikes + 1}</b></span>
+              </div>
+              <div style={S.fishTrack}>
+                <div style={{ ...S.fishZone, left: `${50 - minigame.window * 100}%`, width: `${minigame.window * 200}%` }} />
+                <div style={{ ...S.fishMarker, animation: `fishslide ${minigame.sweep}ms linear infinite` }} />
+              </div>
+              <button style={{ ...S.binBtn, marginTop: 10, background: "#7a5a3a", width: "100%" }} onClick={fishDrag}>SET IT{!isPhone ? " (Space)" : ""}</button>
+              <div style={{ fontSize: 10, opacity: 0.45, marginTop: 6 }}>Slip too often and the line goes slack — you lose the fish, not just the cast.</div>
+            </div>
+          );
+        })()}
+
+        {minigame?.type === "fishgaff" && (
+          <div style={S.gamePanel}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>🐋 Alongside. <span style={{ opacity: 0.7, fontWeight: 400 }}>Stage 3 of 3 — gaff it</span></div>
+            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>One window. One swing. Miss and it rolls off.</div>
+            <div style={S.fishTrack}>
+              <div style={{ ...S.fishZone, left: `${50 - minigame.zone * 100}%`, width: `${minigame.zone * 200}%` }} />
+              <div style={{ ...S.fishMarker, animation: `fishslide ${CFG.FISH_PERIOD_MS}ms linear infinite` }} />
+            </div>
+            <button style={{ ...S.binBtn, marginTop: 10, background: "#8a3a3a", width: "100%" }} onClick={fishGaff}>GAFF!{!isPhone ? " (Space)" : ""}</button>
+          </div>
+        )}
+
         {minigame?.type === "fishhard" && (
           <div style={S.gamePanel}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>🎣 Big one! Reel on the hook — but watch the tension</div>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>{minigame.expert
+              ? <>🐋 It's running. <span style={{ opacity: 0.7, fontWeight: 400 }}>Stage 2 of 3 — bring it in</span></>
+              : "🎣 Big one! Reel on the hook — but watch the tension"}</div>
             {/* tension bar: white (safe) → yellow (risky) → red (snaps). Marker oscillates SLOWLY. */}
             <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 3 }}>Line tension {minigame.redMax > 1 ? "(sturdy line)" : ""}</div>
             <div style={{ position: "relative", height: 22, borderRadius: 11, overflow: "hidden", marginBottom: 10, display: "flex" }}>
@@ -11529,9 +11747,27 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <button style={S.closeBtn} title="Your pack" onClick={() => setInvOpen(true)}>🎒</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
-                <div style={{ ...S.folkCard, fontStyle: "italic" }}>
-                  Convicted of murder. Life in these cells. The door is locked, the ledger closed — but a locked door is only as good as the lock.
-                </div>
+                {(() => {
+                  /* This copy was written when the cell screen ONLY ever appeared for a life
+                     sentence, so it announced murder and life regardless. Now that a timed hold
+                     shows the same screen, it has to describe the sentence you actually got —
+                     and warn that going over the wall on a 14-hour hold trades it for a
+                     five-star fugitive's life, which is a spectacularly bad deal. */
+                  const life = player.jailedUntil === Infinity;
+                  const hrs = Math.max(0, Math.ceil(((player.jailedUntil || 0) - absMin) / 60));
+                  return (
+                    <div style={{ ...S.folkCard, fontStyle: "italic" }}>
+                      {life
+                        ? "Convicted of murder. Life in these cells. The door is locked, the ledger closed — but a locked door is only as good as the lock."
+                        : hrs <= 24
+                        ? `Held for ${hrs} hour${hrs === 1 ? "" : "s"}. A cot, a bucket, and the sound of someone else's boots. You'll walk out of here on your own — sit tight and it's over.`
+                        : `${hrs} hours to serve. Long enough to think about it. The door opens on its own eventually, which is more than some in here can say.`}
+                      {!life && <div style={{ fontStyle: "normal", marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                        You can try the lock — but breaking out of a short stretch makes you a five-star fugitive hunted on sight. Serving it is cheaper than running from it.
+                      </div>}
+                    </div>
+                  );
+                })()}
                 <div style={{ fontSize: 13, color: "#5a5245", lineHeight: 1.6 }}>
                   🕯️ {isNight ? "It's night — the block is thin." : "Broad daylight — guards are alert."}<br />
                   👮 Guards on duty here: <b>{guards}</b>{guards === 0 ? " (your best chance)" : ""}<br />
