@@ -3691,6 +3691,19 @@ export default function Alderbrook() {
       allowUndo: gap >= 2,                 // comfortably skilled → undo allowed (drinks)
     };
   };
+  /* ===== Stage 11: THE MINIGAME PROMISE =====
+     If you played a minigame, the minigame decides. No dice roll on top of a clean run, and
+     never, under any circumstances, an API call adjudicating whether you failed — the API is
+     for voices and plans, not verdicts. Randomness is permitted ONLY when you are genuinely out
+     of your depth: below Apprentice on a hard task, below Professional on an expert one. At or
+     above that line, nailing it IS the result.
+     (Audited: skillCheck() — the API adjudicator — is used in exactly three places, none of
+     them a player minigame: an NPC stabilising a dying person, an NPC detective reading a
+     scene, and the prison break, which is a button and has no minigame to override.) */
+  const MINIGAME_ROLL_FLOOR = { hard: 3, expert: 5 };   // skill level at/above which nothing is left to chance
+  const failRollAllowed = (ent, track, kind) =>
+    skillLevel(ent, track) < (MINIGAME_ROLL_FLOOR[kind] ?? 0);
+
   const tierSuccess = (ent, tier, track, domain = null) => {
     const sc = CFG.SKILLCHECK;
     const eff = skillLevel(ent, track) + (hasExpertise(ent, track, domain) ? sc.tierExpertiseLevels : 0);
@@ -9833,7 +9846,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const perfect = lvl < 5;
         tempTol = perfect ? 0 : (lvl >= 6 ? COOK_TEMP_TOL * 1.5 : COOK_TEMP_TOL);
         setDeadline = lvl >= 6 ? null : Date.now() + 3000;
-        expertRoll = lvl < 3;
+        expertRoll = failRollAllowed(p, "kitchen", "expert");   // below Professional only — see THE MINIGAME PROMISE
       } else {
         // badly under-skilled → a 4s countdown to set the EXACT temp; tolerance tightens when green, loosens when skilled
         tempTol = clamp(COOK_TEMP_TOL * pr.goalW, 8, 40);
@@ -9891,11 +9904,12 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       };
       if (mg.hard) {                                     // Stage 3.7d: hard recipe done right.
         const domain = TASK_DOMAIN[mg.recipe] || null;
-        // EXPERT gourmet + a below-Apprentice hand: one last 50% technique roll (no API — pure chance).
-        // Everyone Apprentice and up: nailing the temp + timing IS success, no roll.
+        /* An out-of-their-depth hand still has technique to lose: one 50% roll, pure chance, no
+           API. From Professional up on an expert dish (Apprentice on a hard one) there is NO
+           roll at all — you hit the temp and the timing, you plated it. */
         if (mg.expertRoll && Math.random() < 0.5) {
           if (mg.mode !== "chef") p.inv.burnt = (p.inv.burnt || 0) + 1;
-          sfx.fail(); showToast("😞 Gourmet cooking is unforgiving — the technique got away from you this time.");
+          sfx.fail(); showToast("😞 Gourmet technique got away from you — you're not skilled enough for this dish yet. (Professional cooks never lose it to chance.)");
         } else {
           plate();
           if (trainDomain(p, "kitchen", domain)) showToast(`🌟 You've mastered ${DOMAIN_LABEL[domain]} cooking!`);
