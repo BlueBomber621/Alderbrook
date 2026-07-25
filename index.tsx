@@ -11529,9 +11529,27 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <button style={S.closeBtn} title="Your pack" onClick={() => setInvOpen(true)}>🎒</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
-                <div style={{ ...S.folkCard, fontStyle: "italic" }}>
-                  Convicted of murder. Life in these cells. The door is locked, the ledger closed — but a locked door is only as good as the lock.
-                </div>
+                {(() => {
+                  /* This copy was written when the cell screen ONLY ever appeared for a life
+                     sentence, so it announced murder and life regardless. Now that a timed hold
+                     shows the same screen, it has to describe the sentence you actually got —
+                     and warn that going over the wall on a 14-hour hold trades it for a
+                     five-star fugitive's life, which is a spectacularly bad deal. */
+                  const life = player.jailedUntil === Infinity;
+                  const hrs = Math.max(0, Math.ceil(((player.jailedUntil || 0) - absMin) / 60));
+                  return (
+                    <div style={{ ...S.folkCard, fontStyle: "italic" }}>
+                      {life
+                        ? "Convicted of murder. Life in these cells. The door is locked, the ledger closed — but a locked door is only as good as the lock."
+                        : hrs <= 24
+                        ? `Held for ${hrs} hour${hrs === 1 ? "" : "s"}. A cot, a bucket, and the sound of someone else's boots. You'll walk out of here on your own — sit tight and it's over.`
+                        : `${hrs} hours to serve. Long enough to think about it. The door opens on its own eventually, which is more than some in here can say.`}
+                      {!life && <div style={{ fontStyle: "normal", marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                        You can try the lock — but breaking out of a short stretch makes you a five-star fugitive hunted on sight. Serving it is cheaper than running from it.
+                      </div>}
+                    </div>
+                  );
+                })()}
                 <div style={{ fontSize: 13, color: "#5a5245", lineHeight: 1.6 }}>
                   🕯️ {isNight ? "It's night — the block is thin." : "Broad daylight — guards are alert."}<br />
                   👮 Guards on duty here: <b>{guards}</b>{guards === 0 ? " (your best chance)" : ""}<br />
