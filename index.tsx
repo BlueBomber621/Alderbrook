@@ -3166,8 +3166,20 @@ export default function Alderbrook() {
     sim.player.furniture = Array.from(new Set([...(sim.player.furniture || []), ...(sim.playerFurniture || [])]));   // crafted pieces used to live in a SEPARATE list
     sim.playerFurniture = sim.player.furniture;          // legacy alias kept pointed at the real list
     if (sim.player.jailedUntil === "life") sim.player.jailedUntil = Infinity;
-    if (sim.player.jailedUntil === Infinity && sim.player.scene?.startsWith("i:")) {
-      setJailScreen({ bId: sim.player.scene.slice(2), day: sim.day });
+    /* A live sentence of ANY length has to come back with its cell screen. Restoring only the
+       life case meant a timed sentence reloaded frozen — movement blocked, no UI, no clue how
+       long was left. And if the save put them anywhere but a lockup, put them back in one:
+       jailedUntil is what freezes the player, so it must never outlive being in a cell. */
+    if (sim.player.jailedUntil) {
+      const inCell = sim.player.scene?.startsWith("i:") && LOCKUP_ORDER.includes(sim.player.scene.slice(2));
+      const cellB = inCell ? sim.player.scene.slice(2)
+        : (TOWN_LOCKUP[townOfScene(worldRef.current, sim.player.scene)] || "hq");
+      if (!inCell) {
+        const st = worldRef.current.interiors[cellB];
+        sim.player.scene = `i:${cellB}`;
+        sim.player.x = st?.exit?.x ?? 2; sim.player.y = st?.exit?.y ?? 2;
+      }
+      setJailScreen({ bId: cellB, day: sim.day });
     } else setJailScreen(null);
     for (const n of sim.npcs) {
       const s = data.npcs[n.id]; if (!s) continue;
@@ -4557,10 +4569,43 @@ export default function Alderbrook() {
   /* enforcer contact, by the ladder: 1★ fine/warning · 2★+ the cells,
      hours by tier · 3★/4★ add fines that go into DEBT · 5★ is LIFE —
      assets seized, and for the player, difficulty decides what's left */
+  /* nobody goes into a cell armed. Weapons and ammunition go into the property locker and come
+     back at the gate; contraband does NOT come back, because it was never legally theirs. */
+  const confiscateArms = (sim, target) => {
+    const held = {}; let kept = 0;
+    for (const id of Object.keys(target.inv || {})) {
+      const it = ITEMS[id];
+      if (!it || !(target.inv[id] > 0)) continue;
+      if (!it.dmg && !["arrow", "bolt", "rock"].includes(id)) continue;   // arms and what feeds them
+      if (id === "rock" && !(target.inv.slingshot || target.inv.sling)) continue;   // a rock is a rock unless you're slinging it
+      if (it.contraband) kept += target.inv[id];                          // seized for good
+      else held[id] = (held[id] || 0) + target.inv[id];
+      delete target.inv[id];
+    }
+    if (target.equipped && !(target.inv[target.equipped] > 0)) target.equipped = null;
+    if (Object.keys(held).length) target.confiscated = { ...(target.confiscated || {}), ...held };
+    return { held, kept };
+  };
+  const returnArms = (target) => {
+    const back = target.confiscated;
+    if (!back || !Object.keys(back).length) return null;
+    for (const id of Object.keys(back)) target.inv[id] = (target.inv[id] || 0) + back[id];
+    target.confiscated = null;
+    return Object.keys(back).map(id => `${ITEMS[id].emoji} ${ITEMS[id].name}×${back[id]}`).join(", ");
+  };
+
   const resolveEnforcement = (sim, world, enforcer, target, now) => {
     const isPlayer = !target.id;
     pushFx(sim, target.scene, target.x, target.y, "arrest");   // Stage 3.5: justice, visibly served
     const stars = Math.min(5, target.wanted);
+    if (stars >= CFG.WANTED.arrestAt) {   // going into custody — turn out your pockets
+      const { held, kept } = confiscateArms(sim, target);
+      if (isPlayer && (Object.keys(held).length || kept)) {
+        const list = Object.keys(held).map(id => `${ITEMS[id].emoji} ${ITEMS[id].name}`).join(", ");
+        showToast(kept ? `🛡️ Arms confiscated${list ? `: ${list}` : ""} — and the contraband is SEIZED. You won't see that again.`
+          : `🛡️ Arms confiscated: ${list}. You'll get them back at the gate.`);
+      }
+    }
     if (stars <= 1) {
       const fine = CFG.WANTED.finePerLevel;
       fineCoins(target, fine); target.wanted = 0;
@@ -4659,6 +4704,7 @@ export default function Alderbrook() {
         if (pass) {
           clearCheck(p, "prisonbreak");
           p.jailedUntil = null; p.wanted = CFG.PRISON.escapeeWanted;   // free — and a hunted fugitive
+          if (p.confiscated) { p.confiscated = null; showToast("You go over the wall with nothing but your clothes — your arms stay in the locker."); }
           const door = bld(bId).door;
           p.scene = `t:${bld(bId).town}`; p.x = door.x; p.y = door.y;
           p.activity = "on the run"; setJailScreen(null);
@@ -6939,13 +6985,27 @@ export default function Alderbrook() {
         const absTime = sim.day * 1440 + sim.time;
         const p = sim.player;
         window.__abSim = sim;                             // headless-harness test hook — read/poke sim state in boot tests
+        /* CUSTODY IS WHERE YOU ARE: a standing sentence and a player outside a lockup is a
+           frozen player. Any path that relocates them — a rescue, a hospital discharge, a
+           reload — gets corrected here rather than trusted to remember. */
+        if (p.jailedUntil && !p.bedrest && !p.incap && !p.dying
+            && !(p.scene.startsWith("i:") && LOCKUP_ORDER.includes(p.scene.slice(2)))) {
+          const back = TOWN_LOCKUP[townOfScene(world, p.scene)] || "hq";
+          const st = world.interiors[back];
+          p.scene = `i:${back}`; p.x = st?.exit?.x ?? 2; p.y = st?.exit?.y ?? 2;
+          p.legs = []; p.path = [];
+          setJailScreen({ bId: back, day: sim.day });
+          showToast("⛓️ Back to the cell — you're still serving.");
+        }
         // Stage 3.5: a timed sentence ends — the door opens on a world that kept moving
         if (p.jailedUntil && p.jailedUntil !== Infinity && sim.day * 1440 + sim.time >= p.jailedUntil) {
           const cellB = p.scene.startsWith("i:") ? p.scene.slice(2) : "hq";
           p.jailedUntil = null;
           const d = bld(cellB).door;
           p.scene = `t:${bld(cellB).town}`; p.x = d.x; p.y = d.y;
-          setJailScreen(null); showToast("Time served. Mind how you go.");
+          setJailScreen(null);
+          const gave = returnArms(p);
+          showToast(gave ? `Time served. Property returned: ${gave}` : "Time served. Mind how you go.");
         }
         const playerTown = townOfScene(world, p.scene);
         tryOwnerPulse(sim, world);                        // all-town exempt pulse first: owners + authority (so tryPulse can skip them)
@@ -11452,6 +11512,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <div style={{ ...S.chatPanel, maxWidth: 440, padding: 22 }}>
               <div style={{ ...S.chatHeader, background: "#2a2f38" }}>
                 <span style={{ fontWeight: 700 }}>⛓️ {bld(jailScreen.bId).name} — {player.jailedUntil === Infinity ? "Holding Cell · LIFE" : `Holding Cell · ${Math.max(0, Math.ceil(((player.jailedUntil || 0) - absMin) / 60))}h left`}</span>
+                <button style={S.closeBtn} title="Your pack" onClick={() => setInvOpen(true)}>🎒</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
                 <div style={{ ...S.folkCard, fontStyle: "italic" }}>
