@@ -20,7 +20,10 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
                 justice pipeline. A loose stag is Watch business: a free
                 officer is dispatched to cull it, at range if they carry it,
                 and the town's faith in them moves on the result. Meat cooks
-                into roast cuts, skewers and a hard game pie.
+                into roast cuts, skewers and a hard game pie. A stray shot from
+                the player into a bystander is ACCIDENTAL ASSAULT (2*, or 3* if
+                they go down); firing on a beast that was mauling them mitigates
+                it to a 1* fine, but never to nothing.
    - Stage 2:   occupations — 5 skill tracks, completeTask pay pipe,
                 Claude-run interviews, NPC job market with title ladders,
                 promotions, and the 15-min player headstart.
@@ -1889,7 +1892,7 @@ const brokeLine = (id) => `💥 Your ${ITEMS[id].name} gives out and comes apart
 const BEAST_SPECIES = {
   hare: {
     name: "Wild Hare", emoji: "🐇", color: "#a89070",
-    hp: 24, meat: 2, speed: 2.4, hostile: false,
+    hp: 16, meat: 2, speed: 2.4, hostile: false,
     spook: 3.5,                    // bolts when anything gets this close — but slower than a person, so it CAN be run down
     cap: 2, globalCap: 5, spawnChance: 0.34,   // two to a town, and they're the common sight
     lifeS: 300,                    // drifts back into the woods if nothing comes of it
@@ -1897,7 +1900,7 @@ const BEAST_SPECIES = {
   },
   stag: {
     name: "Rogue Stag", emoji: "🦌", color: "#6d4a2c",
-    hp: 60, meat: 5, speed: 2.5, hostile: true,
+    hp: 48, meat: 5, speed: 2.5, hostile: true,
     dmg: [9, 16], aggro: 6.5,      // reads the field this far out, then charges — at 3.1 it can't catch a sprinting player
     cap: 1, globalCap: 2, spawnChance: 0.03,   // RARE, and deliberately so: one to a town, two in the whole
     lifeS: 360,                    // valley, and it moves on if nobody deals with it
@@ -3874,10 +3877,28 @@ export default function Alderbrook() {
       const d = Math.hypot(from.x + t * vx - b.x, from.y + t * vy - b.y);
       if (d < 0.6 && Math.random() < 0.5) {   // caught in the crossfire
         const stray = randInt([6, 12]);
-        if (damage(b, stray) && !b.dying && !b.incap) setDying(sim, b, null);
+        const dropped = damage(b, stray);
+        if (dropped && !b.dying && !b.incap) setDying(sim, b, null);
         b.bubble = { text: rand(["AGH — I'm hit!", "Watch where you AIM!", "*staggers, clutching their side*"]), until: performance.now() / 1000 + 4 };
         pushFx(sim, scene, b.x, b.y, "crime");
         if (sim.player.scene === scene) showToast(`💥 ${b.name} caught a stray shot!`);
+        /* ACCIDENTAL ASSAULT (Stage 9b). "I was aiming at the deer" is a mitigation, not a
+           defence: put a person on the ground and the Watch writes it up either way. A
+           deliberate assault is 3★; a stray is 2★, or 3★ if they went down from it. The one
+           discount is shooting at a beast that was ON them — that's a rescue gone wrong, so
+           it's a 1★ fine rather than a charge. Only the PLAYER'S shots are booked here. */
+        if (!from.id) {
+          const rescuing = beastsIn(sim, scene).some(bst => BEAST_SPECIES[bst.sp].hostile
+            && (bst.target === b.id || dist(bst, b) < 2.5));
+          const stars = rescuing ? 1 : dropped ? 3 : 2;
+          convictStars(sim, sim.player, stars,
+            rescuing ? `the player hit ${b.name} with a stray shot while firing on a beast that was mauling them`
+                     : `the player put a stray shot into ${b.name} by accident`);
+          sfx.alert();
+          showToast(rescuing
+            ? `⭐ Reckless discharge — ${b.name} was under the antlers, but that shot was yours. A fine.`
+            : `⭐ Accidental assault — you meant the shot for something else. Tell it to the Watch.`);
+        }
         break;   // one unlucky bystander per shot
       }
     }
