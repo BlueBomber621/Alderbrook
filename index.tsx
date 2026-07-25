@@ -12,6 +12,17 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
                 carries a per-USE chance of coming apart for good. Rope
                 (4 grass bundles), a hard herbal-salve craft, sticks on the
                 forage table, and no wright will take a crude commission.
+   - Stage 10b: THE HOME ECONOMY — NPCs stop being customers only. They buy
+                ovens/drink stations FOR A REASON now (homeCraftTick): shop a
+                market for raw ingredients, cook a real RECIPES plate at their
+                own door, and eat it for more than the shelf version gives.
+                Spare plates go to hungry friends sleeping rough. A workbench
+                is a genuine long save and gets used. The jobless take odd
+                jobs (dock/graveyard/plaza/park/pump) for coin and skill
+                instead of only drawing the dole, which is now halved for
+                anyone who worked yesterday. Goodie crates are price-weighted
+                (1/price^0.45): a 200c pull went from 1-in-32 to 1-in-171 and
+                announces itself.
    - Stage 10:  ATTITUDE + IDENTITY — the town's temperament is now a setting.
                 PEACEFUL is the valley exactly as it was (every dial 1, no new
                 behaviour). DRAMATIC lets every soul ACT on nine tiers of
@@ -229,6 +240,44 @@ const CFG = {
     chopPerTree: 2,                            // GLOBAL daily cap per tree — across everyone
     stoneAxeWood: 1,                           // a stone axe brings down ONE piece; the steel hatchet takes 1-2
     stoneAxeMin: 14, hatchetMin: 8,            // ...and takes half again as long doing it
+  },
+  CRATE: {   // Stage 10: goodie crates lean on price now, gently
+    /* The pool used to be flat: a 200c crossbow rolled exactly as often as a 2c candle, which
+       is why one came out of a fishing grind. Weight is 1/price^exp — a mild curve, NOT a
+       lockout. At 0.45 the crossbow lands about 1 crate in 171 instead of 1 in 32, the Hunting
+       Bow about 1 in 85, and the tat you'd expect stays common. Pulling something dear should
+       feel like a story, not a coin flip. */
+    priceWeight: 0.45,
+    braggableAt: 20,           // a haul worth this much per item earns its own line
+  },
+  ODDJOBS: {   // Stage 10: the jobless don't just draw the dole — they go and EARN
+    /* Honest work you can pick up without an employer: hauling at the dock, tidying the
+       graveyard, sweeping the plaza. Pay is small and the stint is real (time + energy), but
+       it beats sitting on the civic dole, and it feeds the same skill tracks as a proper job. */
+    seekBelow: 22,             // an NPC with less than this in pocket starts looking for work
+    cooldownH: 4,              // ...and won't take another stint for this long
+    pay: [3, 7], minutes: 90, energy: 12,
+    doleCut: 0.5,              // a soul who worked a gig yesterday draws a reduced dole
+    gigs: [                    // spot key → what it is and what it teaches
+      { spot: "dock",      label: "hauling crates at the dock",   track: "fishing" },
+      { spot: "graveyard", label: "tidying the graveyard",        track: "foraging" },
+      { spot: "park",      label: "clearing the park paths",      track: "foraging" },
+      { spot: "plaza",     label: "sweeping the plaza",           track: "service" },
+      { spot: "pump",      label: "drawing and carrying water",   track: "service" },
+    ],
+  },
+  HOMEMADE: {   // Stage 10: NPCs actually USE the kitchens they buy
+    /* They've been buying ovens and drink stations since Stage 4 and doing nothing with them.
+       Now an NPC with a home appliance buys INGREDIENTS at the market, cooks at home, and eats
+       their own food — which is where markets stop being a player-only building. Homemade
+       plates feed better than the bought equivalent, because someone made them. */
+    cookChance: 0.5,           // per evening at home, with an oven and the makings
+    drinkChance: 0.4,
+    bonus: 8,                  // homemade food/drink feeds this much more than the shelf version
+    pantryTarget: 3,           // how many made plates they like to keep ahead
+    ingredientBudget: 14,      // coins they'll lay out on a market run for makings
+    shareChance: 0.55,         // ...and the odds they press a spare on a hungry friend with no roof
+    benchChance: 0.10,         // an NPC with a workbench tinkering on an evening
   },
   ATTITUDE: {   // Stage 10: how hard the town FEELS about each other. Set early, then it's baked in.
     /* Alderbrook has always simulated grudges and devotion — it just never let anyone ACT on
@@ -791,6 +840,26 @@ const RECIPES = {
 };
 const COOK_TEMP_TOL = 20;   // Stage 3.6.1: ±°F window on the oven dial — a bit forgiving for drag aiming
 
+/* ===== Stage 10 — the home kitchen =====
+   What an NPC shops for when they own an appliance, and the plain recipes they cook with it.
+   Deliberately drawn from RECIPES the player already uses, so a homemade stew IS a stew — the
+   only difference is `homeBonus`, the little extra a plate gets for being made by someone at
+   their own stove rather than pulled off a shelf. */
+const HOME_COOK_ING = ["veg", "flour", "fish", "fruit"];
+const HOME_DRINK_ING = ["milk", "fruit", "water", "chocolate"];
+const HOME_COOK = [                      // tried in order; first one they hold the makings for
+  { out: "hearty_stew", needs: { fish: 2, veg: 2 } },
+  { out: "stew",        needs: { fish: 1, veg: 1 } },
+  { out: "veg_soup",    needs: { veg: 1 } },
+  { out: "bread",       needs: { flour: 1 } },
+  { out: "salad",       needs: { fruit: 1, veg: 1 } },
+];
+const HOME_DRINK = [
+  { out: "choco_milk", needs: { milk: 1, chocolate: 1 } },
+  { out: "milkshake",  needs: { fruit: 1, milk: 1 } },
+  { out: "lemonade",   needs: { water: 1, fruit: 1 } },
+  { out: "hot_choc",   needs: { water: 1, chocolate: 1 } },
+];
 const SHOP_STOCK = {
   cafe:     ["meal", "coffee", "bread", "flour"],
   cafe_s:   ["coffee", "tea", "cookies"],
@@ -991,6 +1060,10 @@ const SHOP_CANDIDATES = {
   grill_o:  ["mystery_stew", "stew", "coffee", "bread", "water"],
 };
 /* which candidate items are "baked/cooked" — plain stores may carry at most a couple */
+/* how much made-at-home food an NPC is holding — the pantry check that drives a market run.
+   Declared here because it reads COOKED_ITEMS, defined on the next line. */
+const madeFoodOf = (npc) => Object.keys(npc.inv || {})
+  .reduce((s, id) => s + (COOKED_ITEMS.has(id) && npc.inv[id] > 0 ? npc.inv[id] : 0), 0);
 const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","bland_salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","herb_roast","wild_stew","herb_tart","gourmet_platter","roast_meat","meat_skewer","game_pie","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
 /* who owns each business — revenue flows to them, wages flow out of them.
    null = civic (post, HQ): the town mints those paychecks. */
@@ -1964,6 +2037,7 @@ const BEAST_SPECIES = {
     note: "antlers down, and it saw you first",
   },
 };
+const rollRange = (r) => randInt(r);           // a [lo,hi] straight off a config object
 const beastBite = (S9) => randInt(S9.dmg);      // what a hostile species hits for, per pass
 const goring = (S9) => Math.ceil(beastBite(S9) * CFG.BEASTS.npcGoreMult);   // ...and what it costs a bystander
 const beastAt = (sim, id) => (sim.beasts || []).find(b => b.id === id && b.alive) || null;
@@ -2895,6 +2969,8 @@ export default function Alderbrook() {
         mayor: !!n.mayor, patrolRoute: n.patrolRoute || null,   // Pass 4: the chair + the beat survive too
         timesJailed: n.timesJailed || 0, spreeUntil: n.spreeUntil || null,   // the criminal career survives too
         favors: n.favors || null,   // paid-favor promises the owner still owes
+        homemade: n.homemade || null,   // Stage 10: which plates in their bag they made themselves
+        oddJobDay: n.oddJobDay || 0,    // ...and whether they earned their own keep lately
       }])),
     };
   };
@@ -3074,6 +3150,13 @@ export default function Alderbrook() {
         ent[k] = clamp(ent[k] + v + bonus, 0, 100);
       }
       if (atOwnHome && !it.eat.energy) ent.energy = clamp(ent.energy + CFG.FURN.diningBonus, 0, 100);   // +5 energy even if the item gives none
+    }
+    /* Stage 10: made by hand, at their own stove — a homemade plate feeds better than the
+       bought equivalent. Consumed from the maker's tally, so the bonus follows the FOOD. */
+    if (ent.homemade?.[itemId] > 0) {
+      ent.homemade[itemId]--; if (ent.homemade[itemId] <= 0) delete ent.homemade[itemId];
+      if (it.eat?.hunger) ent.hunger = clamp(ent.hunger + CFG.HOMEMADE.bonus, 0, 100);
+      if (it.eat?.thirst) ent.thirst = clamp(ent.thirst + CFG.HOMEMADE.bonus, 0, 100);
     }
     if (it.cure) ent.sick = null;                       // medicine clears illness
     if (it.heal) ent.health = clamp(ent.health + it.heal, 0, 100);
@@ -3873,6 +3956,18 @@ export default function Alderbrook() {
       for (let i = 0; i < wantDrink && drinks.length; i++) list.push({ item: drinks[i % drinks.length], bId: findShop(drinks[i % drinks.length], town) });
     }
     if (wantMed > 0) { const s = findShop("medicine", town); if (s) list.push({ item: "medicine", bId: s }); }
+    /* Stage 10: MAKINGS. An NPC with a kitchen at home shops for raw ingredients, not just
+       finished plates — which is the whole reason a market is worth walking into for them. */
+    const kitchen = npc.furniture?.includes("oven"), bar = npc.furniture?.includes("drinkbar");
+    if ((kitchen || bar) && madeFoodOf(npc) < CFG.HOMEMADE.pantryTarget) {
+      let budget = CFG.HOMEMADE.ingredientBudget;
+      for (const ing of (kitchen ? HOME_COOK_ING : []).concat(bar ? HOME_DRINK_ING : [])) {
+        const shop = findShop(ing, town);
+        if (!shop || (npc.inv[ing] || 0) >= 2 || budget < ITEMS[ing].price) continue;
+        budget -= ITEMS[ing].price;
+        list.push({ item: ing, bId: shop });
+      }
+    }
     // a little character: grab buyable "likes" (skip non-item likes like "the fountain")
     let likesGot = 0;
     for (const like of (npc.likes || [])) {
@@ -4856,7 +4951,14 @@ export default function Alderbrook() {
         npc.bubble = { text: `*eats ${ITEMS[foodId].name.toLowerCase()}*`, until: now + 3 };
         return;
       }
-      if (npc.minor && npc.home) {                       // Stage 3.5: kids don't buy dinner — the family pantry is free
+      /* Stage 10: someone with a kitchen and the makings COOKS rather than buying dinner —
+         cheaper, better, and the reason they bought the oven. This is what pulls them through
+         a market for ingredients in the first place. */
+      const canCookNow = npc.home && npc.furniture?.includes("oven")
+        && HOME_COOK.some(r => Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m]));
+      if (canCookNow) {
+        goal = { scene: `t:${npc.town}`, ...bld(npc.home).door }; activity = "heading home to cook"; hide = true;
+      } else if (npc.minor && npc.home) {                // Stage 3.5: kids don't buy dinner — the family pantry is free
         goal = { scene: `t:${npc.town}`, ...bld(npc.home).door }; activity = "eating at home"; hide = true;
       } else if ((npc.coins >= 3 || npc.hunger < CFG.STARVE.desperateAt) && stockOf(sim, eatery, EATERY_MEAL[eatery]) > 0 && world.interiors[eatery].seats.length) {
         // Stage 3.5: a STARVING adult eats first and owes after — the tab is real fineCoins debt,
@@ -4915,6 +5017,10 @@ export default function Alderbrook() {
         if (!t || (t.id && (!t.alive || t.incap || t.dying)) || ((t.wanted || 0) <= 0 && !npc.dispatch.caseId)) { npc.dispatch = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "patrolling"; }   // Stage 3.5: an open case keeps the pursuit alive
         else { goal = { scene: t.scene, x: Math.round(t.x), y: Math.round(t.y) }; activity = "in pursuit"; }
       }
+    } else if (npc.oddJob) {                             // Stage 10: casual work, and they mean to get there
+      const os = world.towns[npc.oddJob.town]?.spots?.[npc.oddJob.spot];
+      if (!os) { npc.oddJob = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "looking for work"; }
+      else { goal = { scene: `t:${npc.oddJob.town}`, x: os.x, y: os.y }; activity = npc.oddJob.label; }
     } else if (npc.grudgeOn) {                           // Stage 10 (dramatic): an errand of the heart, one way or the other
       const gt = npc.grudgeOn.id === "player" ? sim.player : sim.npcs.find(n => n.id === npc.grudgeOn.id);
       if (!gt || !gt.alive) { npc.grudgeOn = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "patrolling"; }
@@ -6300,7 +6406,10 @@ export default function Alderbrook() {
       else if (roomAtHome && !n.furniture.includes("piggy") && !n.furniture.includes("safe") && n.coins > CFG.FURN.npcPiggyAt) { n.coins -= FURNITURE.piggy.price; n.furniture.push("piggy"); creditOwner(sim, "furn", FURNITURE.piggy.price); npcPlaceFurniture(sim, n, "piggy"); }
       // a comfort/utility piece when they can afford it with a healthy buffer (AI also picks the spot)
       else if (roomAtHome) {
-        const wants = ["table", "fridge", "bedup", "oven", "fountain", "chest", "drinkbar"].filter(f => !n.furniture.includes(f));
+        /* Stage 10: a kitchen earns its keep, so it's wanted EARLY — an oven and a drink
+           station now feed their owner (see homeCraftTick), which is worth more to a working
+           soul than a nicer bed. The workbench is the long save: dear, but it makes things. */
+        const wants = ["oven", "fridge", "drinkbar", "table", "bedup", "fountain", "chest", "workbench"].filter(f => !n.furniture.includes(f));
         const pick = wants[0];
         if (pick && n.coins > FURNITURE[pick].price + CFG.FURN.npcSpareFloor && Math.random() < 0.15) {
           n.coins -= FURNITURE[pick].price; n.furniture.push(pick); creditOwner(sim, "furn", FURNITURE[pick].price);
@@ -6404,7 +6513,8 @@ export default function Alderbrook() {
     const doleHours = CFG.JOBS.shift[1] - CFG.JOBS.shift[0];
     const dole = CFG.OCCUPATION.unemploymentStipendH * doleHours;
     for (const n of sim.npcs)
-      if (canSeekWork(n) && !n.occupation?.bId) n.coins = Math.min(9999, n.coins + dole);
+      if (canSeekWork(n) && !n.occupation?.bId)
+        n.coins = Math.min(9999, n.coins + Math.ceil(dole * (n.oddJobDay === sim.day - 1 ? CFG.ODDJOBS.doleCut : 1)));
 
     /* yesterday's opening expires. If no player claimed it, a jobless local now
        REALLY takes the post — they gain the occupation, not just a buzz line. */
@@ -6898,8 +7008,12 @@ export default function Alderbrook() {
             npc.health = clamp(npc.health + (docIn ? CFG.HOSPITAL.bedRegenDoc : CFG.HOSPITAL.bedRegen) * dtHours, 0, 100);
           } else if (!npc.incap) npc.health = clamp(npc.health + CFG.HEALTH.regenAwake * dtHours, 0, 100);
 
-          if (decide) { decideNPC(npc, sim, world, now); thiefTick(sim, world, npc); dramaTick(sim, world, npc, now); }
+          if (decide) {
+            decideNPC(npc, sim, world, now); thiefTick(sim, world, npc); dramaTick(sim, world, npc, now);
+            homeCraftTick(sim, world, npc, now); shareHomemade(sim, npc, now); oddJobTick(sim, world, npc, now);
+          }
           if (npc.grudgeOn) settleGrudge(sim, world, npc, now);
+          if (npc.oddJob) workOddJob(sim, world, npc, now);
           moveNPC(npc, world, dt);
           npcAtGoal(npc, sim, world, dtHours, now);
 
@@ -7301,6 +7415,152 @@ export default function Alderbrook() {
       if (npc.health <= 8) { incapacitate(sim, npc); npc.dispatch = null; }   // the animal won this round
       else npc.bubble = { text: rand(["It's still up — hold the line!", "Nngh— tough beast.", "Again!"]), until: now + 4 };
     }
+  };
+
+  /* =====================================================================
+     STAGE 10 — THE HOME KITCHEN: appliances that finally do something
+     =====================================================================
+     NPCs have been buying ovens and drink stations since Stage 4 and getting nothing out of
+     them. Now, an evening at home with the makings turns into a real plate: same RECIPES the
+     player cooks, plus a small bonus for it being homemade. The knock-on is the point — a soul
+     who cooks needs INGREDIENTS, so markets and grocers stop being player-only buildings.
+     And a full pantry gets shared: a friend with no roof over their head eats tonight. */
+  const homeMake = (npc, table) => {          // spend the makings, return the made item id
+    for (const r of table) {
+      if (!Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m])) continue;
+      for (const m of Object.keys(r.needs)) { npc.inv[m] -= r.needs[m]; if (npc.inv[m] <= 0) delete npc.inv[m]; }
+      npc.inv[r.out] = (npc.inv[r.out] || 0) + 1;
+      npc.homemade = { ...(npc.homemade || {}), [r.out]: (npc.homemade?.[r.out] || 0) + 1 };   // remembers whose hands made it
+      return r.out;
+    }
+    return null;
+  };
+
+  const homeCraftTick = (sim, world, npc, now) => {
+    if (!npc.alive || npc.minor || !npc.home || npc.jailedUntil || npc.incap || npc.dying) return;
+    /* NPCs don't occupy their home INTERIOR — going home parks them hidden at their own door
+       (see the sleep/eat branches in decideNPC). Checking for `i:home` would mean this never
+       fired for anyone. Their doorstep IS their hearth as far as the sim is concerned. */
+    const door = bld(npc.home).door;
+    if (npc.scene !== `t:${npc.town}` || dist(npc, door) > 1.6) return;
+    if (npc.activity?.includes("sleep") || npc.energy < 15) return;
+    const absNow = sim.day * 1440 + sim.time;
+    if (absNow - (npc.lastHomeMake || -9999) < 240) return;  // a few hours between sessions
+    const H = CFG.HOMEMADE;
+    const furn = npc.furniture || [];
+
+    if (furn.includes("oven") && madeFoodOf(npc) < H.pantryTarget && Math.random() < H.cookChance) {
+      const made = homeMake(npc, HOME_COOK);
+      if (made) {
+        npc.lastHomeMake = absNow;
+        npc.bubble = { text: rand([`*something good on the stove*`, `That'll do nicely.`, `Nothing beats your own cooking.`]), until: now + 4 };
+        const before = skillLevel(npc, "kitchen");
+        npc.skills.kitchen = (npc.skills.kitchen || 0) + taskXp("kitchen", 0);
+        if (skillLevel(npc, "kitchen") > before) sim.dayLog = [...sim.dayLog, `${npc.name}'s home cooking is getting good`].slice(-12);
+        return;
+      }
+    }
+    if (furn.includes("drinkbar") && Math.random() < H.drinkChance) {
+      const made = homeMake(npc, HOME_DRINK);
+      if (made) { npc.lastHomeMake = absNow; npc.bubble = { text: rand(["*clinks a glass*", "Made a little something."]), until: now + 4 }; return; }
+    }
+    /* the workbench: a dear thing to own, so it ought to make dear things. They tinker with
+       whatever they've got in and keep it — to gift, to sell, or just to have made it. */
+    if (furn.includes("workbench") && Math.random() < H.benchChance) {
+      const R10 = CFG.CRAFT.recipes;
+      const buildable = Object.keys(R10).filter(rid => {
+        const r = R10[rid];
+        return !r.furn && r.tier !== "hard" && r.tools.every(t => hasTool(npc, t))
+          && Object.keys(r.mats).every(m => (npc.inv[m] || 0) >= r.mats[m]);
+      });
+      if (buildable.length) {
+        const rid = rand(buildable), r = R10[rid];
+        for (const m of Object.keys(r.mats)) { npc.inv[m] -= r.mats[m]; if (npc.inv[m] <= 0) delete npc.inv[m]; }
+        npc.inv[rid] = (npc.inv[rid] || 0) + (r.out || 1);
+        npc.lastHomeMake = absNow;
+        npc.skills.crafting = (npc.skills.crafting || 0) + taskXp("crafting", 0);
+        npc.bubble = { text: `*sands down a ${ITEMS[rid].name.toLowerCase()}*`, until: now + 4 };
+        sim.dayLog = [...sim.dayLog, `${npc.name} made a ${ITEMS[rid].name.toLowerCase()} at their workbench`].slice(-12);
+      }
+    }
+  };
+
+  /* a soul with a full pantry and a friend sleeping rough doesn't eat alone. Runs wherever
+     they meet — the whole point is that homemade food travels back out into the town. */
+  const shareHomemade = (sim, npc, now) => {
+    const H = CFG.HOMEMADE;
+    if (!npc.homemade || npc.minor || npc.incap || npc.dying || npc.jailedUntil) return;
+    const spare = Object.keys(npc.homemade).find(id => (npc.inv[id] || 0) > 0);
+    if (!spare) return;
+    const needy = sim.npcs.find(o => o.alive && o.id !== npc.id && !o.incap && !o.dying && !o.jailedUntil
+      && (!o.home || o.evicted)                                  // no roof, or put out of the one they had
+      && (o.hunger < 45 || o.thirst < 45)
+      && o.scene === npc.scene && dist(o, npc) < 3
+      && relIdx(npc.relationships[o.id] || "neutral") >= relIdx("friend"));
+    if (!needy || Math.random() > H.shareChance) return;
+    if (!giveItem(npc, needy, spare)) return;
+    npc.homemade[spare]--; if (npc.homemade[spare] <= 0) delete npc.homemade[spare];
+    needy.homemade = { ...(needy.homemade || {}), [spare]: (needy.homemade?.[spare] || 0) + 1 };   // handmade travels with the plate
+    consumeItem(needy, spare);                                    // they eat it right there — they needed it
+    npc.bubble = { text: rand(["Made too much. Take it.", "You'll eat something if I have to watch.", "Sit down. Eat."]), until: now + 5 };
+    needy.bubble = { text: rand(["...thank you. Really.", "You didn't have to.", "*eats gratefully*"]), until: now + 5 };
+    needy.relationships[npc.id] = REL_ORDER[clamp(relIdx(needy.relationships[npc.id] || "neutral") + 1, 0, REL_ORDER.length - 1)];
+    repEvent(sim, npc, 2, 3, `${npc.name} fed ${needy.name}, who has nowhere to live`);
+    seedGossip(sim, sim.npcs.filter(n => n.alive && n.scene === npc.scene),
+      { text: `${npc.name} fed ${needy.name} out of their own kitchen`, subjectId: npc.id });
+    if (sim.player.scene === npc.scene) showToast(`🍲 ${npc.name} presses a homemade ${ITEMS[spare].name.toLowerCase()} on ${needy.name}.`);
+  };
+
+  /* ===== Stage 10 — ODD JOBS: the jobless go and earn instead of drawing the dole =====
+     An unemployed or simply broke soul picks up honest casual work at a town spot — hauling at
+     the dock, tidying the graveyard, sweeping the plaza. `oddJob` is the errand; arriving works
+     it. Small pay, real time and energy, and it feeds the same skill tracks a proper post does,
+     so a stint of casual labour is also an apprenticeship. */
+  const oddJobTick = (sim, world, npc, now) => {
+    if (!npc.alive || npc.minor || npc.jailedUntil || npc.incap || npc.dying) return;
+    if (npc.oddJob || npc.dispatch || npc.grudgeOn || npc.crimePlan || npc.burglaryPlan || npc.directive) return;
+    if (npc.enforcer || npc.doctor || npc.mayor || npc.occupation?.owner) return;   // they have posts to keep
+    if (npc.activity?.includes("sleep") || npc.energy < CFG.ODDJOBS.energy + 10) return;
+    if (npc.hunger < 25 || npc.thirst < 25 || npc.sick?.level === "bad") return;
+    const hour = (sim.time / 60) % 24;
+    if (hour < 7 || hour > 19) return;                       // daylight work
+    { const overnight = npc.schedule && npc.schedule[1] > 24;   // never instead of a real shift
+      const inShift = npc.schedule && (overnight
+        ? (hour >= npc.schedule[0] || hour < npc.schedule[1] - 24)
+        : (hour >= npc.schedule[0] && hour < npc.schedule[1]));
+      if (inShift) return; }
+    if (npc.coins >= CFG.ODDJOBS.seekBelow) return;          // comfortable enough not to bother
+    const absNow = sim.day * 1440 + sim.time;
+    if (absNow - (npc.lastOddJob || -9999) < CFG.ODDJOBS.cooldownH * 60) return;
+
+    const town = world.towns[townOfScene(world, npc.scene)];
+    if (!town) return;
+    const gigs = CFG.ODDJOBS.gigs.filter(g => town.spots[g.spot]);
+    if (!gigs.length) return;
+    const gig = rand(gigs);
+    npc.oddJob = { spot: gig.spot, label: gig.label, track: gig.track, town: town.id };
+    npc.goal = null;
+  };
+
+  /* they walked to the spot; this is the stint itself */
+  const workOddJob = (sim, world, npc, now) => {
+    const j = npc.oddJob; if (!j) return;
+    const town = world.towns[j.town];
+    const spot = town?.spots?.[j.spot];
+    if (!spot) { npc.oddJob = null; return; }
+    if (npc.scene !== `t:${j.town}` || dist(npc, spot) > 1.8) return;   // still walking
+    npc.oddJob = null; npc.goal = null;
+    npc.lastOddJob = sim.day * 1440 + sim.time;
+    npc.oddJobDay = sim.day;                                  // the dole notices they worked
+    const pay = rollRange(CFG.ODDJOBS.pay);
+    npc.coins = Math.min(9999, npc.coins + pay);
+    npc.energy = clamp(npc.energy - CFG.ODDJOBS.energy, 0, 100);
+    const before = skillLevel(npc, j.track);
+    npc.skills[j.track] = (npc.skills[j.track] || 0) + taskXp(j.track, 0);
+    if (skillLevel(npc, j.track) > before)
+      sim.dayLog = [...sim.dayLog, `${npc.name} is getting handy at ${SKILL_TRACKS[j.track].toLowerCase()}`].slice(-12);
+    npc.bubble = { text: rand([`Honest ${pay} coins.`, "Work's work.", "*wipes their hands* That's that."]), until: now + 4 };
+    if (sim.player.scene === npc.scene) showToast(`🧹 ${npc.name} finishes ${j.label} — ${pay}c.`);
   };
 
   /* =====================================================================
@@ -8471,9 +8731,24 @@ export default function Alderbrook() {
       if (!(p.inv.goodie_crate > 0)) return;
       p.inv.goodie_crate -= 1; if (p.inv.goodie_crate <= 0) delete p.inv.goodie_crate;
       const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && id !== "sludge" && id !== "burnt");
+      /* price-weighted, gently: cheap tat stays common, and something dear is a story. */
+      const wOf = (id) => 1 / Math.pow(ITEMS[id].price, CFG.CRATE.priceWeight);
+      const total = pool.reduce((sum, id) => sum + wOf(id), 0);
+      const drawOne = () => { let r = Math.random() * total; for (const id of pool) { if ((r -= wOf(id)) <= 0) return id; } return pool[pool.length - 1]; };
       const got = [];
-      for (let i = 0; i < 3; i++) { const g = rand(pool); p.inv[g] = (p.inv[g] || 0) + 1; got.push(ITEMS[g].emoji); }
-      sfx.chime(); showToast(`🎲 Crate opened: ${got.join(" ")}!`); bump(); return;
+      let best = null;
+      for (let i = 0; i < 3; i++) {
+        const g = drawOne();
+        p.inv[g] = (p.inv[g] || 0) + 1; got.push(ITEMS[g].emoji);
+        if (!best || ITEMS[g].price > ITEMS[best].price) best = g;
+      }
+      sfx.chime(); showToast(`🎲 Crate opened: ${got.join(" ")}!`);
+      if (ITEMS[best].price >= CFG.CRATE.braggableAt) {   // the pull worth telling someone about
+        sfx.coin();
+        showToast(`✨ ${ITEMS[best].emoji} ${ITEMS[best].name} — worth ${ITEMS[best].price}c. That's a FIND.`);
+        sim.dayLog = [...sim.dayLog, `${playerLabel()} pulled ${ITEMS[best].name} out of a goodie crate`].slice(-12);
+      }
+      bump(); return;
     }
     if (consumeItem(p, itemId)) {
       const msg = it.heal ? "patched up." : it.cure ? "feeling better already." : "that hit the spot.";
