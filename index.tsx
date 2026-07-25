@@ -189,6 +189,17 @@ const CFG = {
   FISH_PERIOD_MS: 1200, FISH_ZONE: 0.17, FISH_TENSION_MS: 3200,   // tension bar oscillates slower than the hook
   /* Stage 12 — the EXPERT fishing chain. Same shape as the expert craft tier: a precision task
      with fail states first, then the hard fight made harder, then one final unforgiving window. */
+  /* Stage 12 — the shared EXPERT precision stage, used by cooking and drinks. Same idea as the
+     craft opener and the fishing drag: a narrowing window, a quickening sweep, and strikes that
+     can actually lose you the dish. Cooking runs it FIRST (expert task, then the oven dial, then
+     the timing peak). Drinks run it LAST — sliders, then the fill, then this — which is the
+     inversion the design brief calls for. */
+  PREP: {
+    sets: 3, setsMaster: 2,
+    window: 0.14, sweepMs: 1400, shrink: 0.70, quicken: 0.84,
+    strikes: { green: 1, pro: 2, expert: 3, master: 4 },
+    windowByBand: { green: 0.8, pro: 1.05, expert: 1.5, master: 2.3 },
+  },
   FISH_EXPERT: {
     sets: 3, setsMaster: 2,          // drag settings to nail before the fight starts
     dragWindow: 0.13, dragSweepMs: 1300, dragShrink: 0.72, dragQuicken: 0.85,
@@ -967,7 +978,7 @@ const RECIPES = {
   lemonade:     { needs: { water: 1, fruit: 1 },           drink: true, tier: 0, label: "Squeeze lemonade" },
   mocha:        { needs: { coffee: 1, chocolate: 1, sugar: 1 }, drink: true, temp: 190, hard: true, tier: 2, label: "Pull a mocha" },
   trop_shake:   { needs: { milk: 1, fruit: 2, sugar: 1 },  drink: true, temp: 200, hard: true, tier: 2, label: "Blend a tropical shake" },
-  nutrient:     { needs: { fruit: 2, veg: 2, water: 1, flour: 1 }, drink: true, temp: 320, hard: true, tier: 3, label: "Formulate a nutrient drink" },
+  nutrient:     { needs: { fruit: 2, veg: 2, water: 1, flour: 1 }, drink: true, temp: 320, hard: true, expert: true, tier: 3, label: "Formulate a nutrient drink" },   // Stage 12: the EXPERT drink — sliders, fill, THEN the finish
 };
 const COOK_TEMP_TOL = 20;   // Stage 3.6.1: ±°F window on the oven dial — a bit forgiving for drag aiming
 
@@ -9571,6 +9582,48 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     setMinigame(null);
   };
   const DRINK_FILL_TARGET = 78;
+  /* which band of hands this is — the ladder, read off the kitchen track */
+  const prepBand = () => { const lv = skillLevel(simRef.current.player, "kitchen"); return lv >= 7 ? "master" : lv >= 6 ? "expert" : lv >= 5 ? "pro" : "green"; };
+  /* `then` decides what a clean run leads to: "cook" hands off to the oven dial, "drink" pours
+     the finished glass. The stage itself is identical either way. */
+  const startPrep = (recipeId, chefB, then_) => {
+    const P = CFG.PREP, band = prepBand();
+    setMinigame({ type: "prep", recipe: recipeId, bId: chefB, mode: chefB ? "chef" : null, then: then_,
+      band, set: 0, need: band === "master" ? P.setsMaster : P.sets,
+      strikes: 0, maxStrikes: P.strikes[band],
+      window: P.window * P.windowByBand[band], sweep: P.sweepMs, start: Date.now() });
+  };
+  const prepStep = () => {
+    const mg = minigameRef.current; if (!mg || mg.type !== "prep") return;
+    const P = CFG.PREP;
+    const t = ((Date.now() - mg.start) % mg.sweep) / mg.sweep;
+    const pos = t < 0.5 ? t * 2 : 2 - t * 2;
+    if (Math.abs(pos - 0.5) <= mg.window) {
+      const set = mg.set + 1;
+      if (set >= mg.need) {
+        sfx.pop();
+        if (mg.then === "drink") { showToast("🍸 Finished clean."); drinkDeliver(mg.recipe, mg.bId, true); }
+        else { showToast("🔪 Prepped. Now the oven."); startCook(mg.recipe, { bId: mg.bId }); }
+        return;
+      }
+      sfx.pop();
+      setMinigame({ ...mg, set, window: mg.window * P.shrink, sweep: Math.max(560, mg.sweep * P.quicken), start: Date.now() });
+      showToast(`🔪 ${set}/${mg.need} — finer now.`);
+    } else {
+      const strikes = mg.strikes + 1;
+      if (strikes > mg.maxStrikes) {
+        sfx.fail(); setMinigame(null);
+        const p = simRef.current.player;
+        if (mg.mode !== "chef") p.inv.burnt = (p.inv.burnt || 0) + 1;
+        showToast(mg.then === "drink" ? "🫗 Butchered the finish — that's a Sludge." : "😞 Ruined the prep. Nothing worth cooking left.");
+        if (mg.then === "drink") { p.inv.burnt = Math.max(0, (p.inv.burnt || 0) - 1); p.inv.sludge = (p.inv.sludge || 0) + 1; }
+        bump(); return;
+      }
+      sfx.alert(); setMinigame({ ...mg, strikes, start: Date.now() });
+      showToast(`✖ Slipped. ${mg.maxStrikes - strikes + 1} left.`);
+    }
+  };
+
   const startDrink = (recipeId, chefB) => {
     const r = RECIPES[recipeId];
     const tier = r.tier ?? (r.hard ? 2 : 1);              // drink difficulty tier
@@ -9610,6 +9663,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       return setMinigame({ ...mg, pass: mg.pass + 1, required, pulled: Array(mg.n).fill(false) });
     }
     if (mg.hard) setMinigame({ ...mg, phase: "fill", fill: 0, holding: false });   // part 2: the fill
+    else if (RECIPES[mg.recipe].expert) startPrep(mg.recipe, mg.bId, "drink");   // no fill on an easy expert drink
     else drinkDeliver(mg.recipe, mg.bId, true);
   };
   // hold-fill (hard part 2): fill rises while held; release inside the target band = success
@@ -9628,6 +9682,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   const drinkHoldEnd = () => {
     const mg = minigameRef.current; if (!mg || mg.type !== "drink" || mg.phase !== "fill" || !mg.holding) return;
     const ok = Math.abs(mg.fill - DRINK_FILL_TARGET) <= (mg.fillBand ?? 8);
+    // EXPERT drinks get the precision stage LAST — the inverted order
+    if (ok && RECIPES[mg.recipe].expert) return startPrep(mg.recipe, mg.bId, "drink");
     drinkDeliver(mg.recipe, mg.bId, ok);
   };
 
@@ -9911,15 +9967,20 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     }
   };
 
-  const startCook = (recipeId) => {
+  /* `resume` is set when re-entering after the expert prep stage: the ingredients are already
+     spent and the chef context has to be carried back in, since the panel is long closed. */
+  const startCook = (recipeId, resume) => {
     const sim = simRef.current, p = sim.player;
-    const chefB = cookPanelRef.current?.chef || null;    // chef shifts: house supplies the ingredients
+    const chefB = resume ? resume.bId : (cookPanelRef.current?.chef || null);   // chef shifts: house supplies the ingredients
     const r = RECIPES[recipeId];
-    if (!chefB) {
+    if (!chefB && !resume) {
       for (const [ing, n] of Object.entries(r.needs)) if ((p.inv[ing] || 0) < n) return showToast(`Missing ${ITEMS[ing].name}.`);
       for (const [ing, n] of Object.entries(r.needs)) p.inv[ing] -= n;
     }
     setCookPanel(false);
+    /* EXPERT cooking opens on the precision task — the expert stage FIRST, then the oven dial,
+       then the timing peak. Drinks invert this; see startPrep. */
+    if (r.expert && !r.drink && !resume) return startPrep(recipeId, chefB, "cook");
     const r2 = RECIPES[recipeId];
     if (r2.drink) {   // Stage 6: drinks get their own slider minigames (easy = 3 sliders, hard = 4 + hold-fill)
       startDrink(recipeId, chefB);
@@ -10166,6 +10227,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const mt = minigameRef.current?.type;
         if (mt === "fish" || mt === "fishhard") { e.preventDefault(); fishHook(); return; }
         if (mt === "fishdrag") { e.preventDefault(); fishDrag(); return; }
+        if (mt === "prep") { e.preventDefault(); prepStep(); return; }
         if (mt === "fishgaff") { e.preventDefault(); fishGaff(); return; }
         if (mt === "cook") { e.preventDefault(); cookStop(); return; }
         if (mt === "cooktemp") { e.preventDefault(); cookTempLock(); return; }
@@ -10631,6 +10693,35 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <button style={{ ...S.binBtn, marginTop: 10, background: "#2e6fe0", width: "100%" }} onClick={fishHook}>HOOK!{!isPhone ? " (Space)" : ""}</button>
           </div>
         )}
+
+        {minigame?.type === "prep" && (() => {
+          const note = { green: "You are out of your depth. Genuinely.", pro: "This will test you.",
+            expert: "Steady hands. You know this one.", master: "Formality." }[minigame.band];
+          const drink = minigame.then === "drink";
+          return (
+            <div style={S.gamePanel}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                {drink ? "🍸 The finish." : "🔪 Mise en place."}{" "}
+                <span style={{ opacity: 0.7, fontWeight: 400 }}>{drink ? "Stage 3 of 3" : "Stage 1 of 3"} — {RECIPES[minigame.recipe]?.label}</span>
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>{note}</div>
+              <div style={{ display: "flex", gap: 10, fontSize: 12, marginBottom: 6 }}>
+                <span>Done <b>{minigame.set}/{minigame.need}</b></span>
+                <span style={{ color: minigame.strikes ? "#d95a5a" : "inherit" }}>Slips <b>{minigame.strikes}/{minigame.maxStrikes + 1}</b></span>
+              </div>
+              <div style={S.fishTrack}>
+                <div style={{ ...S.fishZone, left: `${50 - minigame.window * 100}%`, width: `${minigame.window * 200}%` }} />
+                <div style={{ ...S.fishMarker, animation: `fishslide ${minigame.sweep}ms linear infinite` }} />
+              </div>
+              <button style={{ ...S.binBtn, marginTop: 10, background: "#7a5a3a", width: "100%" }} onClick={prepStep}>
+                {drink ? "POUR" : "CUT"}{!isPhone ? " (Space)" : ""}
+              </button>
+              <div style={{ fontSize: 10, opacity: 0.45, marginTop: 6 }}>
+                {drink ? "Botch the finish and it's a Sludge — after all that." : "Slip too often and there's nothing left worth cooking."}
+              </div>
+            </div>
+          );
+        })()}
 
         {minigame?.type === "fishdrag" && (() => {
           const note = { green: "You are out of your depth. Genuinely.", pro: "This will test you.",
