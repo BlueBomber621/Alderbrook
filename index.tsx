@@ -12,6 +12,21 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
                 carries a per-USE chance of coming apart for good. Rope
                 (4 grass bundles), a hard herbal-salve craft, sticks on the
                 forage table, and no wright will take a crude commission.
+   - Stage 11:  WORD OF MOUTH — gossip stops being a one-way souring pipe.
+                Each rumour now carries weight (petty/serious/grave), who it
+                was done TO, and whether it was a crime; a listener weighs it
+                by how much they trust the teller, how close they are to the
+                victim, and whether they break the law themselves (a crook
+                thinks BETTER of a friend who did a job). Kindness travels
+                too, so a good turn done to your friend can soften a grudge
+                you were holding for them. The player shouting is an event:
+                everyone in earshot remembers it, several answer, and naming
+                someone as a thief or worse seeds a real accusation that
+                spreads — and an officer who hears it opens a case and comes
+                asking (1 evidence: hearsay questions you, it doesn't
+                sentence you). NPCs also travel to see far-off friends far
+                more when they can afford the fare, and no longer visit the
+                same friend every single time.
    - Stage 10c: CONTRABAND + DEFENSIVE MURDER. `contraband: true` keeps a
                 thing out of every luck pool — the crossbow (and its bolts) is
                 Watch-issue, black-market or taken, never fished out of a
@@ -172,6 +187,8 @@ const CFG = {
   },
   OFFICE_ROUNDS: 6, DISH_PLATES: 4,
   FISH_PERIOD_MS: 1200, FISH_ZONE: 0.17, FISH_TENSION_MS: 3200,   // tension bar oscillates slower than the hook
+  FISH_PULLS: 5,        // clean pulls to land a HARD catch — it was landing on a single hook, which is not a fight
+  FISH_PULLS_MIN: 3,    // ...eased down to this by skill: a Master reels one in faster
   COOK_PERIOD_MS: 1500, COOK_ZONE: 0.15,          // the "don't burn it" window
   MESS: { ambient: 0.8, perOccupant: 2.5, npcSweepAt: 55, npcSweepAmount: 30, npcSweepCooldownH: 2, playerSweep: 30, broomSweep: 25 },
   INN_BED: 5,                                      // rent a bed anywhere but home
@@ -215,7 +232,7 @@ const CFG = {
       whistle:   { tier: "easy",   mats: { stick: 2 },          tools: ["saw"] },   // it's a reed whistle — a stick and a knife's worth of patience
       club:      { tier: "easy",   mats: { stick: 3 },          tools: ["saw"] },
       broom:     { tier: "easy",   mats: { stick: 2, fiber: 1 },tools: ["saw"] },
-      arrow:     { tier: "easy",   mats: { stick: 1 },          tools: ["saw"], out: 3 },
+      arrow:     { tier: "easy",   mats: { stick: 1, sharprock: 1 }, tools: ["saw"], out: 3 },   // a knapped head, lashed to a shaft — commission it and the wright knaps their own flint
       bat:       { tier: "easy",   mats: { wood: 2 },           tools: ["saw"] },
       knife:     { tier: "medium", mats: { wood: 1, ore: 1 },   tools: ["saw", "hammer"] },
       hatchet:   { tier: "medium", mats: { wood: 1, ore: 2 },   tools: ["hammer"] },
@@ -225,6 +242,7 @@ const CFG = {
       drum:      { tier: "medium", mats: { wood: 1, fiber: 1 }, tools: ["saw", "hammer"] },
       ore:       { tier: "medium", mats: { rock: 3 },           tools: ["hammer"] },   // forge 3 round rocks into iron bits (medium craft; the workshop furnace is the other route)
       rope:      { tier: "medium", mats: { fiber: 4 },           tools: [] },   // four grass bundles, twisted down into one honest coil
+      bedroll:   { tier: "medium", mats: { fiber: 10 },          tools: [] },   // ten bundles, woven flat — a bed for whoever's staying over
       bandage:   { tier: "easy",   mats: { fiber: 1, herb: 1 }, tools: [] },   // an herbal dressing — grass to bind, a wild herb to soothe
       pipe:      { tier: "easy",   mats: { ore: 1 },            tools: ["hammer"] },
       nozzle:    { tier: "medium", mats: { ore: 1, fiber: 1 },  tools: ["screwdriver"] },
@@ -233,18 +251,55 @@ const CFG = {
       bow:       { tier: "hard",   mats: { wood: 2, fiber: 1 }, tools: ["saw", "screwdriver"] },
       hardware:  { tier: "hard",   mats: { ore: 2, fiber: 1 },  tools: ["screwdriver", "hammer"] },
       chair:     { tier: "hard",   mats: { wood: 2, ore: 1 },   tools: ["saw", "hammer", "screwdriver"], furn: true },
+      /* --- EXPERT: the only recipe at this tier, and it earns it. Three chained tasks, and a
+         botch costs you half the pile. Contraband, so the wright won't take the job unless the
+         Watch has formally requisitioned one (see sim.watchReq). --- */
+      crossbow:  { tier: "expert", mats: { ore: 5, hardware: 1, wood: 4, rope: 2, pipe: 1 }, tools: ["saw", "hammer", "screwdriver"] },
     },
+    /* ===== THE TIER LADDER — the shape every minigame family should follow =====
+       Recorded from the design brief so it survives; EXPERT is not built yet.
+         easy    — one task, forgiving.
+         medium  — the SAME one task, a touch harder.
+         hard    — two tasks: the first one much harder, plus a hands-on specific task.
+         expert  — three tasks. A crazy-hard, very hands-on precision task WITH FAIL STATES,
+                   then the hard-specific task (harder again), then the first task as a pure
+                   precision test. Crafting runs that order; DRINKS runs it inverted —
+                   first task, then the hard-specific, then the expert task last.
+       Failure at EXPERT costs half the materials, not all of them: you may retry if you still
+       hold enough. And the whole ladder is read through the skill tracks, so the same recipe
+       feels different depending who's holding the tools:
+         Professional — a real trial, hard but never impossible.
+         Expert       — normal. Comfortably doable.
+         Master       — a crossbow is an everyday project. Fail states barely present.
+       Some families have their own task shapes rather than these (office, mechanic).
+       (easy/medium as they stand today are fine and want no changes.) */
     /* the balance scale, graded by tier. easy: ±1 counts. medium: exact, both ends shown.
        hard: LARGER range and you only see the MIN — the max is yours to find. Ranges always
        overlap (mins cap below maxes' floor), so a common middle value ALWAYS exists. */
     balance: {
       crude:  { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 3, showMax: true },   // eyeballed, not measured
+      expert: { minLo: 1, minHi: 10, maxLo: 60, maxHi: 85, tol: 0, showMax: false },   // a huge blind range, dead exact — pure precision
       easy:   { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 1, showMax: true },
       medium: { minLo: 1, minHi: 20, maxLo: 30, maxHi: 40, tol: 0, showMax: true },
       hard:   { minLo: 1, minHi: 15, maxLo: 45, maxHi: 60, tol: 0, showMax: false },
     },
-    labor: { crude: 3, easy: 8, medium: 14, hard: 24 },  // commission labor on top of material value (crude is never commissioned — kept for the material readout)
-    daysByTier: { crude: 1, easy: 1, medium: 2, hard: 3 },
+    labor: { crude: 3, easy: 8, medium: 14, hard: 24, expert: 60 },  // commission labor on top of material value (crude is never commissioned — kept for the material readout)
+    daysByTier: { crude: 1, easy: 1, medium: 2, hard: 3, expert: 5 },
+    /* EXPERT's opening task: seating the mechanism. A marker sweeps, the window narrows and the
+       sweep quickens with every part you seat, and a miss is a STRIKE. Strike out and the piece
+       is ruined — which costs half the materials, not all of them, so you can go again if you
+       still hold enough. Everything here is read through the crafting skill: a Professional gets
+       one spare strike and a tight window (a real trial), an Expert three and a fair one
+       (normal), a Master four and a generous one (barely a task at all). */
+    expert: {
+      seatings: 3, seatingsMaster: 2,     // parts to seat; a Master needs fewer
+      windowBase: 0.15, windowShrink: 0.68,   // starting half-width, multiplied per success
+      sweepMs: 1500, sweepQuicken: 0.82,      // and it gets faster
+      strikesPro: 2, strikesExpert: 3, strikesMaster: 4, strikesGreen: 1,
+      windowByLevel: { green: 0.8, pro: 1.05, expert: 1.5, master: 2.3 },
+      lossFrac: 0.5,                      // a ruined attempt costs HALF the pile
+      holdMs: 1400, screws: 4,            // the assembly step is longer and has a fourth fitting
+    },
     letterFee: 2,                              // Garrick posts you a note when it's ready
     smelt: { rocks: 3, fee: 3 },               // the owner turns 3 round rocks into 1 iron bits (fee waived if YOU own it)
     holdMs: 1000,                              // per SCREW — held one at a time, like actually screwing something in
@@ -261,6 +316,17 @@ const CFG = {
        feel like a story, not a coin flip. */
     priceWeight: 0.45,
     braggableAt: 20,           // a haul worth this much per item earns its own line
+  },
+  REQUISITION: {   // Stage 11: how a contraband commission becomes legal
+    /* A wright will not take an order for a crossbow — it's contraband and their licence is
+       worth more than the fee. The exception is a formal Watch requisition: a high-ranking
+       officer puts in for one, and while that paper is open the job is legitimate. */
+    minRank: 2,               // "Officer" and up on the civic ladder
+    dailyChance: 0.14,        // a roll each dawn, lifted when the town is having a bad week
+    crimeLift: 0.25,          // ...plus this much when there are open violent cases
+    days: 6,                  // how long the paper stays open
+    payMult: 1.6,             // the Watch pays over the odds — it's an armoury order
+    items: ["crossbow", "bolt"],
   },
   ODDJOBS: {   // Stage 10: the jobless don't just draw the dole — they go and EARN
     /* Honest work you can pick up without an employer: hauling at the dock, tidying the
@@ -487,7 +553,35 @@ const CFG = {
     firstFill: 6,                // Stage 3.7 (corrected): units per OPENING menu item dealt on day 1 — swaps start at 0
     apiMaxTokens: 400,           // the pricing/revision call — a touch heavier, but rare (per owner, biweekly)
   },
-  VISIT: { budget: 15, dailyChance: 0.12, stayMin: 180 },  // budget threshold + occasional urge
+  VISIT: {   // cross-town social trips: the urge, gated on actually affording the fare
+    budget: 15, stayMin: 180,
+    dailyChance: 0.18,        // the base urge (was 0.12 — the valley felt static)
+    wealthPer: 90,            // ...plus this much again for every N coins ABOVE the budget:
+    wealthCap: 0.22,          // money is what makes travel a real option, so it drives the roll
+  },
+  /* ===== Stage 11 — how news CHANGES people =====
+     Gossip already travelled and already soured a listener on whoever it was about. What it
+     couldn't do was any of the things that make a rumour interesting: warm someone up, land
+     harder because it was YOUR friend who got hurt, be shrugged off by a listener who breaks
+     the law themselves, or be discounted because the person telling you is someone you can't
+     stand. All of that keys off a few extra fields on each item. */
+  RUMOUR: {
+    weightPetty: 1, weightSerious: 2, weightGrave: 3,   // rudeness · robbery/assault · killing
+    trustFriend: 1.5,         // you believe your friends...
+    trustDislike: 0.35,       // ...and take it with salt from someone you don't like
+    dearVictim: 2.0,          // it was done to someone you love — that lands twice as hard
+    dearSubject: 0.5,         // ...but you're slower to turn on someone you love
+    crookedShrug: 0.15,       // a listener with their own record barely minds a crime...
+    crookedNod: 1,            // ...and may even think a touch BETTER of them for it
+    kindnessMin: 8,           // a gift worth this much is worth telling people about
+  },
+  /* the player shouting something is an EVENT: everyone in earshot remembers it, several may
+     answer, and naming someone as a thief or worse puts it into the town's bloodstream. */
+  OUTBURST: {
+    earshot: 5,               // tiles — wider than a reply, because shouting carries
+    maxRepliers: 3,           // how many can pipe up at once
+    accuseWeight: 2,          // an accusation travels as a serious rumour
+  },
   PARTY: { hour: 18, endHour: 21, minCost: 50, lateCutoffH: 20, repFame: 6, repRenown: 10, giftChance: 0.8 },
   PATROL: { everyH: 4 },
   SKILL: {                          // training: every completed task teaches its trade
@@ -762,6 +856,7 @@ const ITEMS = {
      `crude` is the per-USE chance the piece gives out and is gone for good. Every crude
      tool stands in for one metal tool (see TOOL_ALT); every crude weapon hits softer than
      the forged thing it apes. Cheap to make, cheap to lose — that's the whole bargain. */
+  bedroll:      { name: "Sleeping Bag",   emoji: "🛌", price: 12, cat: "tool" },   // Stage 11: what a guest sleeps in — bought, or woven from ten grass bundles
   stick:        { name: "Sticks",         emoji: "🥢", price: 1,  cat: "gift" },   // foraged from the hedgerows, no hatchet required
   rope:         { name: "Coil of Rope",   emoji: "🪢", price: 5,  cat: "gift" },   // four grass bundles, twisted tight
   sharprock:    { name: "Sharp Flint",    emoji: "🗿", price: 3,  cat: "tool", crude: 0.22 },   // stands in for a saw
@@ -898,7 +993,7 @@ const SHOP_STOCK = {
   fastfood: ["combo", "pizza"],
   diner:    ["stew", "cider", "tea", "grilled_fish"],
   inn:      ["stew", "cider", "tea"],
-  furn:     ["candle", "broom", "paint"],   // Stage 4: only small homewares stock here; furniture is fixed-catalog (FURNITURE)
+  furn:     ["candle", "broom", "paint", "bedroll"],   // Stage 4: only small homewares stock here; furniture is fixed-catalog (FURNITURE)
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk"],
   mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],   // Stage 3.6: cake/pie now come from eateries, not the mart shelf
 };
@@ -1073,7 +1168,7 @@ const SHOP_CANDIDATES = {
   inn:      ["stew", "salad", "cider", "tea", "bread", "milk"],
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk", "bread", "chocolate", "broom", "paint"],
   mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],
-  furn:     ["piggy", "safe", "bedup", "fridge", "fountain", "chest", "oven", "drinkbar", "table", "candle", "broom", "paint"],   // Stage 4: furniture (fixed-price) + small homewares (menu)
+  furn:     ["piggy", "safe", "bedup", "fridge", "fountain", "chest", "oven", "drinkbar", "table", "candle", "broom", "paint", "bedroll"],   // Stage 4: furniture (fixed-price) + small homewares (menu)
   cafe_s:   ["coffee", "tea", "milk", "choco_milk", "hot_choc", "milkshake", "lemonade", "mocha", "trop_shake", "nutrient", "cookies", "bread", "fresh_bread", "croissant"],   // Stage 3.8
   store_f:  ["bread", "water", "veg", "flour", "milk", "chocolate", "candle"],
   grill_f:  ["stew", "bread", "coffee", "tea", "grilled_fish", "meal"],
@@ -2939,6 +3034,7 @@ export default function Alderbrook() {
       tradeQueue: [],   // pending NPC↔NPC trade offers awaiting a considered decision
       crime: { ticks: 0, blockedWatch: 0, blockedRoll: 0, blockedCap: 0, attempts: 0, arrests: 0 },   // the crime ledger (diagnosis + future town stats)
       foragedAt: {},    // v7 Stage 3: bush cooldowns (`t:town:x,y` → last foraged day)
+      watchReq: null,   // Stage 11: an open Watch armoury order — the one way contraband is commissionable
       beasts: [], beastSeq: 0, lastBeastSpawn: 0,   // Stage 9: the wild — hares and stags, outside the social sim entirely
       approval: { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start },   // Stage 8
       opening: null, interviewBans: {}, interview: null, // the job market: today's HIRING post + cooldowns
@@ -2970,7 +3066,7 @@ export default function Alderbrook() {
       registers: sim.registers, upgrades: sim.upgrades, dishes: sim.dishes,
       townUpgrades: sim.townUpgrades, councilDay: sim.councilDay, approval: sim.approval, tradeQueue: sim.tradeQueue, foragedAt: sim.foragedAt,
       beasts: (sim.beasts || []).filter(b => b.alive).map(b => ({ id: b.id, sp: b.sp, scene: b.scene, x: b.x, y: b.y, health: b.health })),
-      beastSeq: sim.beastSeq || 0,
+      beastSeq: sim.beastSeq || 0, watchReq: sim.watchReq || null,
       ownerOverrides: sim.ownerOverrides || {},
       treeChops: sim.treeChops || {}, playerFurniture: sim.player.furniture || [], contracts: sim.contracts || [],
       appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
@@ -3036,6 +3132,7 @@ export default function Alderbrook() {
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
         bornAt: performance.now() / 1000 }));
     sim.beastSeq = data.beastSeq || sim.beasts.length;
+    sim.watchReq = data.watchReq || null;
     sim.lastBeastSpawn = 0;
     sim.ownerOverrides = data.ownerOverrides || {};
     for (const [ob, oo] of Object.entries(sim.ownerOverrides)) OWNERS[ob] = oo;   // v7 Stage 5: deeds survive the save
@@ -3069,8 +3166,20 @@ export default function Alderbrook() {
     sim.player.furniture = Array.from(new Set([...(sim.player.furniture || []), ...(sim.playerFurniture || [])]));   // crafted pieces used to live in a SEPARATE list
     sim.playerFurniture = sim.player.furniture;          // legacy alias kept pointed at the real list
     if (sim.player.jailedUntil === "life") sim.player.jailedUntil = Infinity;
-    if (sim.player.jailedUntil === Infinity && sim.player.scene?.startsWith("i:")) {
-      setJailScreen({ bId: sim.player.scene.slice(2), day: sim.day });
+    /* A live sentence of ANY length has to come back with its cell screen. Restoring only the
+       life case meant a timed sentence reloaded frozen — movement blocked, no UI, no clue how
+       long was left. And if the save put them anywhere but a lockup, put them back in one:
+       jailedUntil is what freezes the player, so it must never outlive being in a cell. */
+    if (sim.player.jailedUntil) {
+      const inCell = sim.player.scene?.startsWith("i:") && LOCKUP_ORDER.includes(sim.player.scene.slice(2));
+      const cellB = inCell ? sim.player.scene.slice(2)
+        : (TOWN_LOCKUP[townOfScene(worldRef.current, sim.player.scene)] || "hq");
+      if (!inCell) {
+        const st = worldRef.current.interiors[cellB];
+        sim.player.scene = `i:${cellB}`;
+        sim.player.x = st?.exit?.x ?? 2; sim.player.y = st?.exit?.y ?? 2;
+      }
+      setJailScreen({ bId: cellB, day: sim.day });
     } else setJailScreen(null);
     for (const n of sim.npcs) {
       const s = data.npcs[n.id]; if (!s) continue;
@@ -3190,7 +3299,13 @@ export default function Alderbrook() {
   // tag one or more NPCs as knowing a piece of news. subjectId = who it's about; bad = reflects poorly on them.
   const seedGossip = (sim, knowers, item) => {
     const g = { id: `g${sim.day}_${Math.floor(sim.time)}_${Math.random().toString(36).slice(2, 6)}`,
-      text: item.text, subjectId: item.subjectId || null, bad: !!item.bad, day: sim.day };
+      text: item.text, subjectId: item.subjectId || null, bad: !!item.bad, day: sim.day,
+      /* Stage 11: what the news actually WEIGHS. `weight` is how far it can move a listener,
+         `victimId` is who it was done to (news about someone you love hits differently), and
+         `crime` marks lawbreaking — which a listener with their own record won't hold against
+         anybody. Items seeded without these behave exactly as they always did. */
+      weight: item.weight || CFG.RUMOUR.weightPetty,
+      victimId: item.victimId || null, crime: !!item.crime };
     for (const kn of knowers) {
       if (!kn || !kn.knownGossip) continue;
       kn.knownGossip = [...kn.knownGossip.filter(x => x.text !== g.text), g].slice(-CFG.AMBIENT.gossipMax);
@@ -3205,13 +3320,40 @@ export default function Alderbrook() {
     listener.knownGossip = [...listener.knownGossip, fresh].slice(-CFG.AMBIENT.gossipMax);
     // the listener now remembers it secondhand
     listener.memories = [...listener.memories, `Heard that ${fresh.text}`].slice(-CFG.MAX_MEMORIES);
-    // reputation ripple: a bad rumor sours the listener toward the subject (even unwitnessed)
-    if (fresh.bad && fresh.subjectId) {
-      const relKey = fresh.subjectId;
-      if (listener.id !== relKey && (relKey === "player" ? true : sim.npcs.some(n => n.id === relKey))) {
-        const REL = REL_ORDER, cur = REL.indexOf(listener.relationships[relKey] || "neutral");
-        listener.relationships[relKey] = REL[clamp(cur - CFG.AMBIENT.gossipRelStep, 0, REL.length - 1)];
-      }
+    /* ===== the reputation ripple, Stage 11 =====
+       Hearing something about a third party moves how you feel about them — but by how much,
+       and in which direction, depends on four things the old version ignored: whether the news
+       was GOOD, whose mouth it came out of, who it was done TO, and whether you're the sort of
+       person who minds. This is the whole "my friend says your friend stabbed them" machine. */
+    const relKey = fresh.subjectId;
+    const subjectReal = relKey && listener.id !== relKey && (relKey === "player" || sim.npcs.some(n => n.id === relKey));
+    if (subjectReal) {
+      const R = CFG.RUMOUR;
+      const toSpeaker = relIdx(listener.relationships[speaker.id || "player"] || "neutral");
+      const toSubject = relIdx(listener.relationships[relKey] || "neutral");
+      let step = (fresh.weight || 1) * CFG.AMBIENT.gossipRelStep;
+
+      // 1. do you believe the messenger? A friend's word carries; an enemy's barely registers.
+      if (toSpeaker >= relIdx("friend")) step *= R.trustFriend;
+      else if (toSpeaker <= relIdx("dislikes")) step *= R.trustDislike;
+
+      // 2. who did it happen to? Hurting someone you love is a far worse thing to hear about.
+      if (fresh.victimId && fresh.victimId !== listener.id
+          && relIdx(listener.relationships[fresh.victimId] || "neutral") >= relIdx("close")) step *= R.dearVictim;
+
+      // 3. and you're slow to turn on someone you love, whatever anyone says
+      if (fresh.bad && toSubject >= relIdx("close")) step *= R.dearSubject;
+
+      let dir = fresh.bad ? -1 : 1;
+      /* 4. a listener who breaks the law themselves doesn't judge lawbreaking. An outlaw hears
+         their friend did a job and thinks rather MORE of them, not less — the one case where
+         bad news makes a relationship better. */
+      const crooked = listener.outlaw || listener.thief || (listener.wanted || 0) > 0;
+      if (fresh.crime && crooked) { step *= fresh.bad ? R.crookedShrug : 1; if (fresh.bad) dir = R.crookedNod > 0 ? 1 : -1; }
+
+      const moved = Math.max(1, Math.round(step)) * dir;
+      const REL = REL_ORDER, cur = REL.indexOf(listener.relationships[relKey] || "neutral");
+      listener.relationships[relKey] = REL[clamp(cur + moved, 0, REL.length - 1)];
     }
     return fresh;
   };
@@ -3549,6 +3691,19 @@ export default function Alderbrook() {
       allowUndo: gap >= 2,                 // comfortably skilled → undo allowed (drinks)
     };
   };
+  /* ===== Stage 11: THE MINIGAME PROMISE =====
+     If you played a minigame, the minigame decides. No dice roll on top of a clean run, and
+     never, under any circumstances, an API call adjudicating whether you failed — the API is
+     for voices and plans, not verdicts. Randomness is permitted ONLY when you are genuinely out
+     of your depth: below Apprentice on a hard task, below Professional on an expert one. At or
+     above that line, nailing it IS the result.
+     (Audited: skillCheck() — the API adjudicator — is used in exactly three places, none of
+     them a player minigame: an NPC stabilising a dying person, an NPC detective reading a
+     scene, and the prison break, which is a button and has no minigame to override.) */
+  const MINIGAME_ROLL_FLOOR = { hard: 3, expert: 5 };   // skill level at/above which nothing is left to chance
+  const failRollAllowed = (ent, track, kind) =>
+    skillLevel(ent, track) < (MINIGAME_ROLL_FLOOR[kind] ?? 0);
+
   const tierSuccess = (ent, tier, track, domain = null) => {
     const sc = CFG.SKILLCHECK;
     const eff = skillLevel(ent, track) + (hasExpertise(ent, track, domain) ? sc.tierExpertiseLevels : 0);
@@ -3852,7 +4007,8 @@ export default function Alderbrook() {
     sim.cases.push({ id: `c${sim.day}_${sim.cases.length}`, type, day: sim.day, state: "open", evidence: 0, interrogated: {}, ...data });
   };
   /* conviction weight BY CRIME — a cracked till is not a murder (it used to sentence 5★ life for everything) */
-  const caseStars = (kase) => kase.type === "murder" ? 5
+  const caseStars = (kase) => kase.type === "reported crime" ? 2   // Stage 11: hearsay gets you questioned, not sentenced
+    : kase.type === "murder" ? 5
     : kase.type === "vigilante" ? 4
     : kase.type === "provoked defensive murder" ? CFG.WANTED.defensiveProvokedStars
     : kase.type === "unprovoked defensive murder" ? CFG.WANTED.defensiveStars
@@ -3896,6 +4052,17 @@ export default function Alderbrook() {
         n.memories = [...n.memories, `${fromName} gave ${toName} ${what}${g.legend ? " — unbelievable" : ""}`].slice(-CFG.MAX_MEMORIES);
       sim.dayLog = [...sim.dayLog, `${g.legend ? "LEGENDARY: " : "SHOCKING: "}${fromName} gave ${toName} ${what}`].slice(-12);
     } else if (g.buzz) sim.buzz = { text: `${fromName} gave ${toName} ${what} — generous!`, day: sim.day };
+    /* Stage 11: generosity is NEWS, and good news is how someone with a bad name gets a second
+       look. A kindness done to your friend, told to you by your friend, is exactly the thing
+       that softens a grudge you were holding on their behalf. */
+    if (value >= CFG.RUMOUR.kindnessMin) {
+      const around = sim.npcs.filter(n => n.alive && n.id !== from.id && n.id !== to.id
+        && (n.scene === from.scene || n.town === town)).slice(0, 5);
+      seedGossip(sim, [...(to.id ? [to] : []), ...around], {
+        text: `${fromName} gave ${toName} ${what} — no reason, just kindness`,
+        subjectId: from.id || "player", victimId: to.id || "player",
+        bad: false, weight: value >= 40 ? CFG.RUMOUR.weightSerious : CFG.RUMOUR.weightPetty });
+    }
     return true;
   };
 
@@ -4255,7 +4422,7 @@ export default function Alderbrook() {
     for (const n of sim.npcs.filter(n => n.alive && n.town === town)) {
       // a dead outlaw isn't mourned the same way — the town is relieved, and unsettled
       n.memories = [...n.memories, wasWanted ? `${body.name} the outlaw is dead. Someone took the law into their hands.` : `We lost ${body.name}. ${body.cause}`].slice(-CFG.MAX_MEMORIES);
-      seedGossip(sim, [n], { text: wasWanted ? `${body.name} the outlaw was put down — not arrested, PUT DOWN` : `${body.name} died — ${body.cause}`, subjectId: null, bad: false });
+      seedGossip(sim, [n], { text: wasWanted ? `${body.name} the outlaw was put down — not arrested, PUT DOWN` : `${body.name} died — ${body.cause}`, subjectId: null, bad: false, weight: CFG.RUMOUR.weightGrave, victimId: body.npcId });
     }
     if (body.killerId) {
       const killer = body.killerId === "player" ? sim.player : sim.npcs.find(n => n.id === body.killerId);
@@ -4304,6 +4471,12 @@ export default function Alderbrook() {
           const why = witnessed ? "was seen committing" : "was caught, weapon in hand, at the scene of";
           convictStars(sim, killer, 5, `${who} ${why} the murder of ${body.name}`);
         }
+        /* Stage 11: now that it's actually known who did it, the name travels — and it travels
+           as the gravest thing anyone can say about a person. Only from here, never from the
+           discovery of the body itself, or every unsolved killing would name its culprit. */
+        seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === town).slice(0, 6), {
+          text: `${who} killed ${body.name}`, subjectId: body.killerId, victimId: body.npcId,
+          bad: true, crime: true, weight: CFG.RUMOUR.weightGrave });
         const hunter = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
         if (hunter) hunter.dispatch = { targetId: body.killerId };   // the pursuit starts NOW
       }
@@ -4356,7 +4529,7 @@ export default function Alderbrook() {
       if (thief.coins >= fine) { thief.coins -= fine; }
       else { thief.coins = 0; thief.wanted += 1; }       // can't pay → it goes on the record
       keeper.memories = [...keeper.memories, `${isPlayer ? "The player" : thief.name} tried to steal from me`].slice(-CFG.MAX_MEMORIES);
-      seedGossip(sim, [keeper], { text: `${isPlayer ? playerLabel() : thief.name} tried to steal from ${keeper.name}`, subjectId: isPlayer ? "player" : thief.id, bad: true });
+      seedGossip(sim, [keeper], { text: `${isPlayer ? playerLabel() : thief.name} tried to steal from ${keeper.name}`, subjectId: isPlayer ? "player" : thief.id, bad: true, crime: true, weight: CFG.RUMOUR.weightPetty, victimId: keeper.id });
       keeper.relationships[thief.id || "player"] = "dislikes";
       keeper.bubble = { text: `HEY! That's a ${fine}c fine, sticky fingers!`, until: now + 5 };
       repEvent(sim, thief, -4, 2, `${isPlayer ? playerLabel() : thief.name} got caught stealing at ${bld(bId).name}`);
@@ -4409,10 +4582,43 @@ export default function Alderbrook() {
   /* enforcer contact, by the ladder: 1★ fine/warning · 2★+ the cells,
      hours by tier · 3★/4★ add fines that go into DEBT · 5★ is LIFE —
      assets seized, and for the player, difficulty decides what's left */
+  /* nobody goes into a cell armed. Weapons and ammunition go into the property locker and come
+     back at the gate; contraband does NOT come back, because it was never legally theirs. */
+  const confiscateArms = (sim, target) => {
+    const held = {}; let kept = 0;
+    for (const id of Object.keys(target.inv || {})) {
+      const it = ITEMS[id];
+      if (!it || !(target.inv[id] > 0)) continue;
+      if (!it.dmg && !["arrow", "bolt", "rock"].includes(id)) continue;   // arms and what feeds them
+      if (id === "rock" && !(target.inv.slingshot || target.inv.sling)) continue;   // a rock is a rock unless you're slinging it
+      if (it.contraband) kept += target.inv[id];                          // seized for good
+      else held[id] = (held[id] || 0) + target.inv[id];
+      delete target.inv[id];
+    }
+    if (target.equipped && !(target.inv[target.equipped] > 0)) target.equipped = null;
+    if (Object.keys(held).length) target.confiscated = { ...(target.confiscated || {}), ...held };
+    return { held, kept };
+  };
+  const returnArms = (target) => {
+    const back = target.confiscated;
+    if (!back || !Object.keys(back).length) return null;
+    for (const id of Object.keys(back)) target.inv[id] = (target.inv[id] || 0) + back[id];
+    target.confiscated = null;
+    return Object.keys(back).map(id => `${ITEMS[id].emoji} ${ITEMS[id].name}×${back[id]}`).join(", ");
+  };
+
   const resolveEnforcement = (sim, world, enforcer, target, now) => {
     const isPlayer = !target.id;
     pushFx(sim, target.scene, target.x, target.y, "arrest");   // Stage 3.5: justice, visibly served
     const stars = Math.min(5, target.wanted);
+    if (stars >= CFG.WANTED.arrestAt) {   // going into custody — turn out your pockets
+      const { held, kept } = confiscateArms(sim, target);
+      if (isPlayer && (Object.keys(held).length || kept)) {
+        const list = Object.keys(held).map(id => `${ITEMS[id].emoji} ${ITEMS[id].name}`).join(", ");
+        showToast(kept ? `🛡️ Arms confiscated${list ? `: ${list}` : ""} — and the contraband is SEIZED. You won't see that again.`
+          : `🛡️ Arms confiscated: ${list}. You'll get them back at the gate.`);
+      }
+    }
     if (stars <= 1) {
       const fine = CFG.WANTED.finePerLevel;
       fineCoins(target, fine); target.wanted = 0;
@@ -4511,6 +4717,7 @@ export default function Alderbrook() {
         if (pass) {
           clearCheck(p, "prisonbreak");
           p.jailedUntil = null; p.wanted = CFG.PRISON.escapeeWanted;   // free — and a hunted fugitive
+          if (p.confiscated) { p.confiscated = null; showToast("You go over the wall with nothing but your clothes — your arms stay in the locker."); }
           const door = bld(bId).door;
           p.scene = `t:${bld(bId).town}`; p.x = door.x; p.y = door.y;
           p.activity = "on the run"; setJailScreen(null);
@@ -4576,7 +4783,7 @@ export default function Alderbrook() {
       const took = transferCoins(sim, victim, robber, Math.floor(victim.coins * CFG.ROBBERY.take));
       victim.bubble = { text: `T-take it... ${took} coins. Just go.`, until: now + 4 };
       victim.memories = [...victim.memories, `${robber.id ? robber.name : "The player"} robbed me`].slice(-CFG.MAX_MEMORIES);
-      seedGossip(sim, [victim], { text: `${robber.id ? robber.name : playerLabel()} robbed ${victim.name}`, subjectId: robber.id || "player", bad: true });
+      seedGossip(sim, [victim], { text: `${robber.id ? robber.name : playerLabel()} robbed ${victim.name}`, subjectId: robber.id || "player", bad: true, crime: true, weight: CFG.RUMOUR.weightSerious, victimId: victim.id });
       { const rk = robber.id || "player"; victim.relationships[rk] = REL_ORDER[Math.min(relIdx(victim.relationships[rk] || "neutral"), relIdx("hates"))]; }   // at least hates — but a standing enemy/nemesis doesn't soften to mere hate
       // Stage 3.5: a shaken victim usually reports it — or an earshot witness does. Nobody just KNOWS.
       if (Math.random() < 0.75) { victim.report = { thiefId: robber.id || "player", crime: "robbery", victimName: victim.name }; victim.goal = null; }
@@ -6531,7 +6738,12 @@ export default function Alderbrook() {
     /* who's traveling today? budget threshold + occasional urge + someone worth the fare */
     for (const n of sim.npcs) {
       n.visitPlan = null;                                 // trips (party invites included) don't outlive the day
-      if (!n.alive || n.jailedUntil || n.coins < CFG.VISIT.budget || Math.random() > CFG.VISIT.dailyChance) continue;
+      if (!n.alive || n.jailedUntil || n.coins < CFG.VISIT.budget) continue;
+      /* the urge scales with what's in their pocket: a fare is a fare, and someone comfortable
+         takes the bus to see a friend far more readily than someone counting coppers. */
+      const urge = CFG.VISIT.dailyChance
+        + Math.min(CFG.VISIT.wealthCap, (n.coins - CFG.VISIT.budget) / CFG.VISIT.wealthPer);
+      if (Math.random() > urge) continue;
       /* NO BUS, NO TRIP. CFG.FARES has no routes for the Outlands or the hills — an NPC given a
          visitPlan from there walks out on foot and can't ride home, ending up broke in
          another town, eating at the inn, sleeping on benches. (Probed to day 16: Mara and
@@ -6539,10 +6751,27 @@ export default function Alderbrook() {
          Keepers with a business to run don't wander either. */
       if (!Object.keys(CFG.FARES[n.town] || {}).length) continue;
       if (n.work?.bId && OWNERS[n.work.bId] === n.id) continue;   // your shop doesn't run itself
-      const far = Object.entries(n.relationships).find(([id, st]) =>
+      const farAll = Object.entries(n.relationships).filter(([id, st]) =>
         relIdx(st) >= relIdx("likes") && sim.npcs.some(o => o.id === id && o.alive && o.town !== n.town
           && Object.keys(CFG.FARES[o.town] || {}).length));   // and nobody buses OUT to the camp either
+      const far = farAll.length ? rand(farAll) : null;   // .find() meant the same friend, every single time
       if (far) n.visitPlan = { targetId: far[0], phase: "go" };
+    }
+    /* ===== Stage 11: the Watch armoury requisition =====
+       A wright will not take an order for contraband — their licence is worth more than the fee.
+       A high-ranking officer putting in for one is the exception that makes the job legal, and
+       the paper is only good for a few days. */
+    if (sim.watchReq && sim.day - sim.watchReq.day >= CFG.REQUISITION.days) sim.watchReq = null;
+    if (!sim.watchReq) {
+      const Q = CFG.REQUISITION;
+      const brass = sim.npcs.find(n => n.alive && n.enforcer && !n.jailedUntil && (n.occupation?.rank || 0) >= Q.minRank);
+      const unrest = sim.cases.some(c => c.state === "open" && ["murder", "robbery", "vigilante"].includes(c.type));
+      if (brass && Math.random() < Q.dailyChance + (unrest ? Q.crimeLift : 0)) {
+        const itemId = rand(Q.items);
+        sim.watchReq = { itemId, byId: brass.id, day: sim.day };
+        sim.buzz = { text: `${brass.name} has put in an armoury requisition — ${ITEMS[itemId].name}. The workshop can take that order.`, day: sim.day };
+        sim.dayLog = [...sim.dayLog, `${brass.name} requisitioned ${ITEMS[itemId].name} for the Watch armoury`].slice(-12);
+      }
     }
     if (sim.day % CFG.ETHICS.everyDays === 0) sim.inspectDue = true;   // the ledger gets its look
 
@@ -6769,13 +6998,27 @@ export default function Alderbrook() {
         const absTime = sim.day * 1440 + sim.time;
         const p = sim.player;
         window.__abSim = sim;                             // headless-harness test hook — read/poke sim state in boot tests
+        /* CUSTODY IS WHERE YOU ARE: a standing sentence and a player outside a lockup is a
+           frozen player. Any path that relocates them — a rescue, a hospital discharge, a
+           reload — gets corrected here rather than trusted to remember. */
+        if (p.jailedUntil && !p.bedrest && !p.incap && !p.dying
+            && !(p.scene.startsWith("i:") && LOCKUP_ORDER.includes(p.scene.slice(2)))) {
+          const back = TOWN_LOCKUP[townOfScene(world, p.scene)] || "hq";
+          const st = world.interiors[back];
+          p.scene = `i:${back}`; p.x = st?.exit?.x ?? 2; p.y = st?.exit?.y ?? 2;
+          p.legs = []; p.path = [];
+          setJailScreen({ bId: back, day: sim.day });
+          showToast("⛓️ Back to the cell — you're still serving.");
+        }
         // Stage 3.5: a timed sentence ends — the door opens on a world that kept moving
         if (p.jailedUntil && p.jailedUntil !== Infinity && sim.day * 1440 + sim.time >= p.jailedUntil) {
           const cellB = p.scene.startsWith("i:") ? p.scene.slice(2) : "hq";
           p.jailedUntil = null;
           const d = bld(cellB).door;
           p.scene = `t:${bld(cellB).town}`; p.x = d.x; p.y = d.y;
-          setJailScreen(null); showToast("Time served. Mind how you go.");
+          setJailScreen(null);
+          const gave = returnArms(p);
+          showToast(gave ? `Time served. Property returned: ${gave}` : "Time served. Mind how you go.");
         }
         const playerTown = townOfScene(world, p.scene);
         tryOwnerPulse(sim, world);                        // all-town exempt pulse first: owners + authority (so tryPulse can skip them)
@@ -7069,6 +7312,7 @@ export default function Alderbrook() {
           if (decide) {
             decideNPC(npc, sim, world, now); thiefTick(sim, world, npc); dramaTick(sim, world, npc, now);
             homeCraftTick(sim, world, npc, now); shareHomemade(sim, npc, now); oddJobTick(sim, world, npc, now);
+            watchHearsRumour(sim, world, npc, now);
           }
           if (npc.grudgeOn) settleGrudge(sim, world, npc, now);
           if (npc.oddJob) workOddJob(sim, world, npc, now);
@@ -7483,6 +7727,41 @@ export default function Alderbrook() {
      player cooks, plus a small bonus for it being homemade. The knock-on is the point — a soul
      who cooks needs INGREDIENTS, so markets and grocers stop being player-only buildings.
      And a full pantry gets shared: a friend with no roof over their head eats tonight. */
+  /* ===== Stage 11 — the Watch hears things =====
+     Gossip has always flowed through the town and stopped dead at the Watch house door. An
+     officer carrying a rumour about a real crime, naming a real person, now acts on it: they
+     open a case and go ask questions. This is the last link in the chain that starts with the
+     player shouting "HE ROBBED ME" in a plaza — heard, remembered, repeated, and finally
+     knocked on a door about. A rumour is worth ONE point of evidence, so nobody is convicted
+     on hearsay; it only gets the interrogation started. */
+  const watchHearsRumour = (sim, world, npc, now) => {
+    if (!npc.enforcer || !npc.alive || npc.incap || npc.dying || npc.jailedUntil) return;
+    if (npc.dispatch || npc.caseWork || npc.activity?.includes("sleep")) return;
+    if ((npc.lastRumourLook || 0) > now) return;
+    npc.lastRumourLook = now + 25;
+    const lead = (npc.knownGossip || []).find(g => g.crime && g.subjectId
+      && g.weight >= CFG.RUMOUR.weightSerious                       // petty talk isn't worth a knock
+      && g.day >= sim.day - 2                                        // and it has to be recent
+      && !sim.cases.some(c => c.suspectId === g.subjectId && c.state === "open")
+      && !(npc.chasedRumours || []).includes(g.id));
+    if (!lead) return;
+    (npc.chasedRumours = npc.chasedRumours || []).push(lead.id);
+    if (npc.chasedRumours.length > 12) npc.chasedRumours.shift();
+    const suspect = lead.subjectId === "player" ? sim.player : sim.npcs.find(n => n.id === lead.subjectId && n.alive);
+    if (!suspect) return;
+    const kase = { id: `c${sim.day}_${sim.cases.length}`, type: "reported crime", day: sim.day, state: "open",
+      evidence: 1, interrogated: {}, suspectId: lead.subjectId,
+      victim: lead.victimId === "player" ? playerLabel() : "someone in town",
+      scene: npc.scene, x: Math.round(npc.x), y: Math.round(npc.y), fromRumour: true };
+    sim.cases.push(kase);
+    npc.dispatch = { targetId: lead.subjectId, caseId: kase.id };
+    npc.goal = null;
+    npc.bubble = { text: rand(["I've been hearing things. Time I asked.", "Word gets around. Let's talk.", "There's talk. I'd like it settled."]), until: now + 5 };
+    sim.dayLog = [...sim.dayLog, `${npc.name} opened a case on ${suspect.id ? suspect.name : playerLabel()} after hearing talk`].slice(-12);
+    if (sim.player.scene === npc.scene || lead.subjectId === "player")
+      showToast(`🔍 ${npc.name} has heard the talk about ${lead.subjectId === "player" ? "you" : suspect.name} — and is coming to ask about it.`);
+  };
+
   const homeMake = (npc, table) => {          // spend the makings, return the made item id
     for (const r of table) {
       if (!Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m])) continue;
@@ -7662,7 +7941,7 @@ export default function Alderbrook() {
         npc.relationships[key(culprit)] = "nemesis";           // no negotiation, no tiers to climb
         npc.memories = [...npc.memories, `${named(culprit)} left ${named(fallen)} bleeding — I will never forget it`].slice(-CFG.MAX_MEMORIES);
         seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === npc.town),
-          { text: `${named(culprit)} left ${named(fallen)} for dead, and ${npc.name} went looking for them`, subjectId: blame, bad: true });
+          { text: `${named(culprit)} left ${named(fallen)} for dead, and ${npc.name} went looking for them`, subjectId: blame, bad: true, crime: true, weight: CFG.RUMOUR.weightGrave, victimId: fallen.id || "player" });
         npc.grudgeOn = { id: key(culprit), kind: "avenge", until: sim.day * 1440 + sim.time + 240 };
         npc.goal = null;
         npc.bubble = { text: rand([`Who did this to ${named(fallen)}?!`, "I'll KILL them.", `${named(fallen)}— no. No no no.`]), until: now + 5 };
@@ -9115,7 +9394,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     // hard fight → the tension mini-game; leniency still scales with skill
     const redMax = pr.gap >= 2 ? 2 : 1;
     const yellowMax = clamp(3 + (pr.gap >= 1 ? pr.gap : 0), 3, 5);
-    setMinigame({ type: "fishhard", catch: catch_, start: Date.now(), zone, redHits: 0, yellowHits: 0, redMax, yellowMax });
+    // a big one comes in over several pulls; skill shortens the fight but never to a single tug
+    const need = clamp(CFG.FISH_PULLS - Math.max(0, pr.gap), CFG.FISH_PULLS_MIN, CFG.FISH_PULLS);
+    setMinigame({ type: "fishhard", catch: catch_, start: Date.now(), zone, redHits: 0, yellowHits: 0, redMax, yellowMax, pulls: 0, need });
   };
   const grantCatch = (sim, catch_) => {
     const p = sim.player, give = catch_.give;
@@ -9147,14 +9428,22 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         if (redHits >= mg.redMax) { setMinigame(null); sfx.fail(); showToast("🎣💥 Too much tension — the line SNAPPED."); return; }
         setMinigame({ ...mg, redHits }); showToast("⚠️ Careful — tension's in the red!"); return;
       }
+      let yellowHits = mg.yellowHits;
       if (band === "yellow") {
-        const yellowHits = mg.yellowHits + 1;
+        yellowHits = mg.yellowHits + 1;
         if (yellowHits >= mg.yellowMax) { setMinigame(null); sfx.fail(); showToast("🎣💥 Line snapped — too many hard pulls."); return; }
-        // fall through to the hook check, but record the yellow pull
         if (Math.abs(pos - 0.5) > mg.zone) { setMinigame({ ...mg, yellowHits }); showToast("Missed the hook — and straining the line."); return; }
-        // hooked in yellow — lands it
       } else {   // white — a clean pull; buys back a yellow allowance
-        if (Math.abs(pos - 0.5) > mg.zone) { setMinigame({ ...mg, yellowHits: Math.max(0, mg.yellowHits - 1) }); showToast("Eased the line — but missed the hook."); return; }
+        yellowHits = Math.max(0, mg.yellowHits - 1);
+        if (Math.abs(pos - 0.5) > mg.zone) { setMinigame({ ...mg, yellowHits }); showToast("Eased the line — but missed the hook."); return; }
+      }
+      /* a good pull GAINS GROUND. The fish only comes in once you've won enough of them. */
+      const pulls = mg.pulls + 1;
+      if (pulls < mg.need) {
+        setMinigame({ ...mg, pulls, yellowHits });
+        sfx.reel();
+        showToast(`🎣 Gaining on it — ${pulls}/${mg.need} pulls.`);
+        return;
       }
     } else {
       // Entry / Simple: just the hook window
@@ -9457,25 +9746,79 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   };
 
   // Stage 6: the player speaks aloud — shows a bubble; a nearby NPC may reply if it's relevant.
+  /* ===== Stage 11 — SHOUTING IN THE STREET =====
+     What the player says aloud used to evaporate: one nearby NPC answered and nobody else
+     registered it. Now everyone in earshot REMEMBERS it, several may answer, and naming
+     somebody as a thief or worse puts a real accusation into the town's bloodstream — one
+     that spreads by gossip and can land on a detective's desk. */
+  const ACCUSATIONS = [   // what you claim → how the town files it
+    { words: ["murder", "killed", "murdered"],                crime: "murder",  weight: 3, verb: "killing someone" },
+    { words: ["stabbed", "stab", "attacked", "beat", "jumped", "hurt"], crime: "assault", weight: 2, verb: "attacking them" },
+    { words: ["robbed", "rob", "mugged", "mugging", "held up"], crime: "robbery", weight: 2, verb: "robbing them" },
+    { words: ["stole", "steal", "stealing", "thief", "took my"], crime: "theft", weight: 1, verb: "stealing from them" },
+  ];
+  /* pull "<name> ... <accusation>" out of whatever they shouted. Name match is deliberately
+     loose (first name, any case) because people shout, they don't file paperwork. */
+  const parseAccusation = (sim, said) => {
+    const low = said.toLowerCase();
+    const kind = ACCUSATIONS.find(a => a.words.some(w => low.includes(w)));
+    if (!kind) return null;
+    const who = sim.npcs.find(n => n.alive && low.includes(n.name.toLowerCase().split(" ")[0]));
+    if (!who) return null;
+    return { ...kind, accusedId: who.id, accusedName: who.name };
+  };
+
   const doSpeak = (text) => {
     const said = (text || "").trim();
     if (!said) return;
     const sim = simRef.current, p = sim.player, now = performance.now() / 1000;
     p.bubble = { text: said, until: now + 4 }; sfx.pop();
     setSpeakOpen(false); setSpeakText("");
-    // find the nearest NPC in earshot who could plausibly react
+
+    const earshot = sim.npcs.filter(n => n.alive && !n.incap && !n.dying && !n.jailedUntil
+      && n.scene === p.scene && !n.activity.includes("sleep") && dist(n, p) <= CFG.OUTBURST.earshot);
+    if (!earshot.length) return;
+
+    // 1. EVERYONE who heard it remembers it. Being shouted at is a thing that happened to you.
+    for (const n of earshot)
+      n.memories = [...n.memories, `${playerLabel()} said out loud: "${said.slice(0, 80)}"`].slice(-CFG.MAX_MEMORIES);
+
+    // 2. an ACCUSATION is not chatter — it's a claim about a named person, and it travels
+    const acc = parseAccusation(sim, said);
+    if (acc) {
+      seedGossip(sim, earshot, {
+        text: `${playerLabel()} says ${acc.accusedName} is guilty of ${acc.verb}`,
+        subjectId: acc.accusedId, victimId: "player", bad: true, crime: true, weight: acc.weight });
+      /* the accusation itself is now a thing the Watch can trip over (see watchHearsRumour) —
+         no case is opened here, because a shout in the street is not evidence. Someone has to
+         actually HEAR it and care. */
+      for (const n of earshot) {
+        if (n.id === acc.accusedId) { n.bubble = { text: rand(["That's a LIE!", "You watch your mouth.", "Prove it, then."]), until: now + 5 }; continue; }
+        const believes = relIdx(n.relationships.player || "neutral") >= relIdx("likes");
+        n.bubble = { text: believes ? rand([`${acc.accusedName}? Really?`, "I KNEW it.", "Someone fetch the Watch."])
+          : rand(["That's a serious thing to say.", "...says who?", "Careful, now."]), until: now + 5 };
+      }
+      sim.dayLog = [...sim.dayLog, `${playerLabel()} publicly accused ${acc.accusedName} of ${acc.verb}`].slice(-12);
+      showToast(`🗣️ You accuse ${acc.accusedName} in public. ${earshot.length} ${earshot.length === 1 ? "person heard" : "people heard"} it.`);
+    }
+
+    // 3. up to a few of them actually answer — one with real words, the rest with a reaction
     if (performance.now() - lastSpeechRef.current < CFG.AMBIENT.speechCooldownMs || apiBusyRef.current) return;
-    const near = sim.npcs
-      .filter(n => n.alive && !n.incap && n.scene === p.scene && !n.activity.includes("sleep") && dist(n, p) <= CFG.AMBIENT.speechReplyTiles)
-      .sort((a, b) => dist(a, p) - dist(b, p))[0];
-    if (!near) return;
+    const repliers = [...earshot].sort((a, b) => dist(a, p) - dist(b, p)).slice(0, CFG.OUTBURST.maxRepliers);
+    const voice = repliers[0];
     lastSpeechRef.current = performance.now(); apiBusyRef.current = true;
-    const rel = near.relationships[p.id || "player"] || "neutral";
-    const ctx = `You feel ${rel} toward the player. Recently: ${(near.memories || []).slice(-1)[0] || "nothing notable"}.`;
-    speechReply(near, playerLabel(), said, ctx)
-      .then(reply => { if (reply) near.bubble = { text: reply, until: performance.now() / 1000 + 4.5 }; })
+    const rel = voice.relationships.player || "neutral";
+    const ctx = `You feel ${rel} toward ${playerLabel()}. Recently: ${(voice.memories || []).slice(-2)[0] || "nothing notable"}.`
+      + (acc ? ` They have just publicly accused ${acc.accusedName} of ${acc.verb}, in front of you.` : "");
+    speechReply(voice, playerLabel(), said, ctx)
+      .then(reply => { if (reply) voice.bubble = { text: reply, until: performance.now() / 1000 + 4.5 }; })
       .catch(() => {})
       .finally(() => { apiBusyRef.current = false; });
+    // the others in earshot turn and react — no API, just a room that noticed
+    if (!acc) for (const n of repliers.slice(1)) {
+      if (Math.random() < 0.55)
+        n.bubble = { text: rand(["...what was that about?", "*glances over*", "Bit loud, that.", "Everything alright?"]), until: now + 4 };
+    }
   };
 
   const startCook = (recipeId) => {
@@ -9503,7 +9846,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const perfect = lvl < 5;
         tempTol = perfect ? 0 : (lvl >= 6 ? COOK_TEMP_TOL * 1.5 : COOK_TEMP_TOL);
         setDeadline = lvl >= 6 ? null : Date.now() + 3000;
-        expertRoll = lvl < 3;
+        expertRoll = failRollAllowed(p, "kitchen", "expert");   // below Professional only — see THE MINIGAME PROMISE
       } else {
         // badly under-skilled → a 4s countdown to set the EXACT temp; tolerance tightens when green, loosens when skilled
         tempTol = clamp(COOK_TEMP_TOL * pr.goalW, 8, 40);
@@ -9561,11 +9904,12 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       };
       if (mg.hard) {                                     // Stage 3.7d: hard recipe done right.
         const domain = TASK_DOMAIN[mg.recipe] || null;
-        // EXPERT gourmet + a below-Apprentice hand: one last 50% technique roll (no API — pure chance).
-        // Everyone Apprentice and up: nailing the temp + timing IS success, no roll.
+        /* An out-of-their-depth hand still has technique to lose: one 50% roll, pure chance, no
+           API. From Professional up on an expert dish (Apprentice on a hard one) there is NO
+           roll at all — you hit the temp and the timing, you plated it. */
         if (mg.expertRoll && Math.random() < 0.5) {
           if (mg.mode !== "chef") p.inv.burnt = (p.inv.burnt || 0) + 1;
-          sfx.fail(); showToast("😞 Gourmet cooking is unforgiving — the technique got away from you this time.");
+          sfx.fail(); showToast("😞 Gourmet technique got away from you — you're not skilled enough for this dish yet. (Professional cooks never lose it to chance.)");
         } else {
           plate();
           if (trainDomain(p, "kitchen", domain)) showToast(`🌟 You've mastered ${DOMAIN_LABEL[domain]} cooking!`);
@@ -10207,8 +10551,13 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               <div style={{ width: "20%", background: "#d85a4a" }} />
               <div style={{ position: "absolute", top: -2, width: 4, height: 26, background: "#222", borderRadius: 2, animation: `fishslide ${CFG.FISH_TENSION_MS}ms linear infinite` }} />
             </div>
-            <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>
+            <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
               Yellow pulls: {minigame.yellowHits}/{minigame.yellowMax} · a WHITE pull eases the line back
+            </div>
+            {/* the fight itself: clean pulls bring it in */}
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 3 }}>Bringing it in — {minigame.pulls}/{minigame.need} pulls</div>
+            <div style={{ height: 10, borderRadius: 5, background: "#2a2d36", overflow: "hidden", marginBottom: 10 }}>
+              <div style={{ height: "100%", width: `${(minigame.pulls / minigame.need) * 100}%`, background: "#4a9a5a", transition: "width 0.15s" }} />
             </div>
             {/* hook bar (faster) */}
             <div style={S.fishTrack}>
@@ -11177,6 +11526,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <div style={{ ...S.chatPanel, maxWidth: 440, padding: 22 }}>
               <div style={{ ...S.chatHeader, background: "#2a2f38" }}>
                 <span style={{ fontWeight: 700 }}>⛓️ {bld(jailScreen.bId).name} — {player.jailedUntil === Infinity ? "Holding Cell · LIFE" : `Holding Cell · ${Math.max(0, Math.ceil(((player.jailedUntil || 0) - absMin) / 60))}h left`}</span>
+                <button style={S.closeBtn} title="Your pack" onClick={() => setInvOpen(true)}>🎒</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
                 <div style={{ ...S.folkCard, fontStyle: "italic" }}>
@@ -11686,22 +12036,60 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const hasTools = (r) => r.tools.every(t => hasTool(player, t));   // a knapped stand-in counts
         const hasMats = (r) => Object.entries(r.mats).every(([m, n]) => (inv[m] || 0) >= n);
         const tierOf = (r) => r.tier;
-        const TIER_ORDER = { crude: 0, easy: 1, medium: 2, hard: 3 };
+        const TIER_ORDER = { crude: 0, easy: 1, medium: 2, hard: 3, expert: 4 };
         const TIER_HEAD = {   // the ladder, oldest craft first
           crude:  { label: "Crude — stone, stick and cord", note: "No tools to start. Rough work, and it doesn't last." },
           easy:   { label: "Easy", note: "" }, medium: { label: "Medium", note: "" }, hard: { label: "Hard", note: "" },
+          expert: { label: "Expert", note: "Three stages, and a botch costs half the materials." },
         };
-        const AREAS = { crude: ["lash"], easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"] };
-        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" }, lash: { label: "Lashing", emoji: "🪢" } };
-        const start = (rid) => {   // EVERY tier opens on the balance scale — graded by tier
-          const r = R[rid], tier = tierOf(r), B = CFG.CRAFT.balance[tier];
+        const AREAS = { crude: ["lash"], easy: ["wood"], medium: ["wood", "screw"], hard: ["wood", "screw", "fitting"], expert: ["wood", "screw", "fitting", "spring"] };
+        const AREA_META = { wood: { label: "Wood", emoji: "🪵" }, screw: { label: "Screws", emoji: "🔩" }, fitting: { label: "Fittings", emoji: "⚙️" }, lash: { label: "Lashing", emoji: "🪢" }, spring: { label: "Spring", emoji: "🌀" } };
+        /* how an expert job reads to THIS pair of hands. tierTargetLevel puts expert's comfort
+           at level 6, so Professional sits at gap −1 (a trial), Expert at 0 (normal) and Master
+           at +1 (a formality) — exactly the curve the tier is supposed to have. */
+        const expertBand = () => { const lv = skillLevel(player, "crafting"); return lv >= 7 ? "master" : lv >= 6 ? "expert" : lv >= 5 ? "pro" : "green"; };
+        const expertRules = () => {
+          const E = CFG.CRAFT.expert, band = expertBand();
+          return { band,
+            strikes: band === "master" ? E.strikesMaster : band === "expert" ? E.strikesExpert : band === "pro" ? E.strikesPro : E.strikesGreen,
+            window: E.windowBase * E.windowByLevel[band],
+            seatings: band === "master" ? E.seatingsMaster : E.seatings };
+        };
+        const beginBalance = (rid, tier, final) => {
+          const B = CFG.CRAFT.balance[tier];
           const mk = () => { const min = B.minLo + Math.floor(Math.random() * (B.minHi - B.minLo + 1)), max = B.maxLo + Math.floor(Math.random() * (B.maxHi - B.maxLo + 1)); return { min, max, v: min + Math.floor(Math.random() * (max - min + 1)) }; };
-          setCraftPanel({ stage: "balance", recipeId: rid, tier, tol: B.tol, showMax: B.showMax, L: mk(), Rr: mk() });
+          setCraftPanel({ stage: "balance", recipeId: rid, tier, tol: B.tol, showMax: B.showMax, final: !!final, L: mk(), Rr: mk() });
+        };
+        /* the expert opener: seat the mechanism. Hands-on, precision, and it can be FAILED. */
+        const beginTemper = (rid, tier) => {
+          const ru = expertRules();
+          setCraftPanel({ stage: "temper", recipeId: rid, tier, seated: 0, strikes: 0,
+            maxStrikes: ru.strikes, need: ru.seatings, band: ru.band,
+            window: ru.window, sweep: CFG.CRAFT.expert.sweepMs, start: Date.now() });
+        };
+        const start = (rid) => {   // crude→hard open on the scale; EXPERT opens on the hard part
+          const r = R[rid], tier = tierOf(r);
+          if (tier === "expert") return beginTemper(rid, tier);
+          beginBalance(rid, tier, false);
+        };
+        /* a ruined expert attempt: half the pile, kept as whole units, and you may go again */
+        const ruinAttempt = (rid) => {
+          const r = R[rid], p2 = simRef.current.player;
+          const lost = [];
+          for (const m of Object.keys(r.mats)) {
+            const n = Math.max(1, Math.floor(r.mats[m] * CFG.CRAFT.expert.lossFrac));
+            const take = Math.min(p2.inv[m] || 0, n);
+            if (take > 0) { p2.inv[m] -= take; if (p2.inv[m] <= 0) delete p2.inv[m]; lost.push(`${take}× ${ITEMS[m].name}`); }
+          }
+          sfx.fail();
+          showToast(`💥 Ruined. You lose ${lost.join(", ") || "nothing salvageable"} — the rest is still on the bench.`);
+          setCraftPanel({ stage: "pick" });
+          bump();
         };
         const beginAssembly = (rid, tier) => {
           const areas = tier === "easy" ? ["wood", "screw"] : AREAS[tier];   // easy still SHOWS two areas — either accepts the one chip
           const chips = tier === "easy" ? [Math.random() < 0.5 ? "wood" : "screw"] : AREAS[tier];
-          const screws = tier === "crude" || tier === "easy" ? 1 : tier === "medium" ? 2 : 3;   // crude binds ONE lashing — no metal in it anywhere
+          const screws = tier === "crude" || tier === "easy" ? 1 : tier === "medium" ? 2 : tier === "expert" ? CFG.CRAFT.expert.screws : 3;   // crude binds ONE lashing — no metal in it anywhere
           setCraftPanel({ stage: "assembly", recipeId: rid, tier, areas, chips: chips.map(c => ({ kind: c, placed: false })), screws, done: {}, holding: null });
         };
         const quoteBase = (r) => Object.entries(r.mats).reduce((s, [m, n]) => s + (ITEMS[m]?.price || 2) * n, 0) + CFG.CRAFT.labor[r.tier];
@@ -11734,8 +12122,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             setPlacePanel({ furnId: cp.recipeId });
             showToast(`🪑 You built a ${FURNITURE[cp.recipeId]?.name || cp.recipeId}! Pick where it stands.`);
           } else {
-            p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + 1;
-            showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name} — made by hand.`);
+            const yield_ = r.out || 1;   // `out` was ignored here — "makes 3" quietly made one
+            p2.inv[cp.recipeId] = (p2.inv[cp.recipeId] || 0) + yield_;
+            showToast(`🛠️ ${ITEMS[cp.recipeId].emoji} ${ITEMS[cp.recipeId].name}${yield_ > 1 ? ` ×${yield_}` : ""} — made by hand.`);
           }
           /* a crude tool that did the job may not survive having done it — rolled per tool, after
              the piece is safely in hand, so a snapped flint never costs you the craft itself */
@@ -11757,14 +12146,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             </div>
             {cp.stage === "pick" && (
               <div style={{ ...S.chatBody, gap: 6 }}>
-                {Object.entries(R)
-                  .sort((a, b) => (TIER_ORDER[a[1].tier] ?? 9) - (TIER_ORDER[b[1].tier] ?? 9))
-                  .map(([rid, r], i, list) => {
+                {Object.keys(R)
+                  .sort((a, b) => (TIER_ORDER[R[a].tier] ?? 9) - (TIER_ORDER[R[b].tier] ?? 9))
+                  .map((rid, i, list) => {
+                  const r = R[rid];
                   const ok = hasTools(r) && hasMats(r);
                   const atShop = player.scene === "i:workshop_s";
                   const crude = r.tier === "crude";
                   const thing = r.furn ? FURNITURE[rid] : ITEMS[rid];
-                  const head = i === 0 || list[i - 1][1].tier !== r.tier ? TIER_HEAD[r.tier] : null;
+                  const head = i === 0 || R[list[i - 1]].tier !== r.tier ? TIER_HEAD[r.tier] : null;
                   return (
                     <React.Fragment key={rid}>
                     {head && (
@@ -11784,14 +12174,24 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                           style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: ok ? "#5a7a4a" : "#444", color: "#fff", fontSize: 12, opacity: ok ? 1 : 0.5 }}>🛠️ Make it</button>
                         {atShop && OWNERS.workshop_s !== "player" && (crude
                           ? <span style={{ flex: 1, fontSize: 11, opacity: 0.55, alignSelf: "center" }}>No commission — no wright sells stone-age work.</span>
+                          : ITEMS[rid]?.contraband && sim.watchReq?.itemId !== rid
+                          ? <span style={{ flex: 1, fontSize: 11, opacity: 0.55, alignSelf: "center" }}>Contraband — no wright takes this order without a Watch requisition.</span>
                           : <button onClick={() => commission(rid)}
-                              style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: "#5a4a7a", color: "#fff", fontSize: 12 }}>📜 Commission (~{quoteBase(r)}c)</button>
+                              style={{ flex: 1, padding: "5px 8px", borderRadius: 7, border: "none", background: ITEMS[rid]?.contraband ? "#4a5a7a" : "#5a4a7a", color: "#fff", fontSize: 12 }}>
+                              {ITEMS[rid]?.contraband ? "🛡️ Requisition order" : "📜 Commission"} (~{Math.round(quoteBase(r) * (ITEMS[rid]?.contraband ? CFG.REQUISITION.payMult : 1))}c)
+                            </button>
                         )}
                       </div>
                     </div>
                     </React.Fragment>
                   );
                 })}
+                {sim.watchReq && (
+                  <div style={{ ...S.folkCard, borderLeft: "4px solid #4a6a9a", fontSize: 12 }}>
+                    🛡️ <b>Watch requisition open</b> — {ITEMS[sim.watchReq.itemId].emoji} {ITEMS[sim.watchReq.itemId].name}, put in by {sim.npcs.find(n => n.id === sim.watchReq.byId)?.name || "the Watch"}.
+                    Contraband is a legal order while this paper stands.
+                  </div>
+                )}
                 <div style={{ fontSize: 11, opacity: 0.55 }}>Make it yourself (tools + materials), or pay the wright and come back — except the crude tier, which is yours to make or do without. A knapped stand-in (🗿 🪡 ⚒️ ⛏️) works anywhere its metal twin does, and may not survive the job. Every craft opens on the balance scale — graded by difficulty.</div>
               </div>
             )}
@@ -11807,11 +12207,56 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 )}
               </div>
             )}
+            {cp.stage === "temper" && (() => {
+              /* SEAT THE MECHANISM — the expert opener. The marker sweeps; commit while it's
+                 inside the window. Every part you seat narrows the window and quickens the
+                 sweep. Miss and it's a strike; strike out and the piece is ruined. */
+              const E = CFG.CRAFT.expert;
+              const seat = () => {
+                const t = ((Date.now() - cp.start) % cp.sweep) / cp.sweep;
+                const pos = t < 0.5 ? t * 2 : 2 - t * 2;          // 0..1 triangle sweep
+                if (Math.abs(pos - 0.5) <= cp.window) {           // seated
+                  const seated = cp.seated + 1;
+                  if (seated >= cp.need) { sfx.pop(); setTimeout(() => beginAssembly(cp.recipeId, cp.tier), 60); setCraftPanel(s2 => ({ ...s2, seated })); return; }
+                  sfx.pop();
+                  setCraftPanel(s2 => ({ ...s2, seated, window: s2.window * E.windowShrink, sweep: Math.max(600, s2.sweep * E.sweepQuicken), start: Date.now() }));
+                  showToast(`⚙️ Seated ${seated}/${cp.need} — tighter now.`);
+                } else {
+                  const strikes = cp.strikes + 1;
+                  if (strikes > cp.maxStrikes) return ruinAttempt(cp.recipeId);
+                  sfx.alert();
+                  setCraftPanel(s2 => ({ ...s2, strikes, start: Date.now() }));
+                  showToast(`✖ Slipped. ${cp.maxStrikes - strikes + 1} more and it's scrap.`);
+                }
+              };
+              const bandNote = { green: "You are out of your depth here.", pro: "A real trial at your level.",
+                expert: "Comfortable work for your hands.", master: "You could do this in your sleep." }[cp.band];
+              return (
+                <div style={{ ...S.chatBody, gap: 10 }}>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>
+                    <b>Stage 1 of 3 — seat the mechanism.</b> Commit while the needle is in the window. It narrows each time.
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.55 }}>{bandNote}</div>
+                  <div style={{ display: "flex", gap: 10, fontSize: 12 }}>
+                    <span>Seated <b>{cp.seated}/{cp.need}</b></span>
+                    <span style={{ color: cp.strikes ? "#d95a5a" : "inherit" }}>Strikes <b>{cp.strikes}/{cp.maxStrikes + 1}</b></span>
+                  </div>
+                  <div style={S.fishTrack}>
+                    <div style={{ ...S.fishZone, left: `${50 - cp.window * 100}%`, width: `${cp.window * 200}%` }} />
+                    <div style={{ ...S.fishMarker, animation: `fishslide ${cp.sweep}ms linear infinite` }} />
+                  </div>
+                  <button onClick={seat} style={{ ...S.binBtn, width: "100%", background: "#7a5a3a" }}>SEAT IT{!isPhone ? " (Space)" : ""}</button>
+                  <div style={{ fontSize: 10, opacity: 0.45 }}>Ruin it and you lose half the materials — not all of them. You can try again if you still hold enough.</div>
+                </div>
+              );
+            })()}
             {cp.stage === "balance" && (() => {
               const diff = cp.L.v - cp.Rr.v, deg = clamp(diff * 2.2, -45, 45), even = Math.abs(diff) <= cp.tol;
               return (
                 <div style={{ ...S.chatBody, alignItems: "center", gap: 14 }}>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>Balance the scale — match the two weights exactly.</div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    {cp.final ? <><b>Stage 3 of 3 — true the piece.</b> Both ends blind. Dead exact.</> : "Balance the scale — match the two weights exactly."}
+                  </div>
                   <div style={{ height: 8, width: 200, background: even ? "#4a9a5a" : "#c9a84a", borderRadius: 4, transform: `rotate(${deg}deg)`, transition: "transform 0.15s, background 0.2s" }} />
                   <div style={{ display: "flex", gap: 40, alignItems: "center" }}>
                     {[["L", cp.L], ["Rr", cp.Rr]].map(([side, sl]) => (
@@ -11824,9 +12269,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       </div>
                     ))}
                   </div>
-                  <button disabled={!even} onClick={() => beginAssembly(cp.recipeId, cp.tier)}
+                  <button disabled={!even} onClick={() => cp.final ? finish() : beginAssembly(cp.recipeId, cp.tier)}
                     style={{ ...S.binBtn, width: "100%", background: even ? "#4a9a5a" : "#666", opacity: even ? 1 : 0.5 }}>
-                    {even ? "Balanced — to the bench" : "Not level yet…"}
+                    {even ? (cp.final ? "Trued — finish the piece" : "Balanced — to the bench") : "Not level yet…"}
                   </button>
                   {cp.tol > 0 && <div style={{ fontSize: 10, opacity: 0.45 }}>close enough counts (±{cp.tol})</div>}
                 </div>
@@ -11835,10 +12280,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             {cp.stage === "assembly" && (() => {
               const allPlaced = cp.chips.every(c => c.placed);
               const crude = cp.tier === "crude";   // no screws in the stone age — you bind it with cord and hope
-              const holdMs = crude ? CFG.CRAFT.crudeHoldMs : CFG.CRAFT.holdMs;
+              const holdMs = crude ? CFG.CRAFT.crudeHoldMs : cp.tier === "expert" ? CFG.CRAFT.expert.holdMs : CFG.CRAFT.holdMs;
               return (
                 <div style={{ ...S.chatBody, gap: 12 }}>
-                  {!allPlaced && <div style={{ fontSize: 12, opacity: 0.7 }}>Tap a part, then tap where it goes.</div>}
+                  {!allPlaced && <div style={{ fontSize: 12, opacity: 0.7 }}>{cp.tier === "expert" ? <><b>Stage 2 of 3 — fit it together.</b> Tap a part, then tap where it goes.</> : "Tap a part, then tap where it goes."}</div>}
                   <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
                     {cp.areas.map(ar => {
                       const need = cp.chips.find(c => !c.placed && (cp.chips.length === 1 || c.kind === ar));
@@ -11885,7 +12330,11 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       <HoldMeter holdT={cp.holding?.t || null} ms={holdMs}
                         onDone={() => setCraftPanel(s => {
                           const done = { ...s.done, [s.holding.i]: true };
-                          if (Object.values(done).filter(Boolean).length >= s.screws) { setTimeout(finish, 60); }
+                          if (Object.values(done).filter(Boolean).length >= s.screws) {
+                            // expert has one more stage after this: truing the piece on the scale
+                            if (s.tier === "expert") setTimeout(() => beginBalance(s.recipeId, s.tier, true), 80);
+                            else setTimeout(finish, 60);
+                          }
                           return { ...s, done, holding: null };
                         })} />
                     </>
