@@ -605,6 +605,32 @@ const CFG = {
     accuseWeight: 2,          // an accusation travels as a serious rumour
   },
   PARTY: { hour: 18, endHour: 21, minCost: 50, lateCutoffH: 20, repFame: 6, repRenown: 10, giftChance: 0.8 },
+  /* ===== Stage 13 — three kinds of party =====
+     The old single party was billed as a "house party" and was actually a whole-town plaza do.
+     That's now what PLAZA is, unchanged. HOUSE is a smaller daytime thing at your own place,
+     with decorations up for the duration. SLUMBER is a chosen few, overnight, and every guest
+     needs somewhere to sleep — which is what the sleeping bag is for. */
+  PARTY_KINDS: {
+    plaza: {
+      label: "Plaza party", emoji: "🎉", scope: "town", at: "plaza",
+      hour: 18, endHour: 21, minCost: 50, repFame: 6, repRenown: 10,
+      blurb: "The whole town, on your coin, in the open. Loud and remembered.",
+    },
+    house: {
+      label: "House party", emoji: "🏡", scope: "friends", at: "home", decor: true,
+      hour: 13, endHour: 17, minCost: 24, repFame: 3, repRenown: 5, maxGuests: 8,
+      blurb: "Afternoon, at your place, for people who actually like you. Decorations go up for the day.",
+    },
+    slumber: {
+      label: "Slumber party", emoji: "🛌", scope: "chosen", at: "home", decor: true, overnight: true,
+      hour: 20, endHour: 24, minCost: 18, repFame: 4, repRenown: 8, maxGuests: 4,
+      blurb: "A chosen few, staying the night. Everyone needs a sleeping bag — including whoever has nowhere else to sleep.",
+    },
+  },
+  DECOR: {   // the generated dressing, up only while the party runs
+    glyphs: ["🎈", "🎊", "🕯️", "🎀", "🍥", "🎐"],
+    count: 6,
+  },
   PATROL: { everyH: 4 },
   SKILL: {                          // training: every completed task teaches its trade
     levels: [3, 12, 40, 90, 180, 800, 4000],   // Stage 3.7c: xp thresholds I-VII. Mid-tiers dilated so
@@ -5343,12 +5369,25 @@ export default function Alderbrook() {
       const home = bld(npc.burglaryPlan.homeId), inter = world.interiors[npc.burglaryPlan.homeId];
       const spot = inter?.stations?.table || inter?.stations?.bed || { x: home.door.x, y: home.door.y };
       goal = { scene: `i:${npc.burglaryPlan.homeId}`, x: spot.x, y: spot.y }; activity = "slipping inside a quiet house";
-    } else if (sim.party && sim.party.day === sim.day && hour >= CFG.PARTY.hour && hour < CFG.PARTY.endHour && hereTown === sim.party.town) {
-      const s = town.spots.plaza;                          // arrived guests join the plaza, not the host's hallway
-      let gx = s.x + (sim.npcs.indexOf(npc) % 3) - 1, gy = s.y + (sim.npcs.indexOf(npc) % 2);
-      if (!town.walk[gy]?.[gx]) { gx = s.x; gy = s.y; }    // snap blocked spread-spots back to the plaza tile
-      goal = { scene: `t:${hereTown}`, x: gx, y: gy };
-      activity = "at the party!"; hide = false;
+    } else if (sim.party && sim.party.day === sim.day && hereTown === sim.party.town
+        && (sim.party.guestIds ? sim.party.guestIds.includes(npc.id) : true)
+        && hour >= (CFG.PARTY_KINDS[sim.party.kind || "plaza"]).hour
+        && hour < (CFG.PARTY_KINDS[sim.party.kind || "plaza"]).endHour) {
+      const K = CFG.PARTY_KINDS[sim.party.kind || "plaza"];
+      if (K.at === "home" && sim.party.homeId) {
+        /* a house do happens INSIDE the house — guests come in and stay in, which is the whole
+           difference between this and standing around a plaza. */
+        const inter = world.interiors[sim.party.homeId];
+        const st = inter?.stations?.table || inter?.stations?.bed || inter?.exit || { x: 2, y: 2 };
+        goal = { scene: `i:${sim.party.homeId}`, x: st.x + (sim.npcs.indexOf(npc) % 2), y: st.y };
+        activity = K.overnight ? "staying over" : "round at the party"; hide = false;
+      } else {
+        const s = town.spots.plaza;                        // arrived guests join the plaza, not the host's hallway
+        let gx = s.x + (sim.npcs.indexOf(npc) % 3) - 1, gy = s.y + (sim.npcs.indexOf(npc) % 2);
+        if (!town.walk[gy]?.[gx]) { gx = s.x; gy = s.y; }  // snap blocked spread-spots back to the plaza tile
+        goal = { scene: `t:${hereTown}`, x: gx, y: gy };
+        activity = "at the party!"; hide = false;
+      }
     } else if (sim.opening && !sim.opening.done && OWNERS[sim.opening.bId] === npc.id &&
                sim.day === sim.opening.day && hour >= sim.opening.hour &&
                hour < sim.opening.hour + CFG.JOBS.interviewWindow) {
@@ -6011,7 +6050,15 @@ export default function Alderbrook() {
         }
         else if (nd2.do === "visit" && nd2.target) steps.push({ type: "visit", target: nd2.target });
         else if (nd2.do === "send_letter" && nd2.target) { sendLetter(sim, npc.id, nd2.target, String(nd2.say || "Thinking of you.").slice(0, 90)); continue; }
-        else if (nd2.do === "throw_party" && npc.coins >= 30) { throwParty(sim, world, npc, rand(PARTY_MENU.dinner), rand(PARTY_MENU.dessert), "cider"); continue; }
+        else if (nd2.do === "throw_party" && npc.coins >= 30) {
+          /* Stage 13: an NPC's party is for THEIR friends, not the player's benefit. A modest
+             purse throws a house do; a full one takes over the plaza; and someone with sleeping
+             bags in the cupboard may put a few people up for the night. */
+          const kind = (npc.inv?.bedroll || 0) >= 2 && Math.random() < 0.35 ? "slumber"
+            : npc.coins >= 90 && Math.random() < 0.5 ? "plaza" : "house";
+          throwParty(sim, world, npc, rand(PARTY_MENU.dinner), rand(PARTY_MENU.dessert), "cider", kind);
+          continue;
+        }
         if (steps.length) npc.directive = { steps, say: nd2.say || "..." };
       }
     }).catch(() => { /* skipped nudge, nothing lost */ })
@@ -6912,17 +6959,49 @@ export default function Alderbrook() {
 
   /* the whole town eats on your coin — and remembers it. Cross-town friends
      get letter invitations AND make the trip. Host doubles dinner & dessert. */
-  const throwParty = (sim, world, thrower, dinner, dessert, drink) => {
+  /* who's actually coming, by the kind of do it is */
+  const partyGuestList = (sim, thrower, throwerKey, town, K, chosen) => {
+    if (K.scope === "town") return sim.npcs.filter(n => n.alive && !n.jailedUntil && n.town === town);
+    if (K.scope === "chosen" && chosen?.length) return sim.npcs.filter(n => n.alive && !n.jailedUntil && chosen.includes(n.id));
+    return sim.npcs.filter(n => n.alive && !n.jailedUntil
+      && relIdx(n.relationships[throwerKey] || "neutral") >= relIdx("likes"))
+      .sort((a, b) => relIdx(b.relationships[throwerKey] || "neutral") - relIdx(a.relationships[throwerKey] || "neutral"))
+      .slice(0, K.maxGuests || 8);
+  };
+  /* bunting, candles and paper chains, scattered on the free tiles and taken down after */
+  const makeDecor = (sim, world, homeId) => {
+    const slots = freeSlotsOf(sim, homeId);
+    const inter = world.interiors[homeId];
+    const pool = slots.length ? slots : (inter?.floors || []).slice(0, CFG.DECOR.count);
+    return pool.slice(0, CFG.DECOR.count).map(sl => ({
+      x: sl.x ?? sl[0], y: sl.y ?? sl[1], glyph: rand(CFG.DECOR.glyphs) }));
+  };
+
+  const throwParty = (sim, world, thrower, dinner, dessert, drink, kind = "plaza", chosen = null) => {
     const throwerKey = thrower.id || "player";
+    const K = CFG.PARTY_KINDS[kind] || CFG.PARTY_KINDS.plaza;
     const town = thrower.id ? thrower.town : townOfScene(world, sim.player.scene);
-    const heads = sim.npcs.filter(n => n.alive && n.town === town).length + 1;
-    const cost = Math.max(CFG.PARTY.minCost, Math.ceil(                       // catering never comes cheap
+    const guests = partyGuestList(sim, thrower, throwerKey, town, K, chosen);
+    const heads = guests.length + 1;
+    const cost = Math.max(K.minCost, Math.ceil(                               // catering never comes cheap
       (ITEMS[dinner].price + ITEMS[dessert].price + ITEMS[drink].price) * heads
       + ITEMS[dinner].price + ITEMS[dessert].price));
     if (thrower.coins < cost) return { ok: false, cost };
+    /* a sleepover needs a bed for every guest. The host supplies them, and they're SPENT —
+       a sleeping bag is a real thing you hand someone, not a permission flag. */
+    const homeId = thrower.id ? thrower.home : "home_p";
+    if (K.overnight) {
+      const have = thrower.inv?.bedroll || 0;
+      if (have < guests.length) return { ok: false, cost, needBedrolls: guests.length - have, guests: guests.length };
+      thrower.inv.bedroll -= guests.length;
+      if (thrower.inv.bedroll <= 0) delete thrower.inv.bedroll;
+    }
     fineCoins(thrower, cost);
-    const late = (sim.time / 60) % 24 >= CFG.PARTY.lateCutoffH;               // too late to cater tonight
-    sim.party = { throwerId: throwerKey, town, day: late ? sim.day + 1 : sim.day, dinner, dessert, drink, distributed: false };
+    const late = (sim.time / 60) % 24 >= (K.overnight ? 22 : CFG.PARTY.lateCutoffH);   // too late to cater today
+    sim.party = { kind, throwerId: throwerKey, town, day: late ? sim.day + 1 : sim.day,
+      dinner, dessert, drink, distributed: false, homeId,
+      guestIds: guests.map(g => g.id),
+      decor: K.decor && homeId ? makeDecor(sim, world, homeId) : null };
     sim.buzz = { text: `${thrower.id ? thrower.name : "The player"} is throwing a party at the ${TOWN_DEFS[town].name} plaza ${late ? "TOMORROW night" : "tonight"}!`, day: sim.day };
     sim.dayLog = [...sim.dayLog, `${thrower.id ? thrower.name : playerLabel()} announced a party (${ITEMS[dinner].name}, ${ITEMS[dessert].name})`].slice(-12);
     for (const n of sim.npcs) {
@@ -7241,7 +7320,8 @@ export default function Alderbrook() {
         /* --- party runtime: three hours of the whole town eating on one coin purse --- */
         if (sim.party) {
           const ph = (sim.time / 60) % 24;
-          if (sim.party.day === sim.day && ph >= 18.5 && !sim.party.distributed) {
+          const KStart = (CFG.PARTY_KINDS[sim.party.kind || "plaza"]).hour;
+          if (sim.party.day === sim.day && ph >= KStart + 0.5 && !sim.party.distributed) {
             sim.party.distributed = true;
             const pt = sim.party;
             const thrower = pt.throwerId === "player" ? p : sim.npcs.find(n => n.id === pt.throwerId);
@@ -7265,7 +7345,8 @@ export default function Alderbrook() {
             }
             sim.buzz = { text: "What a party. WHAT a party.", day: sim.day };
           }
-          if (sim.party.day < sim.day || (sim.party.day === sim.day && ph >= CFG.PARTY.endHour)) sim.party = null;
+          const KEnd = (CFG.PARTY_KINDS[sim.party.kind || "plaza"]).endHour;
+          if (sim.party.day < sim.day || (sim.party.day === sim.day && ph >= KEnd)) sim.party = null;   // decorations come down with it
         }
 
         /* --- tidiness --- */
@@ -8210,7 +8291,10 @@ export default function Alderbrook() {
         if (bestStore(p)) out.push({ id: "storage", label: `🔒 Home storage (${p.stored}c stored)` });
         if (p.furniture.includes("chest")) out.push({ id: "chest", label: "🧰 Open storage chest" });
       }
-      if (bId === "home_p" && !sim.party) out.push({ id: "party", label: "🎉 Throw a house party" });
+      if (bId === "home_p" && !sim.party) {   // Stage 13: three different kinds of do, three different evenings
+        for (const [k, K] of Object.entries(CFG.PARTY_KINDS))
+          out.push({ id: "party", label: `${K.emoji} ${K.label}`, partyKind: k });
+      }
       if (bId === "inn" && at("rentbed")) out.push({ id: "rentbed", label: `🛏️ Rent a bed (${CFG.INN_BED}c)` });
       if (bId === "hospital" && at("treat") && p.health < 70)
         out.push({ id: "treat", label: `🩺 Treat wounds (${Math.ceil(CFG.HOSPITAL.walkIn * diff().billMult)}c)` });
@@ -8485,7 +8569,7 @@ export default function Alderbrook() {
       }
       case "storage": setStoragePanel(true); break;   // Stage 4: deposit/withdraw cash
       case "chest": setChestPanel(true); break;        // Stage 4: item storage
-      case "party": setPartyPanel({ dinner: PARTY_MENU.dinner[0], dessert: PARTY_MENU.dessert[0], drink: PARTY_MENU.drink[0] }); break;
+      case "party": setPartyPanel({ kind: a.partyKind || "plaza", chosen: [], dinner: PARTY_MENU.dinner[0], dessert: PARTY_MENU.dessert[0], drink: PARTY_MENU.drink[0] }); break;
       case "caseboard": setCaseBoard(true); break;
       case "interview": {
         const bossN = keeperOf(sim, p.scene.slice(2));
@@ -10313,6 +10397,17 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     else drawInterior(ctx, sim, world.interiors[scene.slice(2)], T, px, py, nowMs);
 
     /* the dead lie where they fell, grey, until the Watch clears the scene */
+    /* Stage 13: party decorations, up only while the party runs and gone the moment it ends */
+    if (sim.party?.decor && scene === `i:${sim.party.homeId}` && sim.party.day === sim.day) {
+      const K = CFG.PARTY_KINDS[sim.party.kind || "plaza"];
+      const ph = (sim.time / 60) % 24;
+      if (ph >= K.hour && ph < K.endHour) {
+        ctx.font = `${Math.floor(T * 0.6)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "#000";
+        for (const d of sim.party.decor) ctx.fillText(d.glyph, px(d.x) + T / 2, py(d.y) + T / 2);
+        ctx.textBaseline = "alphabetic";
+      }
+    }
     for (const body of sim.bodies.filter(b => b.scene === scene)) {
       const bx = px(body.x) + T / 2, by = py(body.y) + T / 2;
       ctx.fillStyle = "#8a8a86";
@@ -12187,10 +12282,18 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       {/* 🎉 party planner: pick the menu, see the damage, feed the town */}
       {partyPanel && player && (() => {
         const town = townOfScene(worldRef.current, player.scene);
-        const heads = simRef.current.npcs.filter(n => n.alive && n.town === town).length + 1;
-        const cost = Math.max(CFG.PARTY.minCost, Math.ceil(
+        const K = CFG.PARTY_KINDS[partyPanel.kind] || CFG.PARTY_KINDS.plaza;
+        const sim0 = simRef.current;
+        const eligible = K.scope === "town" ? sim0.npcs.filter(n => n.alive && !n.jailedUntil && n.town === town)
+          : sim0.npcs.filter(n => n.alive && !n.jailedUntil && relIdx(n.relationships.player || "neutral") >= relIdx("likes"));
+        const guests = K.scope === "chosen"
+          ? eligible.filter(n => (partyPanel.chosen || []).includes(n.id))
+          : eligible.slice(0, K.maxGuests || eligible.length);
+        const heads = guests.length + 1;
+        const cost = Math.max(K.minCost, Math.ceil(
           (ITEMS[partyPanel.dinner].price + ITEMS[partyPanel.dessert].price + ITEMS[partyPanel.drink].price) * heads
           + ITEMS[partyPanel.dinner].price + ITEMS[partyPanel.dessert].price));
+        const bedrollsShort = K.overnight ? Math.max(0, guests.length - (player.inv?.bedroll || 0)) : 0;
         const Row = ({ kind, opts }) => (
           <div style={{ ...S.folkCard }}>
             <div style={{ fontWeight: 700, marginBottom: 6, textTransform: "capitalize" }}>{kind}</div>
@@ -12206,10 +12309,37 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           <div style={S.chatOverlay} onClick={() => setPartyPanel(null)}>
             <div style={{ ...S.chatPanel, maxWidth: 460 }} onClick={e => e.stopPropagation()}>
               <div style={{ ...S.chatHeader, background: "#9c5a8a" }}>
-                <span style={{ fontWeight: 700 }}>🎉 House party · {heads} mouths + your doubles</span>
+                <span style={{ fontWeight: 700 }}>{K.emoji} {K.label} · {heads} mouths + your doubles</span>
                 <button style={S.closeBtn} onClick={() => setPartyPanel(null)}>✕</button>
               </div>
               <div style={S.chatBody}>
+                <div style={{ ...S.folkCard, fontSize: 12, opacity: 0.8 }}>
+                  {K.blurb} <b>{K.hour}:00–{K.endHour}:00</b>{K.decor ? " · decorations up for the duration" : ""}
+                </div>
+                {K.scope === "chosen" && (
+                  <div style={S.folkCard}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Who's staying over <span style={{ fontWeight: 400, opacity: 0.6 }}>(up to {K.maxGuests})</span></div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {eligible.map(n => {
+                        const on = (partyPanel.chosen || []).includes(n.id);
+                        const roofless = !n.home || n.evicted;
+                        return (
+                          <button key={n.id} style={{ ...S.diffBtn, ...(on ? S.diffBtnOn : {}) }}
+                            onClick={() => setPartyPanel(pp => {
+                              const cur = pp.chosen || [];
+                              return { ...pp, chosen: cur.includes(n.id) ? cur.filter(x => x !== n.id)
+                                : cur.length >= K.maxGuests ? cur : [...cur, n.id] };
+                            })}>{n.name}{roofless ? " 🏚️" : ""}</button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}>
+                      🏚️ = nowhere of their own to sleep tonight. {bedrollsShort > 0
+                        ? <b style={{ color: "#a05252" }}>You need {bedrollsShort} more sleeping bag{bedrollsShort === 1 ? "" : "s"}.</b>
+                        : `Sleeping bags: ${player.inv?.bedroll || 0} — enough.`}
+                    </div>
+                  </div>
+                )}
                 <Row kind="dinner" opts={PARTY_MENU.dinner} />
                 <Row kind="dessert" opts={PARTY_MENU.dessert} />
                 <Row kind="drink" opts={PARTY_MENU.drink} />
@@ -12219,8 +12349,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 </div>
                 <button style={{ ...S.binBtn, width: "100%", background: player.coins >= cost ? "#9c5a8a" : "#777" }}
                   onClick={() => {
-                    const res = throwParty(simRef.current, worldRef.current, player, partyPanel.dinner, partyPanel.dessert, partyPanel.drink);
+                    const res = throwParty(simRef.current, worldRef.current, player, partyPanel.dinner, partyPanel.dessert, partyPanel.drink, partyPanel.kind, partyPanel.chosen);
                     if (res.ok) { setPartyPanel(null); showToast(`Party's ON! (−${res.cost} coins)`); }
+                    else if (res.needBedrolls) showToast(`🛌 You're ${res.needBedrolls} sleeping bag${res.needBedrolls === 1 ? "" : "s"} short for ${res.guests} guests. Ten grass bundles each, or buy them at Hearth & Holt.`);
                     else showToast(`Catering runs ${res.cost}c — you're short.`);
                   }}>Throw it! ({cost}c)</button>
               </div>
