@@ -5370,7 +5370,9 @@ export default function Alderbrook() {
       const spot = inter?.stations?.table || inter?.stations?.bed || { x: home.door.x, y: home.door.y };
       goal = { scene: `i:${npc.burglaryPlan.homeId}`, x: spot.x, y: spot.y }; activity = "slipping inside a quiet house";
     } else if (sim.party && sim.party.day === sim.day && hereTown === sim.party.town
-        && (sim.party.guestIds ? sim.party.guestIds.includes(npc.id) : true)
+        /* only a SLEEPOVER is invitation-only. A plaza or house do is open — anyone who fancies
+           it turns up, which is what makes them different sorts of evening. */
+        && ((sim.party.kind || "plaza") !== "slumber" || (sim.party.guestIds || []).includes(npc.id))
         && hour >= (CFG.PARTY_KINDS[sim.party.kind || "plaza"]).hour
         && hour < (CFG.PARTY_KINDS[sim.party.kind || "plaza"]).endHour) {
       const K = CFG.PARTY_KINDS[sim.party.kind || "plaza"];
@@ -6051,12 +6053,34 @@ export default function Alderbrook() {
         else if (nd2.do === "visit" && nd2.target) steps.push({ type: "visit", target: nd2.target });
         else if (nd2.do === "send_letter" && nd2.target) { sendLetter(sim, npc.id, nd2.target, String(nd2.say || "Thinking of you.").slice(0, 90)); continue; }
         else if (nd2.do === "throw_party" && npc.coins >= 30) {
-          /* Stage 13: an NPC's party is for THEIR friends, not the player's benefit. A modest
-             purse throws a house do; a full one takes over the plaza; and someone with sleeping
-             bags in the cupboard may put a few people up for the night. */
-          const kind = (npc.inv?.bedroll || 0) >= 2 && Math.random() < 0.35 ? "slumber"
+          /* Stage 13: an NPC's party is for THEIR friends, not the player's benefit. Claude picks
+             the kind AND the guest list when there's a lane free; the local heuristic below is the
+             same decision made without it, so the behaviour holds with the AI off. */
+          const beds = npc.inv?.bedroll || 0;
+          const localKind = () => beds >= 2 && Math.random() < 0.35 ? "slumber"
             : npc.coins >= 90 && Math.random() < 0.5 ? "plaza" : "house";
-          throwParty(sim, world, npc, rand(PARTY_MENU.dinner), rand(PARTY_MENU.dessert), "cider", kind);
+          const localGuests = () => sim.npcs.filter(o => o.alive && !o.jailedUntil && o.id !== npc.id
+            && relIdx(o.relationships[npc.id] || "neutral") >= relIdx("friend")).slice(0, beds).map(o => o.id);
+          const fire = (kind, invite, line) => {
+            const res = throwParty(sim, world, npc, rand(PARTY_MENU.dinner), rand(PARTY_MENU.dessert), "cider", kind, invite);
+            if (res?.ok !== false && line) npc.bubble = { text: line.slice(0, 90), until: performance.now() / 1000 + 6 };
+          };
+          const friends = sim.npcs.filter(o => o.alive && !o.jailedUntil && o.id !== npc.id
+            && relIdx(o.relationships[npc.id] || "neutral") >= relIdx("likes"))
+            .map(o => ({ id: o.id, name: o.name, rel: o.relationships[npc.id], roofless: !o.home || o.evicted })).slice(0, 10);
+          if (USER_API_KEY && !apiBusyRef.current) {
+            apiBusyRef.current = true;
+            partyPlanCall(npc.name, npc.personality, npc.coins, beds, friends)
+              .then(out => {
+                const kind = CFG.PARTY_KINDS[out?.kind] ? out.kind : localKind();
+                const invite = Array.isArray(out?.invite)
+                  ? out.invite.filter(id => friends.some(f => f.id === id)).slice(0, beds || 4)
+                  : localGuests();
+                fire(kind, invite, out?.line);
+              })
+              .catch(() => fire(localKind(), localGuests(), null))
+              .finally(() => { apiBusyRef.current = false; });
+          } else fire(localKind(), localGuests(), null);
           continue;
         }
         if (steps.length) npc.directive = { steps, say: nd2.say || "..." };
@@ -7181,11 +7205,34 @@ export default function Alderbrook() {
           const residents = isHomeId(hb) && hb !== p.home ? sim.npcs.filter(n => n.alive && n.home === hb) : [];
           if (residents.length) {
             const abs9 = sim.day * 1440 + sim.time;
-            if (!p.trespass || p.trespass.homeId !== hb) p.trespass = { homeId: hb, since: abs9, warned: false, reported: false };
+            if (!p.trespass || p.trespass.homeId !== hb) p.trespass = { homeId: hb, since: abs9, warned: false, reported: false, crashTold: false };
             const present = residents.filter(n => n.scene === p.scene && !n.incap && !n.dying);
             const awakeHost = present.find(n => !n.activity?.includes("sleep") && !n.activity?.includes("Sleep"));
             const partyHere = sim.party && sim.party.day === sim.day && residents.some(r => r.id === sim.party.throwerId);
-            const welcomed = partyHere || (awakeHost && relIdx(awakeHost.relationships.player || awakeHost.relationships[p.id] || "neutral") >= relIdx("likes"));
+            /* Stage 13: a plaza or house do has an open door — turn up and you're a guest. A
+               SLEEPOVER doesn't: it's a named list, and walking into one uninvited is walking
+               into someone's house at night. A friend gets the one concession, and only if they
+               brought their own bag, because the host planned beds for the people they asked. */
+            const partyKind = partyHere ? (sim.party.kind || "plaza") : null;
+            let crashOk = partyHere;
+            if (partyKind === "slumber" && !(sim.party.guestIds || []).includes("player")) {
+              const hostN = residents.find(r => r.id === sim.party.throwerId) || awakeHost;
+              const friendly = hostN && relIdx(hostN.relationships.player || "neutral") >= relIdx("friend");
+              const ownBag = (p.inv?.bedroll || 0) > 0;
+              crashOk = friendly && ownBag;
+              if (hostN && !p.trespass?.crashTold) {
+                p.trespass = { ...(p.trespass || {}), crashTold: true };
+                hostN.bubble = { text: crashOk
+                    ? rand(["...fiiine. You've got your own bag, so you can stay.", "I didn't plan a bed for you — but you brought one. Come in.", "Cheeky. Roll it out over there."])
+                    : friendly ? "I'd have you, but I've no bag spare and you didn't bring one. Sorry."
+                    : "You weren't invited to this one.",
+                  until: performance.now() / 1000 + 6 };
+                showToast(crashOk ? "🛌 You're in — on your own sleeping bag."
+                  : friendly ? "🛌 No spare bag, no bed. Bring your own next time."
+                  : "🚪 You weren't invited to this. You're trespassing.");
+              }
+            }
+            const welcomed = crashOk || (awakeHost && relIdx(awakeHost.relationships.player || awakeHost.relationships[p.id] || "neutral") >= relIdx("likes"));
             const stayed = abs9 - p.trespass.since;
             const nowS = performance.now() / 1000;
             if (!welcomed && stayed > CFG.TRESPASS.graceMin && !p.trespass.warned) {
@@ -9213,6 +9260,24 @@ export default function Alderbrook() {
    price nudge, the timeline, and the line he says. If the call fails (no key, network),
    the local quote stands: material value + labor by tier, days by tier. Same numbers the
    API is anchored to, so offline isn't a discount or a gouge — just quieter. */
+/* Stage 13: an NPC deciding what sort of party to throw, and who they want at it. The kinds
+   differ in more than size — a plaza do is the whole town, a house do is people you like, and a
+   sleepover is a handful you'd want asleep in your front room. Only the last one needs names. */
+async function partyPlanCall(hostName, personality, coins, bedrolls, friends) {
+  const prompt =
+`You are ${hostName}, ${personality} — throwing a party in a life-sim town.
+You have ${coins} coins and ${bedrolls} spare sleeping bag(s).
+People who like you: ${friends.map(f => `${f.id} (${f.name}, ${f.rel}${f.roofless ? ", has nowhere to sleep" : ""})`).join("; ") || "nobody close"}.
+Pick ONE kind:
+- "plaza": the whole town, open to all, expensive (needs 90+ coins).
+- "house": an afternoon at yours for people you like, open to friends who turn up.
+- "slumber": a few chosen people staying the night. Each guest needs one of YOUR sleeping bags, so you cannot invite more than you have.
+Invite only matters for "slumber" — list up to 4 ids. Choose people in character; someone with nowhere to sleep is a kind invite.
+Respond ONLY with JSON:
+{"kind": "plaza"|"house"|"slumber", "invite": ["id", ...], "line": "<one short in-character sentence about the plan>"}`;
+  return callClaude(prompt, 160);
+}
+
 async function commissionCall(ownerName, personality, itemName, tier, baseCost, baseDays, playerRep) {
   const prompt =
 `You are ${ownerName}, ${personality} — a workshop owner in a life-sim quoting a commission.
