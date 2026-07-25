@@ -12,6 +12,42 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
                 carries a per-USE chance of coming apart for good. Rope
                 (4 grass bundles), a hard herbal-salve craft, sticks on the
                 forage table, and no wright will take a crude commission.
+   - Stage 10c: CONTRABAND + DEFENSIVE MURDER. `contraband: true` keeps a
+                thing out of every luck pool — the crossbow (and its bolts) is
+                Watch-issue, black-market or taken, never fished out of a
+                crate. And the ladder gains two rungs between assault and
+                murder: they came at YOU, you won, and you left them to bleed.
+                Unprovoked defensive murder (your hands were clean) is 3* —
+                one under dirty vigilante; provoked (you were already wanted)
+                is 4*, level with it. Both route through convictStars, so
+                standing above that mark keeps and escalates as normal.
+                Recorded at the killing blow, since that's the only moment the
+                sim knows who swung first. Executing someone already down is
+                still plain murder.
+   - Stage 10b: THE HOME ECONOMY — NPCs stop being customers only. They buy
+                ovens/drink stations FOR A REASON now (homeCraftTick): shop a
+                market for raw ingredients, cook a real RECIPES plate at their
+                own door, and eat it for more than the shelf version gives.
+                Spare plates go to hungry friends sleeping rough. A workbench
+                is a genuine long save and gets used. The jobless take odd
+                jobs (dock/graveyard/plaza/park/pump) for coin and skill
+                instead of only drawing the dole, which is now halved for
+                anyone who worked yesterday. Goodie crates are price-weighted
+                (1/price^0.45): a 200c pull went from 1-in-32 to 1-in-171 and
+                announces itself.
+   - Stage 10:  ATTITUDE + IDENTITY — the town's temperament is now a setting.
+                PEACEFUL is the valley exactly as it was (every dial 1, no new
+                behaviour). DRAMATIC lets every soul ACT on nine tiers of
+                feeling that were previously only tracked: enemies are sought
+                out across town and settled with (a dislike is a public scene,
+                an enemy helps themselves to your purse, a nemesis swings), a
+                downed favourite gets AVENGED, and adored people get followed
+                and showered. Crime x2.2, feelings move x2, the Watch deters
+                less, nobody shuts up. Enforcers and doctors are held back from
+                STARTING anything so the town can still arrest and heal.
+                Choosable through day 2, then baked into the file. Also: name
+                yourself, and the valley uses it — logs, gossip, headstone, and
+                the AI's mouth. Blank still reads "the player".
    - Stage 9b:  THE WILD — the first thing in the valley that isn't a person
                 and still fights. Skittish Wild Hares (2 meat cuts) and rare
                 hostile Rogue Stags (5) live in sim.beasts, entirely outside
@@ -217,6 +253,75 @@ const CFG = {
     stoneAxeWood: 1,                           // a stone axe brings down ONE piece; the steel hatchet takes 1-2
     stoneAxeMin: 14, hatchetMin: 8,            // ...and takes half again as long doing it
   },
+  CRATE: {   // Stage 10: goodie crates lean on price now, gently
+    /* The pool used to be flat: a 200c crossbow rolled exactly as often as a 2c candle, which
+       is why one came out of a fishing grind. Weight is 1/price^exp — a mild curve, NOT a
+       lockout. At 0.45 the crossbow lands about 1 crate in 171 instead of 1 in 32, the Hunting
+       Bow about 1 in 85, and the tat you'd expect stays common. Pulling something dear should
+       feel like a story, not a coin flip. */
+    priceWeight: 0.45,
+    braggableAt: 20,           // a haul worth this much per item earns its own line
+  },
+  ODDJOBS: {   // Stage 10: the jobless don't just draw the dole — they go and EARN
+    /* Honest work you can pick up without an employer: hauling at the dock, tidying the
+       graveyard, sweeping the plaza. Pay is small and the stint is real (time + energy), but
+       it beats sitting on the civic dole, and it feeds the same skill tracks as a proper job. */
+    seekBelow: 22,             // an NPC with less than this in pocket starts looking for work
+    cooldownH: 4,              // ...and won't take another stint for this long
+    pay: [3, 7], minutes: 90, energy: 12,
+    doleCut: 0.5,              // a soul who worked a gig yesterday draws a reduced dole
+    gigs: [                    // spot key → what it is and what it teaches
+      { spot: "dock",      label: "hauling crates at the dock",   track: "fishing" },
+      { spot: "graveyard", label: "tidying the graveyard",        track: "foraging" },
+      { spot: "park",      label: "clearing the park paths",      track: "foraging" },
+      { spot: "plaza",     label: "sweeping the plaza",           track: "service" },
+      { spot: "pump",      label: "drawing and carrying water",   track: "service" },
+    ],
+  },
+  HOMEMADE: {   // Stage 10: NPCs actually USE the kitchens they buy
+    /* They've been buying ovens and drink stations since Stage 4 and doing nothing with them.
+       Now an NPC with a home appliance buys INGREDIENTS at the market, cooks at home, and eats
+       their own food — which is where markets stop being a player-only building. Homemade
+       plates feed better than the bought equivalent, because someone made them. */
+    cookChance: 0.5,           // per evening at home, with an oven and the makings
+    drinkChance: 0.4,
+    bonus: 8,                  // homemade food/drink feeds this much more than the shelf version
+    pantryTarget: 3,           // how many made plates they like to keep ahead
+    ingredientBudget: 14,      // coins they'll lay out on a market run for makings
+    shareChance: 0.55,         // ...and the odds they press a spare on a hungry friend with no roof
+    benchChance: 0.10,         // an NPC with a workbench tinkering on an evening
+  },
+  ATTITUDE: {   // Stage 10: how hard the town FEELS about each other. Set early, then it's baked in.
+    /* Alderbrook has always simulated grudges and devotion — it just never let anyone ACT on
+       them unprompted. PEACEFUL is that town, unchanged to the number. DRAMATIC hands every
+       soul permission to do something about how they feel: enemies get hunted, favourites get
+       fussed over, and everything swings twice as far. Locked after the opening days because
+       a town's temperament isn't a dial you flip mid-story. */
+    lockAfterDay: 2,
+    modes: {
+      peaceful: {
+        label: "Peaceful", emoji: "🕊️", drama: false,
+        blurb: "The valley as it's always been. Feelings run deep and stay private; trouble comes from need, not spite.",
+        relStep: 1, giftChance: 1, crimeMult: 1, watchDeter: 1, chatterMult: 1,
+      },
+      dramatic: {
+        label: "Dramatic", emoji: "🎭", drama: true,
+        blurb: "Everyone ACTS on it. Enemies are sought out and settled with; favourites are showered, followed and avenged. Crime doubles, the Watch is stretched thin, and every feeling moves twice as fast.",
+        relStep: 2, giftChance: 3.5, crimeMult: 2.2, watchDeter: 0.6, chatterMult: 2,
+        considerEveryS: 40,        // a soul weighs their feelings this often — the roll below is gated on it,
+        grudgeChance: 0.16,        // not run every decide-tick, or the town would do nothing but brawl
+        devotionChance: 0.20,      // per consideration: someone they can't stand / someone they adore, in town
+        /* the thresholds to ACT. A fresh valley seeds no `close` bonds and only two `hates`
+           pairs, so gating on those would make day one look identical to peaceful. Dramatic
+           souls act on a mere friendship or a mere dislike — how FAR it goes is still decided
+           by the real tier in settleGrudge, so a dislike is a scene and a nemesis is blood. */
+        fussFrom: "friend", spiteFrom: "dislikes",
+        avengeChance: 0.55,        // a devotee finding their favourite bleeding goes after whoever did it
+        grudgeRadius: 9,           // they'll cross a plaza for this
+        spiteCoins: [3, 9],        // what an enemy helps themselves to
+      },
+    },
+  },
   BEASTS: {   // Stage 9: the wild — the first thing in Alderbrook that fights back and isn't a person
     /* Beasts live OUTSIDE the social sim entirely: no relationships, no jail, no case file.
        Drawing on one is not a crime and no witness ever reports it — the justice pipeline is
@@ -314,7 +419,15 @@ const CFG = {
   WANTED: { arrestAt: 2, finePerLevel: 6, stealFineMult: 3,
     jailHours: { 2: 14, 3: 36, 4: 168 }, debtFine: { 3: 15, 4: 30 },   // 2★ 12-16h (scaled by repetition), 3★ 36h, 4★ a week
     twoStarLo: 12, twoStarHi: 16,   // the 2★ custody band; each prior stint nudges it up
-    bounty: { 2: 5, 3: 12, 4: 18, 5: 24 } },   // paid per star for a LIVE takedown delivery; 2★ is the "petty" rate
+    bounty: { 2: 5, 3: 12, 4: 18, 5: 24 },   // paid per star for a LIVE takedown delivery; 2★ is the "petty" rate
+    /* DEFENSIVE MURDER: they came at YOU, you won, and you walked away leaving them to bleed.
+       That is not murder — you didn't go looking for it — but it isn't nothing either, because
+       you could have carried them in and chose not to. Two charges, by how clean your own
+       hands were: unprovoked (you'd done nothing wrong) sits one rung UNDER dirty vigilante;
+       provoked (you were already carrying stars — you'd hurt someone, you're not innocent
+       here) sits level with it. Both run through convictStars, so if you were already wanted
+       above that mark you keep what you had and escalate as normal. */
+    defensiveStars: 3, defensiveProvokedStars: 4 },
   DYING_WINDOW_MIN: 32,            // lethal wounds: found fast, or not at all (32: drag at 12 + cries-carry need real margin under v7 crime volume)
   SICK: { baseHr: 0.0008, lowNeedHr: 0.018, hygieneMult: 3, contam: 0.06,
           burn: 0.35, burnBad: 0.2, mildEnergyMult: 1.5, badHealthHr: 1.5,
@@ -535,6 +648,19 @@ const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 // Two tiers deeper at each end: "enemy"/"nemesis" below "hates", "close"/"beloved" above "friend".
 // "enemy"/"close" are the "much more than that" step; "nemesis"/"beloved" are the long-term extremes.
+/* the name the player chose for themselves. Module-level (like OWNERS) so prose builders and
+   API prompt builders outside the component can reach it; re-synced on new game and on load.
+   Empty means unnamed, and everything reads exactly as it did before naming existed. */
+let PLAYER_NAME = "";
+const setPlayerName = (n) => { PLAYER_NAME = (n || "").trim().slice(0, 18); return PLAYER_NAME; };
+const playerLabel = () => PLAYER_NAME || "the player";   // third person: logs, gossip, AI context
+const playerDisplay = () => PLAYER_NAME || "You";        // second person: the map tag, your own bars
+
+/* the town's temperament, as chosen in Settings. Everything that differs between a peaceful
+   valley and a dramatic one reads its dials from here, so PEACEFUL stays byte-identical to the
+   game before attitudes existed (every multiplier is 1 and `drama` is off). */
+const att = (sim) => CFG.ATTITUDE.modes[sim?.settings?.attitude] || CFG.ATTITUDE.modes.peaceful;
+
 const REL_ORDER = ["nemesis", "enemy", "hates", "dislikes", "neutral", "likes", "friend", "close", "beloved"];
 const relIdx = (r) => { const i = REL_ORDER.indexOf(r); return i < 0 ? REL_ORDER.indexOf("neutral") : i; };
 // natural "<name> <phrase> <other>" wording handed to the AI brains and shown in the roster
@@ -675,9 +801,13 @@ const ITEMS = {
   stonespear:   { name: "Stone Spear",    emoji: "🔱", price: 7,   cat: "weapon", dmg: [11, 19], crude: 0.12 },
   sling:        { name: "Cord Sling",     emoji: "🧶", price: 6,   cat: "weapon", dmg: [6, 12],  range: 3, ammo: "rock",  crude: 0.10 },
   crudebow:     { name: "Bent-Stave Bow", emoji: "🏹", price: 20,  cat: "weapon", dmg: [12, 22], range: 5, ammo: "arrow", crude: 0.08 },
-  crossbow:     { name: "Crossbow",       emoji: "🎯", price: 200, cat: "weapon", dmg: [26, 40], range: 7, ammo: "bolt", lethal: true },   // the world's status weapon — Watch-issue or black market only
+  /* `contraband` keeps a thing out of every LUCK pool. The crossbow's whole character is that
+     you can't just come by one — Watch-issue, or bought dirty in the Outlands, or taken off
+     somebody. Price-weighting made it rare; this makes it earned. Fishing a lethal weapon out
+     of a crate was never the story this item was written for. */
+  crossbow:     { name: "Crossbow",       emoji: "🎯", price: 200, cat: "weapon", dmg: [26, 40], range: 7, ammo: "bolt", lethal: true, contraband: true },   // the world's status weapon — Watch-issue or black market only
   arrow:        { name: "Arrow",          emoji: "🪶", price: 2,   cat: "gift" },
-  bolt:         { name: "Crossbow Bolt",  emoji: "🔩", price: 4,   cat: "gift" },
+  bolt:         { name: "Crossbow Bolt",  emoji: "🔩", price: 4,   cat: "gift", contraband: true },   // ammo for a contraband weapon is contraband
   fiber:        { name: "Grass Bundle",   emoji: "🌾", price: 1,   cat: "gift" },
   herb:         { name: "Wild Herb",      emoji: "🌿", price: 3,   cat: "gift", heal: 6 },
   ring:         { name: "Tarnished Ring", emoji: "💍", price: 8,   cat: "gift" },
@@ -734,6 +864,26 @@ const RECIPES = {
 };
 const COOK_TEMP_TOL = 20;   // Stage 3.6.1: ±°F window on the oven dial — a bit forgiving for drag aiming
 
+/* ===== Stage 10 — the home kitchen =====
+   What an NPC shops for when they own an appliance, and the plain recipes they cook with it.
+   Deliberately drawn from RECIPES the player already uses, so a homemade stew IS a stew — the
+   only difference is `homeBonus`, the little extra a plate gets for being made by someone at
+   their own stove rather than pulled off a shelf. */
+const HOME_COOK_ING = ["veg", "flour", "fish", "fruit"];
+const HOME_DRINK_ING = ["milk", "fruit", "water", "chocolate"];
+const HOME_COOK = [                      // tried in order; first one they hold the makings for
+  { out: "hearty_stew", needs: { fish: 2, veg: 2 } },
+  { out: "stew",        needs: { fish: 1, veg: 1 } },
+  { out: "veg_soup",    needs: { veg: 1 } },
+  { out: "bread",       needs: { flour: 1 } },
+  { out: "salad",       needs: { fruit: 1, veg: 1 } },
+];
+const HOME_DRINK = [
+  { out: "choco_milk", needs: { milk: 1, chocolate: 1 } },
+  { out: "milkshake",  needs: { fruit: 1, milk: 1 } },
+  { out: "lemonade",   needs: { water: 1, fruit: 1 } },
+  { out: "hot_choc",   needs: { water: 1, chocolate: 1 } },
+];
 const SHOP_STOCK = {
   cafe:     ["meal", "coffee", "bread", "flour"],
   cafe_s:   ["coffee", "tea", "cookies"],
@@ -934,6 +1084,10 @@ const SHOP_CANDIDATES = {
   grill_o:  ["mystery_stew", "stew", "coffee", "bread", "water"],
 };
 /* which candidate items are "baked/cooked" — plain stores may carry at most a couple */
+/* how much made-at-home food an NPC is holding — the pantry check that drives a market run.
+   Declared here because it reads COOKED_ITEMS, defined on the next line. */
+const madeFoodOf = (npc) => Object.keys(npc.inv || {})
+  .reduce((s, id) => s + (COOKED_ITEMS.has(id) && npc.inv[id] > 0 ? npc.inv[id] : 0), 0);
 const COOKED_ITEMS = new Set(["meal","bread","fresh_bread","cookies","salad","bland_salad","candy_apple","cake","pie","croissant","combo","pizza","fish_sticks","noodles","taco","stew","grilled_fish","veg_soup","hearty_stew","sushi","herb_roast","wild_stew","herb_tart","gourmet_platter","roast_meat","meat_skewer","game_pie","choco_milk","hot_choc","milkshake","lemonade","mocha","trop_shake","nutrient"]);
 /* who owns each business — revenue flows to them, wages flow out of them.
    null = civic (post, HQ): the town mints those paychecks. */
@@ -1907,6 +2061,7 @@ const BEAST_SPECIES = {
     note: "antlers down, and it saw you first",
   },
 };
+const rollRange = (r) => randInt(r);           // a [lo,hi] straight off a config object
 const beastBite = (S9) => randInt(S9.dmg);      // what a hostile species hits for, per pass
 const goring = (S9) => Math.ceil(beastBite(S9) * CFG.BEASTS.npcGoreMult);   // ...and what it costs a bystander
 const beastAt = (sim, id) => (sim.beasts || []).find(b => b.id === id && b.alive) || null;
@@ -2233,7 +2388,7 @@ Return ONLY JSON. To ask: {"action":"ask","say":"your question"}. To conclude: {
 
 function relLine(npc, npcsById) {
   const parts = Object.entries(npc.relationships)
-    .map(([id, st]) => `${REL_DESC[st] || st} ${id === "player" ? "the player" : (npcsById[id]?.name || id)}`);
+    .map(([id, st]) => `${REL_DESC[st] || st} ${id === "player" ? playerLabel() : (npcsById[id]?.name || id)}`);
   return parts.length ? parts.join("; ") : "no strong feelings about anyone yet";
 }
 const invLine = (ent) => {
@@ -2654,6 +2809,7 @@ export default function Alderbrook() {
   const [zoomHud, setZoomHud] = useState(1);                 // mirror for the HUD buttons
   const [tradeOffer, setTradeOffer] = useState(null);        // NPC→player incoming offer { fromId, give, ask, note }
   const [apiKeyInput, setApiKeyInput] = useState("");         // optional API key for standalone webpage builds
+  const [nameInput, setNameInput] = useState("");             // Stage 10: what the valley calls you
   const lastSpeechRef = useRef(0);                           // Stage 6: throttle on speech replies
   const saveFileInputRef = useRef(null);                     // hidden file input for save-file import
   const [toast, setToast] = useState(null);
@@ -2699,7 +2855,7 @@ export default function Alderbrook() {
   const diff = () => CFG.DIFF[simRef.current?.settings?.difficulty || "normal"];
 
   /* ---------- construction ---------- */
-  const freshSim = useCallback((difficultyChoice) => {
+  const freshSim = useCallback((difficultyChoice, nameChoice) => {
     const world = buildWorld();
     worldRef.current = world;
     const npcs = NPC_DEFS.map((def, i) => ({
@@ -2755,6 +2911,7 @@ export default function Alderbrook() {
         coins: CFG.START_COINS, inv: { bread: 1, water: 1 }, fame: 0, renown: 0,
         wanted: 0, bedrest: false, incap: null, dying: null, sick: null, hospitalBill: 0,
         evicted: false, vagrantWarned: false,           // Stage 3
+        name: "",                                       // Stage 10: what you call yourself — blank until you say
         skills: {}, expertise: {}, domainXp: {}, job: null,   // Stage 3.7c: player earns domain expertise too
         furniture: [], stored: 0, chest: {},   // Stage 4: installed furniture, cash in home storage, chest item map
         occupation: { bId: null, category: null, track: null, rank: 0, title: "Unemployed",
@@ -2792,8 +2949,10 @@ export default function Alderbrook() {
       taxRate: CFG.TAX.rate, playerMayor: false,        // the mayor's dials (player-adjustable in office)
       mayorFavor: 0,                                     // Stage 9: goodwill the sitting mayor has banked (funds/cuts/gifts); excuses the odd perk
       bizQuotes: {},                                    // today's business asking prices {bId: {day, price, say}}
-      settings: { difficulty: difficultyChoice || "normal", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6, apiKey: USER_API_KEY || "" },  // 99 = unlimited; carry any key set on the title screen
+      settings: { difficulty: difficultyChoice || "normal", attitude: "peaceful", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6, apiKey: USER_API_KEY || "" },  // 99 = unlimited; carry any key set on the title screen
     };
+    setPlayerName(nameChoice || "");   // whatever was typed on the title screen
+    simRef.current.player.name = PLAYER_NAME;
   }, []);
 
   /* ---------- persistence ---------- */
@@ -2834,6 +2993,8 @@ export default function Alderbrook() {
         mayor: !!n.mayor, patrolRoute: n.patrolRoute || null,   // Pass 4: the chair + the beat survive too
         timesJailed: n.timesJailed || 0, spreeUntil: n.spreeUntil || null,   // the criminal career survives too
         favors: n.favors || null,   // paid-favor promises the owner still owes
+        homemade: n.homemade || null,   // Stage 10: which plates in their bag they made themselves
+        oddJobDay: n.oddJobDay || 0,    // ...and whether they earned their own keep lately
       }])),
     };
   };
@@ -2856,6 +3017,7 @@ export default function Alderbrook() {
     sim.lastStipendHr = data.lastStipendHr ?? null;
     sim.nudgeDone = data.nudgeDone || {}; sim.mess = { ...sim.mess, ...data.mess };
     sim.graves = data.graves || []; sim.settings = { ...sim.settings, ...data.settings };
+    sim.settings.attitude = CFG.ATTITUDE.modes[sim.settings.attitude] ? sim.settings.attitude : "peaceful";
     if (data.stock) sim.stock = data.stock;
     if (data.menu) sim.menu = data.menu;
     if (data.openQueue !== undefined) sim.openQueue = data.openQueue;
@@ -2901,6 +3063,8 @@ export default function Alderbrook() {
         ? makeOccupation(sim.player, sim.player.job.bId, { hiredDay: sim.player.job.since || sim.day })
         : playerOcc;
     }
+    setPlayerName(sim.player.name || "");                 // re-point the module-level label at this save's name
+    setNameInput(sim.player.name || "");
     sim.player.home = "home_p";                          // older saves predate the field (furniture stations need it)
     sim.player.furniture = Array.from(new Set([...(sim.player.furniture || []), ...(sim.playerFurniture || [])]));   // crafted pieces used to live in a SEPARATE list
     sim.playerFurniture = sim.player.furniture;          // legacy alias kept pointed at the real list
@@ -2977,7 +3141,7 @@ export default function Alderbrook() {
   const start = async (phone, continueSave) => {
     try { const ac = sfx._ac(); if (ac?.state === "suspended") ac.resume(); } catch (e) { /* no audio */ }
     setIsPhone(phone);
-    if (continueSave) await loadGame(); else freshSim(difficulty);
+    if (continueSave) await loadGame(); else freshSim(difficulty, nameInput);
     setDeathScreen(null);
     setScreen("game");
   };
@@ -3010,6 +3174,13 @@ export default function Alderbrook() {
         ent[k] = clamp(ent[k] + v + bonus, 0, 100);
       }
       if (atOwnHome && !it.eat.energy) ent.energy = clamp(ent.energy + CFG.FURN.diningBonus, 0, 100);   // +5 energy even if the item gives none
+    }
+    /* Stage 10: made by hand, at their own stove — a homemade plate feeds better than the
+       bought equivalent. Consumed from the maker's tally, so the bonus follows the FOOD. */
+    if (ent.homemade?.[itemId] > 0) {
+      ent.homemade[itemId]--; if (ent.homemade[itemId] <= 0) delete ent.homemade[itemId];
+      if (it.eat?.hunger) ent.hunger = clamp(ent.hunger + CFG.HOMEMADE.bonus, 0, 100);
+      if (it.eat?.thirst) ent.thirst = clamp(ent.thirst + CFG.HOMEMADE.bonus, 0, 100);
     }
     if (it.cure) ent.sick = null;                       // medicine clears illness
     if (it.heal) ent.health = clamp(ent.health + it.heal, 0, 100);
@@ -3087,7 +3258,7 @@ export default function Alderbrook() {
       if (t.item && t.qty) { from.inv[t.item] = (from.inv[t.item] || 0) - t.qty; if (from.inv[t.item] <= 0) delete from.inv[t.item]; to.inv[t.item] = (to.inv[t.item] || 0) + t.qty; }
     };
     xfer(giver, taker, give); xfer(taker, giver, ask);
-    const gName = giver.id ? giver.name : "the player", tName = taker.id ? taker.name : "the player";
+    const gName = giver.id ? giver.name : playerLabel(), tName = taker.id ? taker.name : playerLabel();
     const sum = tradeSummary(give, ask);
     if (giver.id) giver.memories = [...giver.memories, `Traded with ${tName}: ${sum}${note ? ` (I asked: "${note}")` : ""}`].slice(-CFG.MAX_MEMORIES);
     if (taker.id) taker.memories = [...taker.memories, `Traded with ${gName}: ${sum}${note ? ` — and agreed: "${note}"` : ""}`].slice(-CFG.MAX_MEMORIES);
@@ -3664,7 +3835,7 @@ export default function Alderbrook() {
     if (detective) {
       detective.coins -= comp;                            // can go into debt — false convictions HURT
       if (innocent && innocent.alive) innocent.coins += comp;
-      repEvent(sim, detective, -12, 0, `${detective.name} wrongly convicted ${innocent === sim.player ? "the player" : innocent?.name || "an innocent"}`);
+      repEvent(sim, detective, -12, 0, `${detective.name} wrongly convicted ${innocent === sim.player ? playerLabel() : innocent?.name || "an innocent"}`);
       // FIRED if the innocent died inside, or served a week or more
       if ((diedInside || nights >= CFG.SKILLCHECK.wrongfulFireDays) && detective.job) {
         const boss = OWNERS[detective.job.bId] ? sim.npcs.find(n => n.id === OWNERS[detective.job.bId]) : null;
@@ -3681,7 +3852,10 @@ export default function Alderbrook() {
     sim.cases.push({ id: `c${sim.day}_${sim.cases.length}`, type, day: sim.day, state: "open", evidence: 0, interrogated: {}, ...data });
   };
   /* conviction weight BY CRIME — a cracked till is not a murder (it used to sentence 5★ life for everything) */
-  const caseStars = (kase) => kase.type === "murder" || kase.type === "vigilante" ? 5
+  const caseStars = (kase) => kase.type === "murder" ? 5
+    : kase.type === "vigilante" ? 4
+    : kase.type === "provoked defensive murder" ? CFG.WANTED.defensiveProvokedStars
+    : kase.type === "unprovoked defensive murder" ? CFG.WANTED.defensiveStars
     : ["burglary", "register_robbery", "safe_robbery"].includes(kase.type) ? 3
     : kase.type === "trespassing" ? 1 : 2;
   /* gift grading — per Blaine: ~100-200 should be shocking, not mythic */
@@ -3699,15 +3873,15 @@ export default function Alderbrook() {
     else if (itemId) { if (!giveItem(from, to, itemId)) return false; value = ITEMS[itemId].price; what = ITEMS[itemId].name; }
     else return false;
 
-    const fromName = from.id ? from.name : "the player";
-    const toName = to.id ? to.name : "the player";
+    const fromName = from.id ? from.name : playerLabel();
+    const toName = to.id ? to.name : playerLabel();
     const g = gradeGift(value);
     const grubby = from.hygiene < CFG.HYGIENE.social;   // hard to warm up to someone who reeks
     if (from.mayor && value >= 3) sim.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim.mayorFavor || 0) + CFG.MAYOR.favorPerGift);   // a generous mayor banks goodwill the town remembers
 
     if (to.id) {
       to.bubble = { text: value >= 100 ? `...I— ${what}?! Are you SERIOUS?!` : value >= 10 ? `${what}! You shouldn't have!` : `Oh! Thanks for the ${what}.`, until: performance.now() / 1000 + 5 };
-      const steps = grubby ? 0 : value >= 20 ? 2 : value >= 3 ? 1 : 0;
+      const steps = (grubby ? 0 : value >= 20 ? 2 : value >= 3 ? 1 : 0) * att(sim).relStep;   // dramatic towns fall hard and fast
       const relKey = from.id || "player";
       const cur = REL_ORDER.indexOf(to.relationships[relKey] || "neutral");
       if (steps) to.relationships[relKey] = REL_ORDER[clamp(cur + steps, 0, REL_ORDER.length - 1)];
@@ -3809,6 +3983,18 @@ export default function Alderbrook() {
       for (let i = 0; i < wantDrink && drinks.length; i++) list.push({ item: drinks[i % drinks.length], bId: findShop(drinks[i % drinks.length], town) });
     }
     if (wantMed > 0) { const s = findShop("medicine", town); if (s) list.push({ item: "medicine", bId: s }); }
+    /* Stage 10: MAKINGS. An NPC with a kitchen at home shops for raw ingredients, not just
+       finished plates — which is the whole reason a market is worth walking into for them. */
+    const kitchen = npc.furniture?.includes("oven"), bar = npc.furniture?.includes("drinkbar");
+    if ((kitchen || bar) && madeFoodOf(npc) < CFG.HOMEMADE.pantryTarget) {
+      let budget = CFG.HOMEMADE.ingredientBudget;
+      for (const ing of (kitchen ? HOME_COOK_ING : []).concat(bar ? HOME_DRINK_ING : [])) {
+        const shop = findShop(ing, town);
+        if (!shop || (npc.inv[ing] || 0) >= 2 || budget < ITEMS[ing].price) continue;
+        budget -= ITEMS[ing].price;
+        list.push({ item: ing, bId: shop });
+      }
+    }
     // a little character: grab buyable "likes" (skip non-item likes like "the fountain")
     let likesGot = 0;
     for (const like of (npc.likes || [])) {
@@ -3842,18 +4028,24 @@ export default function Alderbrook() {
     if (ent.incap || ent.dying) return;
     ent.incap = { since: sim.time + sim.day * 1440, scene: ent.scene, x: ent.x, y: ent.y };
     if (ent.id) { ent.legs = []; ent.path = []; ent.goal = null; ent.activity = "incapacitated"; }
-    sim.dayLog = [...sim.dayLog, `${ent.id ? ent.name : "the player"} was found badly hurt`].slice(-12);
+    sim.dayLog = [...sim.dayLog, `${ent.id ? ent.name : playerLabel()} was found badly hurt`].slice(-12);
   };
   /* lethal force doesn't stop at incapacitation: the DYING clock is short,
      and if it runs out, whoever held the knife committed murder */
-  const setDying = (sim, ent, byId) => {
+  /* `defended` = the person now bleeding is the one who STARTED it. Recorded at the killing
+     blow, because that's the only moment the sim still knows who swung first — by the time a
+     body is found, the fight is long over. `killerDirty` freezes whether the survivor was
+     already carrying stars, which is what separates the two defensive charges. */
+  const setDying = (sim, ent, byId, defended = false) => {
     if (ent.dying) return;
     ent.incap = null;
-    ent.dying = { since: sim.time + sim.day * 1440, byId: byId ?? null };
+    const killer = byId === "player" ? sim.player : byId ? sim.npcs.find(n => n.id === byId) : null;
+    ent.dying = { since: sim.time + sim.day * 1440, byId: byId ?? null,
+      defended: !!defended && !!byId, killerDirty: (killer?.wanted || 0) > 0 };
     if (ent.id) { ent.legs = []; ent.path = []; ent.goal = null; ent.activity = "bleeding out"; }
     // Stage 6: collapse-from-exhaustion (no assailant) becomes traveling gossip
     if (!byId) {
-      const who = ent.id ? ent.name : "the player";
+      const who = ent.id ? ent.name : playerLabel();
       const witnesses = sim.npcs.filter(n => n.alive && n.id !== ent.id && n.scene === ent.scene && !n.incap && !n.dying);
       seedGossip(sim, witnesses, { text: `${who} worked themselves unconscious`, subjectId: null, bad: false });
     }
@@ -3965,7 +4157,7 @@ export default function Alderbrook() {
     if (ent.id) { ent.coins = Math.max(0, ent.coins - bill); ent.legs = []; ent.path = []; ent.goal = null; ent.activity = "recovering at the hospital"; ent.hidden = false; }
     else { sim.player.hospitalBill = bill; showToast(`You wake at Mercy Hospital. Bill: ${bill}c on discharge.`); }
     // Stage 6: condition gossip — someone collapsed and ended up in Mercy Hospital
-    const who = ent.id ? ent.name : "the player";
+    const who = ent.id ? ent.name : playerLabel();
     const witnesses = sim.npcs.filter(n => n.alive && n.id !== ent.id && n.scene === "i:hospital");
     seedGossip(sim, [...witnesses, ...(ent.id ? [ent] : [])], { text: `${who} collapsed and ended up in the hospital`, subjectId: null, bad: false });
   };
@@ -3981,7 +4173,7 @@ export default function Alderbrook() {
     if (byId) {                                           // victim SURVIVED an attack → attempted murder
       const attacker = byId === "player" ? sim.player : sim.npcs.find(n => n.id === byId);
       if (attacker) {
-        convictStars(sim, attacker, 4, `${byId === "player" ? "the player" : attacker.name} nearly killed ${ent.id ? ent.name : "the player"}`);
+        convictStars(sim, attacker, 4, `${byId === "player" ? playerLabel() : attacker.name} nearly killed ${ent.id ? ent.name : playerLabel()}`);
         const e = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch);
         if (e) e.dispatch = { targetId: byId };
       }
@@ -4021,9 +4213,11 @@ export default function Alderbrook() {
   const killEntity = (sim, ent, cause, killerId = null) => {
     if (ent.id) {
       const hadWitness = [sim.player, ...sim.npcs].some(o => o !== ent && (o.id ? o.alive && !o.incap && !o.dying && !o.hidden : true) && o.scene === ent.scene);
+      const wasDefence = !!ent.dying?.defended, killerDirty = !!ent.dying?.killerDirty;   // read BEFORE the dying state is cleared
       ent.alive = false; ent.incap = null; ent.dying = null; ent.hidden = true;
       sim.bodies.push({ name: ent.name, npcId: ent.id, scene: ent.scene, x: ent.x, y: ent.y, day: sim.day, cause, killerId, discovered: false,
-        victimStars: ent.wanted || 0 });   // the DIRTY VIGILANTE test: what the victim was wanted for, at the moment they died
+        victimStars: ent.wanted || 0,      // the DIRTY VIGILANTE test: what the victim was wanted for, at the moment they died
+        defended: wasDefence, killerDirty });   // ...and the DEFENSIVE MURDER test: who started it, and whose hands were clean
       { // Stage 8: a death shakes the town — but a five-star outlaw's death barely dents it (relief cuts the grief)
         const dt8 = townOfScene(worldRef.current, ent.scene);
         const hit = (ent.wanted || 0) >= 5 ? 1 : CFG.APPROVAL.deathHit;
@@ -4041,7 +4235,7 @@ export default function Alderbrook() {
         ent.hospitalBill = Math.ceil(CFG.HOSPITAL.reviveBill * d.billMult);
         showToast("You flatlined. Dr. Amara pulled you back. It cost you.");
       } else {                                           // hardcore: the grave is yours
-        sim.graves.push({ name: "You", day: sim.day, cause, town: townOfScene(worldRef.current, ent.scene) });
+        sim.graves.push({ name: playerDisplay(), day: sim.day, cause, town: townOfScene(worldRef.current, ent.scene) });
         setDeathScreen({ day: sim.day, cause });
         wipeSave();
       }
@@ -4079,15 +4273,33 @@ export default function Alderbrook() {
          sentence) but it IS a charge, and the town's opinion splits: rid of a menace, afraid
          of you. The dilemma is the point. */
       const vigilante = (body.victimStars || 0) >= 5;
-      openCase(sim, vigilante ? "vigilante" : "murder", { victim: body.name, scene: body.scene, x: body.x, y: body.y,
+      /* DEFENSIVE MURDER: they started it, you finished it, and you left them there. A lesser
+         charge than murder because you didn't go looking for it — but a charge, because you
+         could have carried them in. Which of the two depends on whether YOUR hands were clean
+         when it happened. A five-star outlaw still reads as vigilante first: that's a bigger
+         story about the town than about you. */
+      const defensive = !vigilante && body.defended;
+      const caseType = vigilante ? "vigilante"
+        : defensive ? (body.killerDirty ? "provoked defensive murder" : "unprovoked defensive murder")
+        : "murder";
+      openCase(sim, caseType, { victim: body.name, scene: body.scene, x: body.x, y: body.y,
         killerId: body.killerId, suspectId: openAndShut ? body.killerId : null, state: openAndShut ? "solved" : "open",
         evidence: strongEvidence ? 3 : 0 });               // caught red-handed = max evidence on the record
       if (openAndShut && killer) {
-        const who = body.killerId === "player" ? "the player" : killer.name;
+        const who = body.killerId === "player" ? playerLabel() : killer.name;
         if (vigilante) {
           convictStars(sim, killer, 4, `${who} left ${body.name}, a five-star outlaw, to die instead of hauling them in`);
           repEvent(sim, killer, 4, 6, `${who} put down ${body.name} the hard way`);   // infamy AND standing: feared, not respected
           if (body.killerId === "player") showToast("🩸 Dirty Vigilante. The town is safer. The town is also afraid of you.");
+        } else if (defensive) {
+          const stars = body.killerDirty ? CFG.WANTED.defensiveProvokedStars : CFG.WANTED.defensiveStars;
+          convictStars(sim, killer, stars, body.killerDirty
+            ? `${who} was already wanted when ${body.name} came at them — and left them to bleed out`
+            : `${who} was set upon by ${body.name}, won, and left them to bleed out`);
+          repEvent(sim, killer, -2, 2, `${who} let ${body.name} die after defending themselves`);
+          if (body.killerId === "player") showToast(body.killerDirty
+            ? `🩸 Provoked Defensive Murder (${stars}★). They started it — but you were no innocent either, and you walked away.`
+            : `🩸 Unprovoked Defensive Murder (${stars}★). They came at you. You still could have carried them in.`);
         } else {
           const why = witnessed ? "was seen committing" : "was caught, weapon in hand, at the scene of";
           convictStars(sim, killer, 5, `${who} ${why} the murder of ${body.name}`);
@@ -4144,10 +4356,10 @@ export default function Alderbrook() {
       if (thief.coins >= fine) { thief.coins -= fine; }
       else { thief.coins = 0; thief.wanted += 1; }       // can't pay → it goes on the record
       keeper.memories = [...keeper.memories, `${isPlayer ? "The player" : thief.name} tried to steal from me`].slice(-CFG.MAX_MEMORIES);
-      seedGossip(sim, [keeper], { text: `${isPlayer ? "the player" : thief.name} tried to steal from ${keeper.name}`, subjectId: isPlayer ? "player" : thief.id, bad: true });
+      seedGossip(sim, [keeper], { text: `${isPlayer ? playerLabel() : thief.name} tried to steal from ${keeper.name}`, subjectId: isPlayer ? "player" : thief.id, bad: true });
       keeper.relationships[thief.id || "player"] = "dislikes";
       keeper.bubble = { text: `HEY! That's a ${fine}c fine, sticky fingers!`, until: now + 5 };
-      repEvent(sim, thief, -4, 2, `${isPlayer ? "the player" : thief.name} got caught stealing at ${bld(bId).name}`);
+      repEvent(sim, thief, -4, 2, `${isPlayer ? playerLabel() : thief.name} got caught stealing at ${bld(bId).name}`);
       if (isPlayer) showToast(`Caught! ${keeper.name} fines you ${fine} coins.`);
       return false;
     }
@@ -4163,7 +4375,7 @@ export default function Alderbrook() {
 
     if (witnesses.length) {
       const byId = Object.fromEntries(sim.npcs.map(n => [n.id, n]));
-      const ctx = `${isPlayer ? "the player" : thief.name} stole ${ITEMS[itemId].name} from ${bld(bId).name} while the keeper was out`;
+      const ctx = `${isPlayer ? playerLabel() : thief.name} stole ${ITEMS[itemId].name} from ${bld(bId).name} while the keeper was out`;
       if (incidentBudget(sim) && !apiBusyRef.current) {
         sim.incidents.count++;
         apiBusyRef.current = true;
@@ -4187,8 +4399,8 @@ export default function Alderbrook() {
     const kase = { id: `c${sim.day}_${sim.cases.length}`, type: crime, day: sim.day, state: "open",
                    evidence: 1, interrogated: {}, suspectId: thiefId, victim: victimName };
     sim.cases.push(kase);
-    const rName = reporter.id ? reporter.name : "the player";
-    sim.dayLog = [...sim.dayLog, `${rName} reported ${thiefId === "player" ? "the player" : thief.name} for ${crime}`].slice(-12);
+    const rName = reporter.id ? reporter.name : playerLabel();
+    sim.dayLog = [...sim.dayLog, `${rName} reported ${thiefId === "player" ? playerLabel() : thief.name} for ${crime}`].slice(-12);
     if (!reporter.id) { repEvent(sim, reporter, 2, 1); showToast("Report filed. The Watch will pay them a visit."); }
     const enforcer = sim.npcs.find(n => n.alive && n.enforcer && !n.dispatch && !n.activity.includes("sleep"));
     if (enforcer) enforcer.dispatch = { targetId: thiefId, caseId: kase.id };   // questioning — not yet a warrant
@@ -4208,7 +4420,7 @@ export default function Alderbrook() {
       if (isPlayer) showToast(`${enforcer.name} fines you ${fine} coins. Slate's clean — for now.`);
     } else if (stars >= 5) {                             // life. all of it. now an actual sentence.
       target.coins = 0;
-      repEvent(sim, target, -20, 10, `${isPlayer ? "the player" : target.name} was convicted of murder`);
+      repEvent(sim, target, -20, 10, `${isPlayer ? playerLabel() : target.name} was convicted of murder`);
       const convictTown = townOfScene(world, target.scene) || "stonecross";
       const cell = assignCell(sim, world, convictTown, true);   // lifers always get a cell (may bump a short-timer)
       if (isPlayer) {
@@ -4237,7 +4449,7 @@ export default function Alderbrook() {
       const debt = CFG.WANTED.debtFine[stars] || 0;
       if (debt) fineCoins(target, debt);
       target.wanted = 0;
-      repEvent(sim, target, -5, 3, `${isPlayer ? "the player" : target.name} was arrested (${stars}★)`);
+      repEvent(sim, target, -5, 3, `${isPlayer ? playerLabel() : target.name} was arrested (${stars}★)`);
       if (isPlayer) {
         // Stage 3.5: you don't skip the sentence — you SIT it, in a real cell, in real time
         const convictTown = townOfScene(world, target.scene) || "stonecross";
@@ -4327,7 +4539,7 @@ export default function Alderbrook() {
     // …but a burglar caught by a CIVILIAN mostly grabs and RUNS — the panic-stab is the
     // exception (40%), not the rule. Criminals and the Watch get no such mercy.
     const civilianLoser = !loser.outlaw && !loser.enforcer;
-    if (lethal && (!civilianLoser || Math.random() < 0.4)) setDying(sim, loser, winner.id); else incapacitate(sim, loser);
+    if (lethal && (!civilianLoser || Math.random() < 0.4)) setDying(sim, loser, winner.id, winner === b); else incapacitate(sim, loser);
     // a BOUNTY takedown: if the loser was a wanted fugitive (2★+), whoever downed them collects
     // the bounty and the fugitive is hauled straight to a cell — lawful, no stars for the hunter.
     if ((loser.wanted || 0) >= 2 && !loser.enforcer) {
@@ -4364,7 +4576,7 @@ export default function Alderbrook() {
       const took = transferCoins(sim, victim, robber, Math.floor(victim.coins * CFG.ROBBERY.take));
       victim.bubble = { text: `T-take it... ${took} coins. Just go.`, until: now + 4 };
       victim.memories = [...victim.memories, `${robber.id ? robber.name : "The player"} robbed me`].slice(-CFG.MAX_MEMORIES);
-      seedGossip(sim, [victim], { text: `${robber.id ? robber.name : "the player"} robbed ${victim.name}`, subjectId: robber.id || "player", bad: true });
+      seedGossip(sim, [victim], { text: `${robber.id ? robber.name : playerLabel()} robbed ${victim.name}`, subjectId: robber.id || "player", bad: true });
       { const rk = robber.id || "player"; victim.relationships[rk] = REL_ORDER[Math.min(relIdx(victim.relationships[rk] || "neutral"), relIdx("hates"))]; }   // at least hates — but a standing enemy/nemesis doesn't soften to mere hate
       // Stage 3.5: a shaken victim usually reports it — or an earshot witness does. Nobody just KNOWS.
       if (Math.random() < 0.75) { victim.report = { thiefId: robber.id || "player", crime: "robbery", victimName: victim.name }; victim.goal = null; }
@@ -4374,7 +4586,7 @@ export default function Alderbrook() {
       }
     };
     const byId = Object.fromEntries(sim.npcs.map(n => [n.id, n]));
-    const ctx = `${robber.id ? robber.name : "the player"} is threatening ${victim.name} with a ${ITEMS[bestWeapon(robber)]?.name || "raised fist"}, demanding coins`;
+    const ctx = `${robber.id ? robber.name : playerLabel()} is threatening ${victim.name} with a ${ITEMS[bestWeapon(robber)]?.name || "raised fist"}, demanding coins`;
     if (incidentBudget(sim) && !apiBusyRef.current) {
       sim.incidents.count++;
       apiBusyRef.current = true;
@@ -4436,7 +4648,7 @@ export default function Alderbrook() {
         if (damage(foe, pd)) {                            // foe drops
           log.push(lethal ? `You land the finish (${pd}). ${foe.name} collapses — that blade cut DEEP.` : `You land the finish (${pd}). ${foe.name} goes down.`);
           if (snapped) log.push(brokeLine(pw));
-          if (lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);   // knives don't stop at down
+          if (lethal) setDying(sim, foe, "player", c.aggressor !== "player" || wrongedPlayer(sim, foe.id)); else incapacitate(sim, foe);   // knives don't stop at down
           if (c.aggressor === "player") {
             const o = takedownOutcome(sim, foe);
             if (o.lawful) {
@@ -4460,7 +4672,7 @@ export default function Alderbrook() {
           const foeLethal = ITEMS[bestWeapon(foe) || ""]?.lethal;
           log.push(`${foe.name} hits for ${fd}. Everything goes dark.`);
           if (c.aggressor !== "player") transferCoins(sim, p, foe, Math.floor(p.coins * CFG.ROBBERY.take));
-          if (foeLethal) setDying(sim, p, foe.id); else incapacitate(sim, p);   // lethal foes leave you DYING
+          if (foeLethal) setDying(sim, p, foe.id, c.aggressor === "player"); else incapacitate(sim, p);   // lethal foes leave you DYING
           return { ...c, log, over: true, won: false };
         }
         log.push(`${foe.name} hits for ${fd}.`);
@@ -4501,6 +4713,11 @@ export default function Alderbrook() {
     const sim = simRef.current;
     const victim = sim.npcs.find(n => n.id === npcId);
     if (!victim || (!victim.incap && !victim.dying)) return;
+    /* Walking over to a person already on the ground and finishing them is the most deliberate
+       killing in the game — so it can NEVER be a defensive charge, even if they were the one who
+       started the fight that put them there. Clear the flag the killing blow left behind, or
+       executing your own attacker would be sentenced as defensive murder instead of murder. */
+    if (victim.dying) victim.dying.defended = false;
     victim.health = 0;
     const witnesses = sim.npcs.some(n => n.alive && n !== victim && !n.incap && !n.dying && !n.hidden && n.scene === victim.scene);
     killEntity(sim, victim, "murdered", "player");
@@ -4792,7 +5009,14 @@ export default function Alderbrook() {
         npc.bubble = { text: `*eats ${ITEMS[foodId].name.toLowerCase()}*`, until: now + 3 };
         return;
       }
-      if (npc.minor && npc.home) {                       // Stage 3.5: kids don't buy dinner — the family pantry is free
+      /* Stage 10: someone with a kitchen and the makings COOKS rather than buying dinner —
+         cheaper, better, and the reason they bought the oven. This is what pulls them through
+         a market for ingredients in the first place. */
+      const canCookNow = npc.home && npc.furniture?.includes("oven")
+        && HOME_COOK.some(r => Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m]));
+      if (canCookNow) {
+        goal = { scene: `t:${npc.town}`, ...bld(npc.home).door }; activity = "heading home to cook"; hide = true;
+      } else if (npc.minor && npc.home) {                // Stage 3.5: kids don't buy dinner — the family pantry is free
         goal = { scene: `t:${npc.town}`, ...bld(npc.home).door }; activity = "eating at home"; hide = true;
       } else if ((npc.coins >= 3 || npc.hunger < CFG.STARVE.desperateAt) && stockOf(sim, eatery, EATERY_MEAL[eatery]) > 0 && world.interiors[eatery].seats.length) {
         // Stage 3.5: a STARVING adult eats first and owes after — the tab is real fineCoins debt,
@@ -4850,6 +5074,18 @@ export default function Alderbrook() {
         const t = npc.dispatch.targetId === "player" ? sim.player : sim.npcs.find(n => n.id === npc.dispatch.targetId);
         if (!t || (t.id && (!t.alive || t.incap || t.dying)) || ((t.wanted || 0) <= 0 && !npc.dispatch.caseId)) { npc.dispatch = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "patrolling"; }   // Stage 3.5: an open case keeps the pursuit alive
         else { goal = { scene: t.scene, x: Math.round(t.x), y: Math.round(t.y) }; activity = "in pursuit"; }
+      }
+    } else if (npc.oddJob) {                             // Stage 10: casual work, and they mean to get there
+      const os = world.towns[npc.oddJob.town]?.spots?.[npc.oddJob.spot];
+      if (!os) { npc.oddJob = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "looking for work"; }
+      else { goal = { scene: `t:${npc.oddJob.town}`, x: os.x, y: os.y }; activity = npc.oddJob.label; }
+    } else if (npc.grudgeOn) {                           // Stage 10 (dramatic): an errand of the heart, one way or the other
+      const gt = npc.grudgeOn.id === "player" ? sim.player : sim.npcs.find(n => n.id === npc.grudgeOn.id);
+      if (!gt || !gt.alive) { npc.grudgeOn = null; goal = { scene: `t:${hereTown}`, ...town.spots.plaza }; activity = "patrolling"; }
+      else {
+        goal = { scene: gt.scene, x: Math.round(gt.x), y: Math.round(gt.y) };
+        activity = npc.grudgeOn.kind === "fuss" ? `looking for ${gt.id ? gt.name : playerLabel()}`
+          : npc.grudgeOn.kind === "avenge" ? "hunting for whoever did it" : "looking for someone to have words with";
       }
     } else if (npc.enforcer && npc.caseWork) {           // investigation: scene first, then suspects
       const cw = npc.caseWork, kase = sim.cases.find(c => c.id === cw.caseId);
@@ -4913,11 +5149,11 @@ export default function Alderbrook() {
           const hi = world.interiors[t.home];
           const seat = hi?.seats?.[0] || hi?.stations?.table || bld(t.home).door;
           goal = { scene: `i:${t.home}`, x: seat.x, y: seat.y };
-          activity = `visiting ${t.id ? t.name : "the player"} at home`;
+          activity = `visiting ${t.id ? t.name : playerLabel()} at home`;
           if (t.id && !t.alive === false) t.hostingUntil = absTime + CFG.VISIT.stayMin;   // flag host to stay in
         } else {
           goal = { scene: t.scene, x: Math.round(t.x), y: Math.round(t.y) };
-          activity = vp.party ? "heading to the party" : `visiting ${t.id ? t.name : "the player"}`;
+          activity = vp.party ? "heading to the party" : `visiting ${t.id ? t.name : playerLabel()}`;
         }
       }
     } else if (npc.printing) {                            // Stage 2.2: Bruno vs. the printer — now a skill check, not a timer
@@ -5260,7 +5496,7 @@ export default function Alderbrook() {
               // offset so detective & suspect never share a tile (readable bubbles)
               if (t.id && Math.round(t.x) === Math.round(npc.x) && Math.round(t.y) === Math.round(npc.y)) { npc.x += 1; }
               const mustConclude = ex.q >= CFG.SKILLCHECK.interrogateQuestions - 1;
-              detectiveMove(npc.name, skillDesc, t.id ? t.name : "the player", kase.evidence, ex.q + 1, CFG.SKILLCHECK.interrogateQuestions, ex.history, mustConclude)
+              detectiveMove(npc.name, skillDesc, t.id ? t.name : playerLabel(), kase.evidence, ex.q + 1, CFG.SKILLCHECK.interrogateQuestions, ex.history, mustConclude)
                 .then(async move => {
                   if (move.action === "ask") {
                     npc.bubble = { text: move.say, until: now + 5 };
@@ -5399,10 +5635,11 @@ export default function Alderbrook() {
       sim.crime.ticks++;
       if (npc.coins >= CFG.OUTLAW.heistCoinCap && !onSpree) { sim.crime.blockedCap++; return; }
       const chance = CFG.OUTLAW.heistChance * ((hour >= 21 || hour < 5) ? 2 : 1)
-        * (onSpree ? CFG.OUTLAW.spreeBoost : 1) * (npc.coins < 5 ? 1.5 : 1);   // rampage + desperation
+        * (onSpree ? CFG.OUTLAW.spreeBoost : 1) * (npc.coins < 5 ? 1.5 : 1)   // rampage + desperation
+        * att(sim).crimeMult;                                                  // ...and the town's temperament
       if (Math.random() > chance) { sim.crime.blockedRoll++; return; }
-    } else if (npc.coins >= 12 || hour < 16 || hour > 21 || Math.random() > 0.004) return;
-    if (!onSpree && Math.random() < CFG.OUTLAW.watchDeter &&
+    } else if (npc.coins >= 12 || hour < 16 || hour > 21 || Math.random() > 0.004 * att(sim).crimeMult) return;
+    if (!onSpree && Math.random() < CFG.OUTLAW.watchDeter * att(sim).watchDeter &&
         sim.npcs.some(e => e.alive && e.enforcer && townOfScene(world, e.scene) === npc.town)) { sim.crime.blockedWatch++; return; }
     sim.crime.attempts++;
     // v7 Stage 4: OUTLANDS raiders don't foul their own nest — you don't rob your fence or
@@ -5573,7 +5810,7 @@ export default function Alderbrook() {
   };
 
   const rollChatter = (sim, world, now) => {
-    if (now - sim.lastChatter < CFG.NPC_CHAT_INTERVAL) return;
+    if (now - sim.lastChatter < CFG.NPC_CHAT_INTERVAL / att(sim).chatterMult) return;   // a dramatic town will NOT stop talking
     sim.lastChatter = now;
     const scene = sim.player.scene;
     const here = sim.npcs.filter(n => n.alive && !n.incap && n.scene === scene && !n.hidden && !n.activity.includes("sleep"));
@@ -5960,14 +6197,15 @@ export default function Alderbrook() {
         sim.playerMayor = winId === "player";
         const winNpc = sim.playerMayor ? null : cands.find(c => c.id === winId);
         if (winNpc) winNpc.mayor = true;
-        const winnerName = sim.playerMayor ? "the player" : winNpc?.name || "nobody";
+        const playerWon = !!sim.playerMayor;
+        const winnerName = playerWon ? playerLabel() : winNpc?.name || "nobody";
         if (winId !== incumbentId) sim.mayorFavor = 0;   // a new mayor starts with a clean ledger of goodwill
         const oustedNote = barred ? ` (the sitting mayor's ${approvalPct}% approval was too low to keep the seat)` : "";
         el.last = { day: sim.day, tally: tally.map(([id, v]) => ({ id, name: id === "player" ? "You" : cands.find(c => c.id === id)?.name || id, votes: v })), barred };
         el.playerRunning = false;
         el.nextDay = sim.day + CFG.ELECTION.everyDays;
         sim.dayLog.push(`ELECTION DAY — ${winnerName} won the mayoralty (${tally[0][1]} votes)${oustedNote}`);
-        sim.buzz = { text: `Election day! ${winnerName === "the player" ? "The NEWCOMER" : winnerName} takes the mayor's chair${barred ? " — the old mayor was voted out." : "."}`, day: sim.day };
+        sim.buzz = { text: `Election day! ${playerWon ? "The NEWCOMER" : winnerName} takes the mayor's chair${barred ? " — the old mayor was voted out." : "."}`, day: sim.day };
         seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 6), { text: `${winnerName} won the election${barred ? " after the town turned on the last mayor" : ""}`, subjectId: null, bad: false });
         if (sim.playerMayor) { repEvent(sim, sim.player, 10, 15, "the player was elected mayor"); sfx.coin(); showToast("🏛️ YOU are the mayor of the valley! Govern from any hall's Mayor's desk."); }
         else showToast(`🗳️ Election day: ${winnerName} won the mayoralty${barred ? " — the last mayor's approval was too low to hold on." : "."}`);
@@ -6226,7 +6464,10 @@ export default function Alderbrook() {
       else if (roomAtHome && !n.furniture.includes("piggy") && !n.furniture.includes("safe") && n.coins > CFG.FURN.npcPiggyAt) { n.coins -= FURNITURE.piggy.price; n.furniture.push("piggy"); creditOwner(sim, "furn", FURNITURE.piggy.price); npcPlaceFurniture(sim, n, "piggy"); }
       // a comfort/utility piece when they can afford it with a healthy buffer (AI also picks the spot)
       else if (roomAtHome) {
-        const wants = ["table", "fridge", "bedup", "oven", "fountain", "chest", "drinkbar"].filter(f => !n.furniture.includes(f));
+        /* Stage 10: a kitchen earns its keep, so it's wanted EARLY — an oven and a drink
+           station now feed their owner (see homeCraftTick), which is worth more to a working
+           soul than a nicer bed. The workbench is the long save: dear, but it makes things. */
+        const wants = ["oven", "fridge", "drinkbar", "table", "bedup", "fountain", "chest", "workbench"].filter(f => !n.furniture.includes(f));
         const pick = wants[0];
         if (pick && n.coins > FURNITURE[pick].price + CFG.FURN.npcSpareFloor && Math.random() < 0.15) {
           n.coins -= FURNITURE[pick].price; n.furniture.push(pick); creditOwner(sim, "furn", FURNITURE[pick].price);
@@ -6330,7 +6571,8 @@ export default function Alderbrook() {
     const doleHours = CFG.JOBS.shift[1] - CFG.JOBS.shift[0];
     const dole = CFG.OCCUPATION.unemploymentStipendH * doleHours;
     for (const n of sim.npcs)
-      if (canSeekWork(n) && !n.occupation?.bId) n.coins = Math.min(9999, n.coins + dole);
+      if (canSeekWork(n) && !n.occupation?.bId)
+        n.coins = Math.min(9999, n.coins + Math.ceil(dole * (n.oddJobDay === sim.day - 1 ? CFG.ODDJOBS.doleCut : 1)));
 
     /* yesterday's opening expires. If no player claimed it, a jobless local now
        REALLY takes the post — they gain the occupation, not just a buzz line. */
@@ -6430,7 +6672,7 @@ export default function Alderbrook() {
     const late = (sim.time / 60) % 24 >= CFG.PARTY.lateCutoffH;               // too late to cater tonight
     sim.party = { throwerId: throwerKey, town, day: late ? sim.day + 1 : sim.day, dinner, dessert, drink, distributed: false };
     sim.buzz = { text: `${thrower.id ? thrower.name : "The player"} is throwing a party at the ${TOWN_DEFS[town].name} plaza ${late ? "TOMORROW night" : "tonight"}!`, day: sim.day };
-    sim.dayLog = [...sim.dayLog, `${thrower.id ? thrower.name : "the player"} announced a party (${ITEMS[dinner].name}, ${ITEMS[dessert].name})`].slice(-12);
+    sim.dayLog = [...sim.dayLog, `${thrower.id ? thrower.name : playerLabel()} announced a party (${ITEMS[dinner].name}, ${ITEMS[dessert].name})`].slice(-12);
     for (const n of sim.npcs) {
       if (!n.alive || n.jailedUntil || n.town === town) continue;
       const st = n.relationships[throwerKey];
@@ -6748,7 +6990,7 @@ export default function Alderbrook() {
             if (thrower) {                                 // the host doubles BOTH dinner and dessert
               thrower.inv[pt.dinner] = (thrower.inv[pt.dinner] || 0) + 1;
               thrower.inv[pt.dessert] = (thrower.inv[pt.dessert] || 0) + 1;
-              repEvent(sim, thrower, CFG.PARTY.repFame, CFG.PARTY.repRenown, `${pt.throwerId === "player" ? "the player" : thrower.name} threw a party for the whole town`);
+              repEvent(sim, thrower, CFG.PARTY.repFame, CFG.PARTY.repRenown, `${pt.throwerId === "player" ? playerLabel() : thrower.name} threw a party for the whole town`);
               for (const g of attendees.filter(g => g.id && relIdx(g.relationships[pt.throwerId] || "neutral") >= relIdx("friend") && Math.random() < CFG.PARTY.giftChance)) {
                 const itemId = Object.keys(g.inv).find(id => g.inv[id] > 0 && !ITEMS[id].dmg);
                 if (Math.random() < 0.5 && itemId) receiveGift(sim, g, thrower, { itemId });
@@ -6824,7 +7066,12 @@ export default function Alderbrook() {
             npc.health = clamp(npc.health + (docIn ? CFG.HOSPITAL.bedRegenDoc : CFG.HOSPITAL.bedRegen) * dtHours, 0, 100);
           } else if (!npc.incap) npc.health = clamp(npc.health + CFG.HEALTH.regenAwake * dtHours, 0, 100);
 
-          if (decide) { decideNPC(npc, sim, world, now); thiefTick(sim, world, npc); }
+          if (decide) {
+            decideNPC(npc, sim, world, now); thiefTick(sim, world, npc); dramaTick(sim, world, npc, now);
+            homeCraftTick(sim, world, npc, now); shareHomemade(sim, npc, now); oddJobTick(sim, world, npc, now);
+          }
+          if (npc.grudgeOn) settleGrudge(sim, world, npc, now);
+          if (npc.oddJob) workOddJob(sim, world, npc, now);
           moveNPC(npc, world, dt);
           npcAtGoal(npc, sim, world, dtHours, now);
 
@@ -6907,7 +7154,7 @@ export default function Alderbrook() {
                 kase.state = "solved";
                 const priors = sim.cases.filter(c => c.suspectId === kase.suspectId && c.state === "solved").length;
                 convictStars(sim, t, kase.type === "robbery" ? 2 : (priors >= 3 ? 2 : 1),
-                  `${t.id ? t.name : "the player"} was convicted of ${kase.type}`);
+                  `${t.id ? t.name : playerLabel()} was convicted of ${kase.type}`);
               }
               if ((t.wanted || 0) > 0) resolveEnforcement(sim, world, npc, t, now);
               else npc.dispatch = null;                    // questioned; nothing stuck — no conviction, no stars
@@ -6936,7 +7183,7 @@ export default function Alderbrook() {
             npc.bubble = { text: line, until: now + CFG.BUBBLE_SECONDS };
 
             const bond = relIdx(npc.relationships.player);   // friend and beyond spontaneously gift; the deeper the bond, the more often & more generous
-            if (bond >= relIdx("friend") && npc.coins > 8 && npc.lastGiftDay !== sim.day && Math.random() < 0.15 + 0.1 * (bond - relIdx("friend"))) {
+            if (bond >= relIdx("friend") && npc.coins > 8 && npc.lastGiftDay !== sim.day && Math.random() < (0.15 + 0.1 * (bond - relIdx("friend"))) * att(sim).giftChance) {
               npc.lastGiftDay = sim.day;
               const itemId = Object.keys(npc.inv).find(id => npc.inv[id] > 0 && !ITEMS[id].dmg);   // nobody gifts their baton
               if (itemId && Math.random() < 0.5) receiveGift(sim, npc, p, { itemId });
@@ -7226,6 +7473,276 @@ export default function Alderbrook() {
       if (npc.health <= 8) { incapacitate(sim, npc); npc.dispatch = null; }   // the animal won this round
       else npc.bubble = { text: rand(["It's still up — hold the line!", "Nngh— tough beast.", "Again!"]), until: now + 4 };
     }
+  };
+
+  /* =====================================================================
+     STAGE 10 — THE HOME KITCHEN: appliances that finally do something
+     =====================================================================
+     NPCs have been buying ovens and drink stations since Stage 4 and getting nothing out of
+     them. Now, an evening at home with the makings turns into a real plate: same RECIPES the
+     player cooks, plus a small bonus for it being homemade. The knock-on is the point — a soul
+     who cooks needs INGREDIENTS, so markets and grocers stop being player-only buildings.
+     And a full pantry gets shared: a friend with no roof over their head eats tonight. */
+  const homeMake = (npc, table) => {          // spend the makings, return the made item id
+    for (const r of table) {
+      if (!Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m])) continue;
+      for (const m of Object.keys(r.needs)) { npc.inv[m] -= r.needs[m]; if (npc.inv[m] <= 0) delete npc.inv[m]; }
+      npc.inv[r.out] = (npc.inv[r.out] || 0) + 1;
+      npc.homemade = { ...(npc.homemade || {}), [r.out]: (npc.homemade?.[r.out] || 0) + 1 };   // remembers whose hands made it
+      return r.out;
+    }
+    return null;
+  };
+
+  const homeCraftTick = (sim, world, npc, now) => {
+    if (!npc.alive || npc.minor || !npc.home || npc.jailedUntil || npc.incap || npc.dying) return;
+    /* NPCs don't occupy their home INTERIOR — going home parks them hidden at their own door
+       (see the sleep/eat branches in decideNPC). Checking for `i:home` would mean this never
+       fired for anyone. Their doorstep IS their hearth as far as the sim is concerned. */
+    const door = bld(npc.home).door;
+    if (npc.scene !== `t:${npc.town}` || dist(npc, door) > 1.6) return;
+    if (npc.activity?.includes("sleep") || npc.energy < 15) return;
+    const absNow = sim.day * 1440 + sim.time;
+    if (absNow - (npc.lastHomeMake || -9999) < 240) return;  // a few hours between sessions
+    const H = CFG.HOMEMADE;
+    const furn = npc.furniture || [];
+
+    if (furn.includes("oven") && madeFoodOf(npc) < H.pantryTarget && Math.random() < H.cookChance) {
+      const made = homeMake(npc, HOME_COOK);
+      if (made) {
+        npc.lastHomeMake = absNow;
+        npc.bubble = { text: rand([`*something good on the stove*`, `That'll do nicely.`, `Nothing beats your own cooking.`]), until: now + 4 };
+        const before = skillLevel(npc, "kitchen");
+        npc.skills.kitchen = (npc.skills.kitchen || 0) + taskXp("kitchen", 0);
+        if (skillLevel(npc, "kitchen") > before) sim.dayLog = [...sim.dayLog, `${npc.name}'s home cooking is getting good`].slice(-12);
+        return;
+      }
+    }
+    if (furn.includes("drinkbar") && Math.random() < H.drinkChance) {
+      const made = homeMake(npc, HOME_DRINK);
+      if (made) { npc.lastHomeMake = absNow; npc.bubble = { text: rand(["*clinks a glass*", "Made a little something."]), until: now + 4 }; return; }
+    }
+    /* the workbench: a dear thing to own, so it ought to make dear things. They tinker with
+       whatever they've got in and keep it — to gift, to sell, or just to have made it. */
+    if (furn.includes("workbench") && Math.random() < H.benchChance) {
+      const R10 = CFG.CRAFT.recipes;
+      const buildable = Object.keys(R10).filter(rid => {
+        const r = R10[rid];
+        return !r.furn && r.tier !== "hard" && r.tools.every(t => hasTool(npc, t))
+          && Object.keys(r.mats).every(m => (npc.inv[m] || 0) >= r.mats[m]);
+      });
+      if (buildable.length) {
+        const rid = rand(buildable), r = R10[rid];
+        for (const m of Object.keys(r.mats)) { npc.inv[m] -= r.mats[m]; if (npc.inv[m] <= 0) delete npc.inv[m]; }
+        npc.inv[rid] = (npc.inv[rid] || 0) + (r.out || 1);
+        npc.lastHomeMake = absNow;
+        npc.skills.crafting = (npc.skills.crafting || 0) + taskXp("crafting", 0);
+        npc.bubble = { text: `*sands down a ${ITEMS[rid].name.toLowerCase()}*`, until: now + 4 };
+        sim.dayLog = [...sim.dayLog, `${npc.name} made a ${ITEMS[rid].name.toLowerCase()} at their workbench`].slice(-12);
+      }
+    }
+  };
+
+  /* a soul with a full pantry and a friend sleeping rough doesn't eat alone. Runs wherever
+     they meet — the whole point is that homemade food travels back out into the town. */
+  const shareHomemade = (sim, npc, now) => {
+    const H = CFG.HOMEMADE;
+    if (!npc.homemade || npc.minor || npc.incap || npc.dying || npc.jailedUntil) return;
+    const spare = Object.keys(npc.homemade).find(id => (npc.inv[id] || 0) > 0);
+    if (!spare) return;
+    const needy = sim.npcs.find(o => o.alive && o.id !== npc.id && !o.incap && !o.dying && !o.jailedUntil
+      && (!o.home || o.evicted)                                  // no roof, or put out of the one they had
+      && (o.hunger < 45 || o.thirst < 45)
+      && o.scene === npc.scene && dist(o, npc) < 3
+      && relIdx(npc.relationships[o.id] || "neutral") >= relIdx("friend"));
+    if (!needy || Math.random() > H.shareChance) return;
+    if (!giveItem(npc, needy, spare)) return;
+    npc.homemade[spare]--; if (npc.homemade[spare] <= 0) delete npc.homemade[spare];
+    needy.homemade = { ...(needy.homemade || {}), [spare]: (needy.homemade?.[spare] || 0) + 1 };   // handmade travels with the plate
+    consumeItem(needy, spare);                                    // they eat it right there — they needed it
+    npc.bubble = { text: rand(["Made too much. Take it.", "You'll eat something if I have to watch.", "Sit down. Eat."]), until: now + 5 };
+    needy.bubble = { text: rand(["...thank you. Really.", "You didn't have to.", "*eats gratefully*"]), until: now + 5 };
+    needy.relationships[npc.id] = REL_ORDER[clamp(relIdx(needy.relationships[npc.id] || "neutral") + 1, 0, REL_ORDER.length - 1)];
+    repEvent(sim, npc, 2, 3, `${npc.name} fed ${needy.name}, who has nowhere to live`);
+    seedGossip(sim, sim.npcs.filter(n => n.alive && n.scene === npc.scene),
+      { text: `${npc.name} fed ${needy.name} out of their own kitchen`, subjectId: npc.id });
+    if (sim.player.scene === npc.scene) showToast(`🍲 ${npc.name} presses a homemade ${ITEMS[spare].name.toLowerCase()} on ${needy.name}.`);
+  };
+
+  /* ===== Stage 10 — ODD JOBS: the jobless go and earn instead of drawing the dole =====
+     An unemployed or simply broke soul picks up honest casual work at a town spot — hauling at
+     the dock, tidying the graveyard, sweeping the plaza. `oddJob` is the errand; arriving works
+     it. Small pay, real time and energy, and it feeds the same skill tracks a proper post does,
+     so a stint of casual labour is also an apprenticeship. */
+  const oddJobTick = (sim, world, npc, now) => {
+    if (!npc.alive || npc.minor || npc.jailedUntil || npc.incap || npc.dying) return;
+    if (npc.oddJob || npc.dispatch || npc.grudgeOn || npc.crimePlan || npc.burglaryPlan || npc.directive) return;
+    if (npc.enforcer || npc.doctor || npc.mayor || npc.occupation?.owner) return;   // they have posts to keep
+    if (npc.activity?.includes("sleep") || npc.energy < CFG.ODDJOBS.energy + 10) return;
+    if (npc.hunger < 25 || npc.thirst < 25 || npc.sick?.level === "bad") return;
+    const hour = (sim.time / 60) % 24;
+    if (hour < 7 || hour > 19) return;                       // daylight work
+    { const overnight = npc.schedule && npc.schedule[1] > 24;   // never instead of a real shift
+      const inShift = npc.schedule && (overnight
+        ? (hour >= npc.schedule[0] || hour < npc.schedule[1] - 24)
+        : (hour >= npc.schedule[0] && hour < npc.schedule[1]));
+      if (inShift) return; }
+    if (npc.coins >= CFG.ODDJOBS.seekBelow) return;          // comfortable enough not to bother
+    const absNow = sim.day * 1440 + sim.time;
+    if (absNow - (npc.lastOddJob || -9999) < CFG.ODDJOBS.cooldownH * 60) return;
+
+    const town = world.towns[townOfScene(world, npc.scene)];
+    if (!town) return;
+    const gigs = CFG.ODDJOBS.gigs.filter(g => town.spots[g.spot]);
+    if (!gigs.length) return;
+    const gig = rand(gigs);
+    npc.oddJob = { spot: gig.spot, label: gig.label, track: gig.track, town: town.id };
+    npc.goal = null;
+  };
+
+  /* they walked to the spot; this is the stint itself */
+  const workOddJob = (sim, world, npc, now) => {
+    const j = npc.oddJob; if (!j) return;
+    const town = world.towns[j.town];
+    const spot = town?.spots?.[j.spot];
+    if (!spot) { npc.oddJob = null; return; }
+    if (npc.scene !== `t:${j.town}` || dist(npc, spot) > 1.8) return;   // still walking
+    npc.oddJob = null; npc.goal = null;
+    npc.lastOddJob = sim.day * 1440 + sim.time;
+    npc.oddJobDay = sim.day;                                  // the dole notices they worked
+    const pay = rollRange(CFG.ODDJOBS.pay);
+    npc.coins = Math.min(9999, npc.coins + pay);
+    npc.energy = clamp(npc.energy - CFG.ODDJOBS.energy, 0, 100);
+    const before = skillLevel(npc, j.track);
+    npc.skills[j.track] = (npc.skills[j.track] || 0) + taskXp(j.track, 0);
+    if (skillLevel(npc, j.track) > before)
+      sim.dayLog = [...sim.dayLog, `${npc.name} is getting handy at ${SKILL_TRACKS[j.track].toLowerCase()}`].slice(-12);
+    npc.bubble = { text: rand([`Honest ${pay} coins.`, "Work's work.", "*wipes their hands* That's that."]), until: now + 4 };
+    if (sim.player.scene === npc.scene) showToast(`🧹 ${npc.name} finishes ${j.label} — ${pay}c.`);
+  };
+
+  /* =====================================================================
+     STAGE 10 — DRAMATIC ATTITUDE: the town finally ACTS on how it feels
+     =====================================================================
+     Alderbrook has always tracked grudges and devotion down to nine tiers; it just never let
+     anyone do anything about them unbidden. Under the dramatic attitude a soul who can't stand
+     you will cross a plaza to say so, and one who adores you will cross it to press coins into
+     your hand. `npc.grudgeOn` is the errand — deliberately the same shape as an enforcer's
+     dispatch, so decideNPC walks them there and the tick settles it on arrival.
+     Under PEACEFUL none of this runs at all. */
+  const dramaTick = (sim, world, npc, now) => {
+    const A = att(sim);
+    if (!A.drama) return;
+    const p = sim.player;
+    if (npc.incap || npc.dying || npc.jailedUntil || npc.minor) return;
+    if (npc.activity?.includes("sleep") || npc.energy < 12 || npc.sick?.level === "bad") return;
+    if (npc.grudgeOn || npc.dispatch || npc.crimePlan || npc.burglaryPlan || npc.directive) return;
+    if (npc.hunger < 25 || npc.thirst < 25) return;              // a starving soul has no room for feuds
+    if ((npc.dramaCool || 0) > now) return;
+    npc.dramaCool = now + A.considerEveryS;   // weighed it; won't weigh it again for a while, fire or not
+    /* the Watch and the physicians are held back from STARTING anything. They can be adored,
+       fussed over and targeted like anyone — but a dramatic valley leans hard on arrests and
+       medicine, and a town whose only officer and only doctor are in a cell has no story left. */
+    const restrained = npc.enforcer || npc.doctor;
+
+    const key = (e) => e.id || "player";
+    const relTo = (e) => relIdx(npc.relationships[key(e)] || "neutral");
+    const named = (e) => e.id ? e.name : playerLabel();
+    const inTown = (e) => e !== npc && e.alive && !e.hidden && !e.jailedUntil
+      && townOfScene(world, e.scene) === townOfScene(world, npc.scene);
+    const folk = [p, ...sim.npcs].filter(inTown);
+
+    /* --- AVENGING: their favourite is bleeding, and someone is going to answer for it --- */
+    const fallen = folk.find(e => (e.dying || e.incap) && relTo(e) >= relIdx(A.fussFrom));
+    if (!restrained && fallen && fallen.dying?.byId && Math.random() < A.avengeChance) {
+      const blame = fallen.dying.byId;
+      const culprit = blame === "player" ? p : sim.npcs.find(n => n.id === blame && n.alive);
+      if (culprit && culprit !== npc && !culprit.jailedUntil) {
+        npc.dramaCool = now + A.considerEveryS * 2;
+        npc.relationships[key(culprit)] = "nemesis";           // no negotiation, no tiers to climb
+        npc.memories = [...npc.memories, `${named(culprit)} left ${named(fallen)} bleeding — I will never forget it`].slice(-CFG.MAX_MEMORIES);
+        seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === npc.town),
+          { text: `${named(culprit)} left ${named(fallen)} for dead, and ${npc.name} went looking for them`, subjectId: blame, bad: true });
+        npc.grudgeOn = { id: key(culprit), kind: "avenge", until: sim.day * 1440 + sim.time + 240 };
+        npc.goal = null;
+        npc.bubble = { text: rand([`Who did this to ${named(fallen)}?!`, "I'll KILL them.", `${named(fallen)}— no. No no no.`]), until: now + 5 };
+        return;
+      }
+    }
+
+    /* --- FUSSING: someone they adore is in town, and that's unbearable to sit on --- */
+    const dear = folk.filter(e => !e.incap && !e.dying && relTo(e) >= relIdx(A.fussFrom));
+    if (dear.length && Math.random() < A.devotionChance) {
+      npc.dramaCool = now + A.considerEveryS;
+      npc.grudgeOn = { id: key(rand(dear)), kind: "fuss", until: sim.day * 1440 + sim.time + 180 };
+      npc.goal = null;
+      return;
+    }
+
+    /* --- HAVOC: the one they can least stand, and no reason left to be polite --- */
+    const foes = restrained ? [] : folk.filter(e => !e.incap && !e.dying && relTo(e) <= relIdx(A.spiteFrom));
+    if (foes.length && Math.random() < A.grudgeChance) {
+      npc.dramaCool = now + A.considerEveryS * 2;
+      foes.sort((a, b) => relTo(a) - relTo(b));                 // the one they hate MOST
+      npc.grudgeOn = { id: key(foes[0]), kind: "spite", until: sim.day * 1440 + sim.time + 240 };
+      npc.goal = null;
+    }
+  };
+
+  /* the errand is walked; this is what happens when they get there. Tier decides how far it goes:
+     `hates` is a scene, `enemy` helps itself to your purse, and a `nemesis` swings. */
+  const settleGrudge = (sim, world, npc, now) => {
+    const g = npc.grudgeOn; if (!g) return;
+    const p = sim.player;
+    const t = g.id === "player" ? p : sim.npcs.find(n => n.id === g.id);
+    const gone = !t || !t.alive || t.jailedUntil || (g.kind !== "avenge" && (t.incap || t.dying));
+    if (gone || sim.day * 1440 + sim.time > g.until) { npc.grudgeOn = null; npc.goal = null; return; }
+    if (t.scene !== npc.scene || dist(t, npc) > 1.7) return;     // still walking
+    npc.grudgeOn = null; npc.goal = null;
+    const named = t.id ? t.name : playerLabel();
+    const A = att(sim);
+
+    if (g.kind === "fuss") {
+      const itemId = Object.keys(npc.inv).find(id => npc.inv[id] > 0 && !ITEMS[id].dmg);
+      const gave = (npc.coins > 6 && Math.random() < 0.6) ? receiveGift(sim, npc, t, { coins: 2 + Math.floor(Math.random() * 6) })
+        : itemId ? receiveGift(sim, npc, t, { itemId }) : false;
+      npc.bubble = { text: gave ? rand(["For you. I INSIST.", "Don't argue, just take it.", "I saw it and thought of you."])
+        : rand([`There you are! I've been looking everywhere.`, "Have you EATEN? Honestly.", "Just checking on you. Again."]), until: now + 5 };
+      if (!t.id && !gave) showToast(`💞 ${npc.name} fusses over you.`);
+      return;
+    }
+
+    const tier = relIdx(npc.relationships[g.id] || "neutral");   // 0 nemesis · 1 enemy · 2 hates
+    if (g.kind === "avenge" || tier <= relIdx("nemesis")) {       // blood
+      npc.steelUntil = now + 45;
+      npc.bubble = { text: g.kind === "avenge" ? rand(["YOU. This is YOURS.", "Look at me. LOOK at me."]) : rand(["I've had ENOUGH of you.", "This has been coming."]), until: now + 5 };
+      pushFx(sim, npc.scene, npc.x, npc.y, "crime");
+      if (!t.id) {
+        if (!modalRef.current) { sfx.alert(); setCombat({ foeId: npc.id, aggressor: npc.id, over: false, won: null,
+          log: [`${npc.name} comes at you — ${g.kind === "avenge" ? "and they mean it." : "no words, no warning."}`] }); }
+        else damage(p, weaponDmg(npc));
+      } else resolveFightNPC(sim, npc, t, now);
+      return;
+    }
+    if (tier <= relIdx("enemy")) {                               // theft, and no shame about it
+      const take = Math.min(t.coins || 0, randInt(A.spiteCoins));
+      if (take > 0) transferCoins(sim, t, npc, take);
+      npc.bubble = { text: rand(["Consider it owed.", "You won't miss it.", "That's for last time."]), until: now + 5 };
+      if (t.id) {
+        t.bubble = { text: rand(["HEY! Thief!", "Give that BACK!"]), until: now + 4 };
+        t.relationships[npc.id] = REL_ORDER[Math.max(0, relIdx(t.relationships[npc.id] || "neutral") - 1)];
+        if (Math.random() < 0.6) { t.report = { thiefId: npc.id, crime: "theft", victimName: t.name }; t.goal = null; }
+      } else if (take > 0) { sfx.alert(); showToast(`💸 ${npc.name} lifts ${take}c off you in broad daylight.`); }
+      convictStars(sim, npc, 1, `${npc.name} robbed ${named} out of pure spite`);
+      return;
+    }
+    // `hates` — a public scene, and the whole street hears about it
+    npc.bubble = { text: rand([`Everyone should know what ${named} is.`, "Don't. Just don't.", `I have NOTHING to say to you.`]), until: now + 5 };
+    if (t.id) t.relationships[npc.id] = REL_ORDER[Math.max(0, relIdx(t.relationships[npc.id] || "neutral") - 1)];
+    else showToast(`🗣️ ${npc.name} makes a scene about you in public.`);
+    seedGossip(sim, sim.npcs.filter(n => n.alive && n.scene === npc.scene),
+      { text: `${npc.name} tore into ${named} in the open`, subjectId: g.id, bad: true });
+    repEvent(sim, t, -2, 0, `${npc.name} publicly humiliated ${named}`);
   };
 
   /* =================== CONTEXT ACTIONS =================== */
@@ -7636,7 +8153,7 @@ export default function Alderbrook() {
         break;
       }
       case "reportrob": {
-        if (sim.playerRobbedBy) fileReport(sim, p, sim.playerRobbedBy, "robbery", "the player");   // Stage 3.5: same pipe as every report
+        if (sim.playerRobbedBy) fileReport(sim, p, sim.playerRobbedBy, "robbery", playerLabel());   // Stage 3.5: same pipe as every report
         sim.playerRobbedBy = null;
         repEvent(sim, p, 1, 1, "the player reported a robbery");
         showToast("Tessa writes it in the tally book. Twice.");
@@ -8271,10 +8788,25 @@ export default function Alderbrook() {
     if (itemId === "goodie_crate") {   // Stage 6: open for 3 random items
       if (!(p.inv.goodie_crate > 0)) return;
       p.inv.goodie_crate -= 1; if (p.inv.goodie_crate <= 0) delete p.inv.goodie_crate;
-      const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && id !== "sludge" && id !== "burnt");
+      const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && !ITEMS[id].contraband && id !== "sludge" && id !== "burnt");
+      /* price-weighted, gently: cheap tat stays common, and something dear is a story. */
+      const wOf = (id) => 1 / Math.pow(ITEMS[id].price, CFG.CRATE.priceWeight);
+      const total = pool.reduce((sum, id) => sum + wOf(id), 0);
+      const drawOne = () => { let r = Math.random() * total; for (const id of pool) { if ((r -= wOf(id)) <= 0) return id; } return pool[pool.length - 1]; };
       const got = [];
-      for (let i = 0; i < 3; i++) { const g = rand(pool); p.inv[g] = (p.inv[g] || 0) + 1; got.push(ITEMS[g].emoji); }
-      sfx.chime(); showToast(`🎲 Crate opened: ${got.join(" ")}!`); bump(); return;
+      let best = null;
+      for (let i = 0; i < 3; i++) {
+        const g = drawOne();
+        p.inv[g] = (p.inv[g] || 0) + 1; got.push(ITEMS[g].emoji);
+        if (!best || ITEMS[g].price > ITEMS[best].price) best = g;
+      }
+      sfx.chime(); showToast(`🎲 Crate opened: ${got.join(" ")}!`);
+      if (ITEMS[best].price >= CFG.CRATE.braggableAt) {   // the pull worth telling someone about
+        sfx.coin();
+        showToast(`✨ ${ITEMS[best].emoji} ${ITEMS[best].name} — worth ${ITEMS[best].price}c. That's a FIND.`);
+        sim.dayLog = [...sim.dayLog, `${playerLabel()} pulled ${ITEMS[best].name} out of a goodie crate`].slice(-12);
+      }
+      bump(); return;
     }
     if (consumeItem(p, itemId)) {
       const msg = it.heal ? "patched up." : it.cure ? "feeling better already." : "that hit the spot.";
@@ -8357,7 +8889,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       setInterro({ caseId: iv.caseId, detId: iv.detId, detName: det.name, history: [], q: 0, busy: true, done: false, verdict: null });
       // fire the detective's opening question
       const skillDesc = skillLabel(det, "office");
-      detectiveMove(det.name, skillDesc, "the player", kase.evidence, 1, CFG.SKILLCHECK.interrogateQuestions, [], false)
+      detectiveMove(det.name, skillDesc, playerLabel(), kase.evidence, 1, CFG.SKILLCHECK.interrogateQuestions, [], false)
         .then(move => setInterro(s => s && { ...s, busy: false, history: [{ who: "det", text: move.say }], q: 1, concluded: move.action === "conclude", verdict: move.action === "conclude" ? move.verdict : null }))
         .catch(() => {   // no API (or it failed): the interrogation becomes a dice duel, not a freebie
           const det2 = simRef.current.npcs.find(n => n.id === iv.detId);
@@ -8381,7 +8913,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const toOffline = () => setInterro(s => s && { ...s, offline: true, busy: false,
       susp: CFG.INTERRO_OFFLINE.base + (kase.evidence || 0) * CFG.INTERRO_OFFLINE.perEvidence, evidence: kase.evidence || 0,
       history: [...hist, { who: "det", text: offlineQuestion(det, kase, s.q) }] });
-    detectiveMove(det.name, skillDesc, "the player", kase.evidence, interro.q + 1, CFG.SKILLCHECK.interrogateQuestions, hist, mustConclude)
+    detectiveMove(det.name, skillDesc, playerLabel(), kase.evidence, interro.q + 1, CFG.SKILLCHECK.interrogateQuestions, hist, mustConclude)
       .then(move => {
         const h2 = [...hist, { who: "det", text: move.say }];
         if (move.action === "conclude") {
@@ -8859,7 +9391,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const dmg = randInt(w.dmg);
         foe.health = Math.max(0, foe.health - dmg);
         if (foe.health <= 5) {   // dropped at range — same justice as a won fight, minus the looting
-          if (w.lethal) setDying(sim, foe, "player"); else incapacitate(sim, foe);
+          if (w.lethal) setDying(sim, foe, "player", wrongedPlayer(sim, foe.id)); else incapacitate(sim, foe);   // shooting the one who mugged you still reads as defence
           const o = takedownOutcome(sim, foe);
           if (o.lawful) {
             if (o.fame || o.renown) repEvent(sim, p, o.fame, o.renown, `the player brought down ${foe.name}${(foe.wanted || 0) ? `, a ${foe.wanted}-star fugitive` : ""}`);
@@ -8904,7 +9436,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     };
     if (apiBusyRef.current) { finish(localTradeDecide(npc, p, t), null); return; }
     apiBusyRef.current = true;
-    tradeConsider(npc, "the player", npc.relationships.player || "neutral", t)
+    tradeConsider(npc, playerLabel(), npc.relationships.player || "neutral", t)
       .then(out => out ? finish(out.accept, out.say) : finish(localTradeDecide(npc, p, t), null))
       .catch(() => finish(localTradeDecide(npc, p, t), null))
       .finally(() => { apiBusyRef.current = false; });
@@ -8940,7 +9472,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     lastSpeechRef.current = performance.now(); apiBusyRef.current = true;
     const rel = near.relationships[p.id || "player"] || "neutral";
     const ctx = `You feel ${rel} toward the player. Recently: ${(near.memories || []).slice(-1)[0] || "nothing notable"}.`;
-    speechReply(near, "the player", said, ctx)
+    speechReply(near, playerLabel(), said, ctx)
       .then(reply => { if (reply) near.bubble = { text: reply, until: performance.now() / 1000 + 4.5 }; })
       .catch(() => {})
       .finally(() => { apiBusyRef.current = false; });
@@ -9297,7 +9829,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       ...sim.npcs.filter(n => n.alive && n.scene === scene && !n.hidden).map(n => ({ ...n, kind: "npc", ref: n })),
       // Stage 9: the wild draws in the same depth-sorted pass as everyone else
       ...beastsIn(sim, scene).map(b => ({ ...b, kind: "beast", name: BEAST_SPECIES[b.sp].name, color: BEAST_SPECIES[b.sp].color, ref: b })),
-      { ...sim.player, kind: "player", name: "You", color: "#2e6fe0", ref: sim.player },
+      { ...sim.player, kind: "player", name: playerDisplay(), color: "#2e6fe0", ref: sim.player },
     ].sort((a, b) => a.y - b.y);
     for (const e of ents) drawEntity(ctx, e, T, px, py);
     // Stage 3.5: transient FX — crime pulses expand red, arrests flash gold with a rising ⚖️
@@ -9463,6 +9995,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       const S9 = BEAST_SPECIES[e.sp];
       ctx.fillStyle = "rgba(0,0,0,0.22)";
       ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.3, T * 0.3, T * 0.11, 0, 0, 7); ctx.fill();
+      /* fillStyle alpha MULTIPLIES a colour-emoji glyph — leaving the shadow's 0.22 in place
+         painted every animal at a fifth opacity. They looked like ghosts. Reset to solid first. */
+      ctx.fillStyle = "#000";
       ctx.font = `${Math.floor(T * 0.85)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(S9.emoji, cx, cy);
       ctx.textBaseline = "alphabetic";
@@ -9530,6 +10065,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
              difficulty === "normal" ? "Death can be survived — at a price." :
              "The graveyard takes hardcore players personally. Save is wiped."}
           </p>
+          <div style={{ textAlign: "left", background: "#f1e9d6", border: "1px solid #e0d4b8", borderRadius: 12, padding: "10px 12px", margin: "6px 0 2px" }}>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>🧑 Your name <span style={{ fontWeight: 400, opacity: 0.55 }}>· optional</span></div>
+            <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 6, lineHeight: 1.35 }}>
+              What the valley calls you — in the ledger, in the gossip, and to your face. Leave it blank and you're just "the player". You can set it later in ⚙️ Settings.
+            </div>
+            <input value={nameInput} onChange={e => setNameInput(e.target.value.slice(0, 18))}
+              placeholder="Nobody in particular"
+              style={{ width: "100%", padding: "7px 9px", borderRadius: 8, border: "1px solid #cdbf9f", background: "#fff", fontSize: 13, color: "#2a2620", boxSizing: "border-box" }} />
+          </div>
           <div style={{ textAlign: "left", background: "#f1e9d6", border: "1px solid #e0d4b8", borderRadius: 12, padding: "10px 12px", margin: "6px 0 2px" }}>
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
               🔑 Anthropic API key {USER_API_KEY
@@ -9931,6 +10475,47 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <input ref={saveFileInputRef} type="file" accept="application/json,.json" style={{ display: "none" }}
                   onChange={e => { importSave(e.target.files?.[0]); e.target.value = ""; }} />
               </div>
+              <div style={S.folkCard}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>🧑 Your name</div>
+                <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 6 }}>
+                  What the town calls you in the day log, in gossip, on your headstone — and what NPCs use when they talk about you. Blank means "the player".
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input value={nameInput} onChange={e => setNameInput(e.target.value.slice(0, 18))}
+                    placeholder={sim.player.name || "the player"}
+                    style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" }} />
+                  <button style={{ ...S.smallBtn, whiteSpace: "nowrap" }}
+                    onClick={() => { const n = setPlayerName(nameInput); sim.player.name = n; setNameInput(n); showToast(n ? `They'll know you as ${n}.` : "Name cleared — you're nobody in particular again."); bump(); saveGame(); }}>Set name</button>
+                </div>
+              </div>
+              {(() => {   // Stage 10: the town's temperament — choosable while the story is still young
+                const locked = sim.day > CFG.ATTITUDE.lockAfterDay;
+                const cur = sim.settings.attitude || "peaceful";
+                return (
+                  <div style={S.folkCard}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                      🎭 Attitude {locked && <span style={{ fontWeight: 400, opacity: 0.6 }}>· locked in (day {CFG.ATTITUDE.lockAfterDay} passed)</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {Object.entries(CFG.ATTITUDE.modes).map(([k, m]) => (
+                        <button key={k} disabled={locked && k !== cur}
+                          style={{ ...S.diffBtn, ...(cur === k ? S.diffBtnOn : {}), opacity: locked && k !== cur ? 0.4 : 1, flex: 1 }}
+                          onClick={() => { if (locked) return; sim.settings.attitude = k; showToast(`${m.emoji} ${m.label} — the valley shifts.`); bump(); saveGame(); }}>
+                          {m.emoji} {m.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: fs - 2, opacity: 0.65, marginTop: 6 }}>
+                      {CFG.ATTITUDE.modes[cur].blurb}
+                    </div>
+                    <div style={{ fontSize: fs - 3, opacity: 0.5, marginTop: 4 }}>
+                      {locked
+                        ? "A town's temperament isn't a dial you flip mid-story. Start a new file to change it."
+                        : `Changeable through day ${CFG.ATTITUDE.lockAfterDay}, then it's baked into this file for good.`}
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={S.folkCard}>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>💀 Difficulty (death & bills)</div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -11334,7 +11919,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               {[...sim.cases].reverse().slice(0, 12).map(c => {
                 const who = c.suspectId === "player" ? "You" : sim.npcs.find(n => n.id === c.suspectId)?.name;
                 return (
-                  <div key={c.id} style={{ ...S.folkCard, borderLeft: `4px solid ${c.type === "murder" ? "#8a3a3a" : c.type === "vigilante" ? "#6a4a8a" : c.type === "robbery" ? "#a0763a" : "#5a7a9a"}` }}>
+                  <div key={c.id} style={{ ...S.folkCard, borderLeft: `4px solid ${c.type === "murder" ? "#8a3a3a" : c.type === "vigilante" ? "#6a4a8a" : c.type.includes("defensive") ? "#a05a6a" : c.type === "robbery" ? "#a0763a" : "#5a7a9a"}` }}>
                     <b style={{ textTransform: "uppercase" }}>{c.type}</b> · day {c.day} · {c.state === "open" ? "🔍 OPEN" : c.state === "cold" ? "🧊 cold" : "✅ solved"}
                     <div style={{ fontSize: fs - 2, opacity: 0.8 }}>
                       victim: {c.victim || "—"}{c.state !== "open" && who ? ` · culprit: ${who}` : c.state === "open" ? ` · evidence: ${"▪".repeat(c.evidence) || "none"}` : ""}
