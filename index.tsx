@@ -2314,10 +2314,10 @@ const SEASONS = {
    sky is what you feel. Kept here (not in the clothing block) so the climate model stands alone. */
 function wardrobeWarmth(ent) {
   let w = 0;
-  for (const id of (ent?.worn || [])) {
-    const G = GARMENTS[id];
+  for (const pc of wornPieces(ent || {})) {
+    const G = GARMENTS[pc.g];
     if (!G) continue;
-    w += (ent.wornTorn?.[id] ? G.warmth * 0.4 : G.warmth);   // a torn coat is barely a coat
+    w += (pc.t ? G.warmth * 0.4 : G.warmth);   // a torn coat is barely a coat
   }
   return w;
 }
@@ -2558,28 +2558,108 @@ const FLORA = {
      endur   — what it costs your maximum energy to carry it around
    Torn pieces give NO toughness and a fraction of their warmth until patched.
    ===================================================================== */
+/* Colourways. A garment names a palette rather than a colour, and each piece
+   somebody owns picks one entry out of it — so two work shirts in the same town
+   are rarely the same blue, and the valley stops looking like a uniform. */
+const CLOTH_PALS = {
+  light:  [["#efe7d2", "#cfc3a4"], ["#dbe6e8", "#adc3c8"], ["#f2e2cc", "#d4bb98"], ["#e4ecd8", "#bccfa8"],
+           ["#f4dcd8", "#d8b0aa"], ["#e8e4f0", "#bcb4d0"]],
+  earthy: [["#5f7f9c", "#44607a"], ["#7a8a5a", "#5c6b3f"], ["#8a6a4a", "#6a4e33"], ["#6f7f8c", "#53606b"],
+           ["#8a5a5a", "#6a4040"], ["#5f7f6a", "#44604f"], ["#7a6a8a", "#5b4d69"], ["#8a7a4a", "#695c34"]],
+  deep:   [["#3f5f7a", "#2c465c"], ["#5f3f4a", "#452c34"], ["#3f4a3a", "#2c3529"], ["#4a3f5f", "#352c45"],
+           ["#5a4a2f", "#403420"], ["#2f4a4a", "#1f3535"], ["#6a3a3a", "#4d2828"], ["#3a3f52", "#282c3b"]],
+  straw:  [["#e2c882", "#c2a05a"], ["#d8bb70", "#b8974c"], ["#eed9a2", "#cdb478"]],
+  hide:   [["#6b4a2e", "#4c331e"], ["#7a5530", "#573920"], ["#5c4028", "#412c1a"]],
+  plate:  [["#7f8794", "#5f6672"]],
+};
+/* ---------------------------------------------------------------------------
+   `cut` is the shape the figure is drawn in — several garments share one cut
+   and differ only by palette and weight, which is what makes mixing and
+   matching cheap. `covers` lets a dress stand in for the legs slot too.
+   --------------------------------------------------------------------------- */
 const GARMENTS = {
   /* ---- SUMMER WEAR: airy, no protection, cheap ---- */
-  sun_hat:      { name: "Straw Sun Hat",   emoji: "👒", slot: "head",  warmth: -3, tough: 0,  endur: 0,  tier: "easy",   mats: { fiber: 3 },                      dur: 70,  wear: "summer" },
-  summer_tunic: { name: "Summer Tunic",    emoji: "🎽", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 80,  wear: "summer" },
-  light_shorts: { name: "Light Shorts",    emoji: "🩳", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 80,  wear: "summer" },
+  sun_hat:      { name: "Straw Sun Hat",   emoji: "👒", slot: "head",  warmth: -3, tough: 0,  endur: 0,  tier: "easy",   mats: { fiber: 3 },                      dur: 70,  wear: "summer", cut: "brim",     pal: "straw" },
+  head_scarf:   { name: "Head Scarf",      emoji: "🧣", slot: "head",  warmth: -1, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 70,  wear: "summer", cut: "kerchief", pal: "light" },
+  summer_tunic: { name: "Summer Tunic",    emoji: "🎽", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 80,  wear: "summer", cut: "tunic",    pal: "light" },
+  linen_shirt:  { name: "Linen Shirt",     emoji: "👔", slot: "torso", warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3, fiber: 1 },           dur: 90,  wear: "summer", cut: "shirt",    pal: "light" },
+  sun_dress:    { name: "Sun Dress",       emoji: "👗", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "simple", mats: { cotton: 4, fiber: 1 },           dur: 85,  wear: "summer", cut: "dress",    pal: "light", covers: "legs" },
+  airy_vest:    { name: "Airy Vest",       emoji: "🦺", slot: "torso", warmth: -5, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 85,  wear: "summer", cut: "vest",     pal: "light" },
+  light_shorts: { name: "Light Shorts",    emoji: "🩳", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 80,  wear: "summer", cut: "shorts",   pal: "light" },
+  linen_skirt:  { name: "Linen Skirt",     emoji: "👗", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 85,  wear: "summer", cut: "skirt",    pal: "light" },
+  crop_trous:   { name: "Cropped Trousers",emoji: "👖", slot: "legs",  warmth: -2, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 90,  wear: "summer", cut: "trous",    pal: "light" },
   /* ---- MEDIUM WEAR: what most people own ---- */
-  cloth_cap:    { name: "Cloth Cap",       emoji: "🧢", slot: "head",  warmth: 2,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 100, wear: "medium" },
-  work_shirt:   { name: "Work Shirt",      emoji: "👕", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4, finefiber: 1 },       dur: 120, wear: "medium" },
-  work_trous:   { name: "Work Trousers",   emoji: "👖", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 3, finefiber: 1 },       dur: 120, wear: "medium" },
+  cloth_cap:    { name: "Cloth Cap",       emoji: "🧢", slot: "head",  warmth: 2,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 100, wear: "medium", cut: "cap",      pal: "earthy" },
+  knit_beanie:  { name: "Knit Beanie",     emoji: "🧢", slot: "head",  warmth: 4,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, finefiber: 1 },       dur: 105, wear: "medium", cut: "beanie",   pal: "earthy" },
+  work_shirt:   { name: "Work Shirt",      emoji: "👕", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4, finefiber: 1 },       dur: 120, wear: "medium", cut: "shirt",    pal: "earthy" },
+  flannel:      { name: "Flannel Shirt",   emoji: "👕", slot: "torso", warmth: 5,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 4, finefiber: 1 },       dur: 125, wear: "medium", cut: "shirt",    pal: "earthy" },
+  waistcoat:    { name: "Waistcoat",       emoji: "🦺", slot: "torso", warmth: 4,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 3, finefiber: 2 },       dur: 130, wear: "medium", cut: "vest",     pal: "deep" },
+  day_dress:    { name: "Day Dress",       emoji: "👗", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 5, finefiber: 1 },       dur: 120, wear: "medium", cut: "dress",    pal: "earthy", covers: "legs" },
+  work_trous:   { name: "Work Trousers",   emoji: "👖", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 3, finefiber: 1 },       dur: 120, wear: "medium", cut: "trous",    pal: "earthy" },
+  corduroys:    { name: "Corduroys",       emoji: "👖", slot: "legs",  warmth: 4,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 4, finefiber: 1 },       dur: 130, wear: "medium", cut: "trous",    pal: "earthy" },
+  canvas_skirt: { name: "Canvas Skirt",    emoji: "👗", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4 },                     dur: 120, wear: "medium", cut: "skirt",    pal: "earthy" },
   /* ---- WINTER WEAR: the jacket is genuinely protective in its own right ---- */
-  wool_hood:    { name: "Wool Hood",       emoji: "🧣", slot: "head",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 3, finefiber: 1 },       dur: 130, wear: "winter" },
-  winter_jacket:{ name: "Winter Jacket",   emoji: "🧥", slot: "torso", warmth: 13, tough: 5,  endur: -3, tier: "medium", mats: { cotton: 5, finefiber: 2 },       dur: 150, wear: "winter" },
-  winter_trous: { name: "Lined Trousers",  emoji: "👖", slot: "legs",  warmth: 8,  tough: 2,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 1 },       dur: 140, wear: "winter" },
+  wool_hood:    { name: "Wool Hood",       emoji: "🧣", slot: "head",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 3, finefiber: 1 },       dur: 130, wear: "winter", cut: "hood",     pal: "deep" },
+  fur_cap:      { name: "Fur Cap",         emoji: "🧢", slot: "head",  warmth: 9,  tough: 2,  endur: -1, tier: "medium", mats: { pelt: 1, finefiber: 1 },         dur: 150, wear: "winter", cut: "furcap",   pal: "hide" },
+  winter_jacket:{ name: "Winter Jacket",   emoji: "🧥", slot: "torso", warmth: 13, tough: 5,  endur: -3, tier: "medium", mats: { cotton: 5, finefiber: 2 },       dur: 150, wear: "winter", cut: "coat",     pal: "deep" },
+  wool_coat:    { name: "Wool Overcoat",   emoji: "🧥", slot: "torso", warmth: 15, tough: 4,  endur: -4, tier: "hard",   mats: { cotton: 6, finefiber: 3 },       dur: 165, wear: "winter", cut: "longcoat", pal: "deep" },
+  quilt_vest:   { name: "Quilted Vest",    emoji: "🦺", slot: "torso", warmth: 9,  tough: 3,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 2 },       dur: 145, wear: "winter", cut: "quilt",    pal: "deep" },
+  winter_trous: { name: "Lined Trousers",  emoji: "👖", slot: "legs",  warmth: 8,  tough: 2,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 1 },       dur: 140, wear: "winter", cut: "trous",    pal: "deep" },
+  padded_trous: { name: "Padded Trousers", emoji: "👖", slot: "legs",  warmth: 10, tough: 3,  endur: -3, tier: "hard",   mats: { cotton: 5, finefiber: 2 },       dur: 155, wear: "winter", cut: "quiltlegs",pal: "deep" },
+  wool_skirt:   { name: "Wool Skirt",      emoji: "👗", slot: "legs",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 5, finefiber: 1 },       dur: 135, wear: "winter", cut: "skirt",    pal: "deep" },
   /* ---- HUNTER'S LEATHERS: pelt work, warm and genuinely tough ---- */
-  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium", hunt: true },
-  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium", hunt: true },
-  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium", hunt: true },
+  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium", cut: "hunter",   pal: "hide", hunt: true },
+  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium", cut: "coat",     pal: "hide", hunt: true },
+  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium", cut: "trous",    pal: "hide", hunt: true },
   /* ---- THE WATCH'S PLATE: guard issue. Heavy, hard, and not for just anyone. ---- */
-  guard_helm:   { name: "Watch Helm",      emoji: "⛑️", slot: "head",  warmth: 3,  tough: 7,  endur: -3, tier: "hard",   mats: { ore: 4, finefiber: 1 },          dur: 260, wear: "medium", guard: true },
-  guard_mail:   { name: "Watch Hauberk",   emoji: "🦺", slot: "torso", warmth: 5,  tough: 18, endur: -9, tier: "hard",   mats: { ore: 9, pelt: 2, finefiber: 2 }, dur: 320, wear: "medium", guard: true },
-  guard_greaves:{ name: "Watch Greaves",   emoji: "🥾", slot: "legs",  warmth: 4,  tough: 9,  endur: -5, tier: "hard",   mats: { ore: 6, pelt: 1, finefiber: 1 }, dur: 280, wear: "medium", guard: true },
+  guard_helm:   { name: "Watch Helm",      emoji: "⛑️", slot: "head",  warmth: 3,  tough: 7,  endur: -3, tier: "hard",   mats: { ore: 4, finefiber: 1 },          dur: 260, wear: "medium", cut: "helm",     pal: "plate", guard: true },
+  guard_mail:   { name: "Watch Hauberk",   emoji: "🦺", slot: "torso", warmth: 5,  tough: 18, endur: -9, tier: "hard",   mats: { ore: 9, pelt: 2, finefiber: 2 }, dur: 320, wear: "medium", cut: "mail",     pal: "plate", guard: true },
+  guard_greaves:{ name: "Watch Greaves",   emoji: "🥾", slot: "legs",  warmth: 4,  tough: 9,  endur: -5, tier: "hard",   mats: { ore: 6, pelt: 1, finefiber: 1 }, dur: 280, wear: "medium", cut: "greaves",  pal: "plate", guard: true },
 };
+/* the colourways open to a given piece, and the one a given instance wears */
+const palOf = (gid) => CLOTH_PALS[GARMENTS[gid]?.pal] || CLOTH_PALS.earthy;
+const colourway = (gid, i) => { const p = palOf(gid); return p[((i | 0) % p.length + p.length) % p.length]; };
+/* patterns are per-piece too, so two shirts in the same blue still differ */
+const CLOTH_PATTERNS = ["plain", "plain", "plain", "stripe", "band", "check", "patch"];
+
+/* =====================================================================
+   A GARMENT YOU OWN IS A THING, NOT A COUNT. Two work shirts are two
+   separate shirts: each keeps its own wear, its own colourway, its own
+   tear. They live in `ent.kit`; `ent.worn` holds the uids of the ones
+   actually on the body. Nothing about clothing stacks any more, which is
+   why the pack lists each piece by condition instead of showing "×3".
+   ===================================================================== */
+let PIECE_SEQ = 0;
+const newPiece = (gid, seed) => {
+  const h = seed === undefined ? Math.floor(Math.random() * 1e9)
+          : typeof seed === "number" ? Math.floor(Math.abs(seed)) : hash32(seed);
+  return { u: `p${(++PIECE_SEQ).toString(36)}${(h % 60466176).toString(36)}`,
+           g: gid, w: 0, t: false, c: h % palOf(gid).length, p: (h >> 5) % CLOTH_PATTERNS.length };
+};
+const kitOf = (ent) => (ent.kit || []);
+const pieceOf = (ent, uid) => kitOf(ent).find(k => k.u === uid) || null;
+const wornPieces = (ent) => (ent.worn || []).map(u => pieceOf(ent, u)).filter(Boolean);
+const wornIds = (ent) => wornPieces(ent).map(k => k.g);
+const wornPieceIn = (ent, slot) => wornPieces(ent).find(k => GARMENTS[k.g]?.slot === slot) || null;
+const pieceMax = (pc) => GARMENTS[pc.g]?.dur || 100;
+const pieceCondition = (pc) => clamp(Math.round(100 - (pc.w / pieceMax(pc)) * 100), 0, 100);
+/* the ids somebody owns at all — what the AI is told about, and what dressing picks from */
+const ownedIds = (ent) => [...new Set(kitOf(ent).map(k => k.g))];
+/* put a piece on, taking off whatever already held that slot (and the legs too,
+   if the new piece is a dress that covers them) */
+function wearPiece(ent, uid) {
+  const pc = pieceOf(ent, uid); if (!pc) return false;
+  const G = GARMENTS[pc.g]; if (!G) return false;
+  const drop = new Set();
+  for (const w of wornPieces(ent)) {
+    const WG = GARMENTS[w.g];
+    if (WG.slot === G.slot) drop.add(w.u);
+    if (G.covers && WG.slot === G.covers) drop.add(w.u);
+    if (WG.covers && WG.covers === G.slot) drop.add(w.u);   // taking a dress off to put trousers on
+  }
+  ent.worn = [...(ent.worn || []).filter(u => !drop.has(u)), uid];
+  return true;
+}
 const GARMENT_SLOTS = ["head", "torso", "legs"];
 /* the three weights, and what each one is FOR — used by the tailor menus and the AI */
 const WEAR_BANDS = { summer: "light and airy, for heat", medium: "everyday wear", winter: "heavy and insulating, for cold" };
@@ -2652,16 +2732,16 @@ function lookOf(ent) {
   };
 }
 /* what someone is actually wearing, by slot — worn garments beat their default clothes */
-const wornInSlot = (ent, slot) => (ent.worn || []).find(id => GARMENTS[id]?.slot === slot) || null;
+const wornInSlot = (ent, slot) => wornPieceIn(ent, slot)?.g || null;
 /* Stage 19: does this soul actually need to see a tailor? Torn kit is the real driver — you
    can re-layer what you own for the weather, but a hole is a hole. Returns the reason, or null. */
 function needsTailor(ent, felt) {
   if (!ent.alive || ent.minor) return null;
-  const torn = (ent.worn || []).filter(id => ent.wornTorn?.[id]);
-  if (torn.length) return `${GARMENTS[torn[0]].name.toLowerCase()} is torn through`;
+  const torn = wornPieces(ent).filter(pc => pc.t);
+  if (torn.length) return `${GARMENTS[torn[0].g].name.toLowerCase()} is torn through`;
   const st = tempStress(felt);
-  if (st.cold && !(ent.worn || []).some(id => GARMENTS[id]?.warmth >= 6)) return "nothing warm enough for this weather";
-  if (st.hot && !(ent.worn || []).some(id => GARMENTS[id]?.warmth < 0)) return "nothing light enough for this heat";
+  if (st.cold && !wornPieces(ent).some(pc => GARMENTS[pc.g]?.warmth >= 6)) return "nothing warm enough for this weather";
+  if (st.hot && !wornPieces(ent).some(pc => GARMENTS[pc.g]?.warmth < 0)) return "nothing light enough for this heat";
   return null;
 }
 const TAILOR_BID = "tailor_f";
@@ -2673,46 +2753,116 @@ const TAILOR_BID = "tailor_f";
    they reach for whenever the weather lets them. */
 function startingWardrobe(ent) {
   const h = hash32(ent.id || "player");
-  const kit = [];
-  if (ent.enforcer) kit.push("guard_helm", "guard_mail", "guard_greaves");
-  if (ent.outlaw || ent.thief || ent.hunter) kit.push("hunter_hat", "leather_coat", "leather_legs");
+  const want = [];
+  if (ent.enforcer) want.push("guard_helm", "guard_mail", "guard_greaves");
+  if (ent.outlaw || ent.thief || ent.hunter) want.push("hunter_hat", "leather_coat", "leather_legs");
   let i = 0;
   for (const band of ["summer", "medium", "winter"]) {      // a set for each weight
     const pool = garmentsOfBand(band);
-    for (const slot of GARMENT_SLOTS) {
+    /* Two torsos and two leg pieces per band, one hat — there are far more
+       shirts and trousers to pick from than hats, so a wardrobe should look
+       like it. Different offsets into the pool means neighbours don't match. */
+    for (const [slot, n] of [["head", 1], ["torso", 2], ["legs", 2]]) {
       const opts = pool.filter(id => GARMENTS[id].slot === slot);
-      if (opts.length) kit.push(opts[(h + i++) % opts.length]);
+      if (!opts.length) continue;
+      for (let j = 0; j < n; j++) want.push(opts[(h + i++ * 5 + j * 3) % opts.length]);
     }
   }
-  const owned = [...new Set(kit)];
+  const kit = [...new Set(want)].map((gid, n) => newPiece(gid, h + n * 7919));
   // the favourite: a torso piece they're fond of, so it actually shows
-  const torsos = owned.filter(id => GARMENTS[id].slot === "torso");
-  return { wardrobe: owned, favorite: torsos.length ? torsos[h % torsos.length] : owned[0] || null };
+  const torsos = kit.filter(k => GARMENTS[k.g].slot === "torso");
+  return { kit, favorite: torsos.length ? torsos[h % torsos.length].g : kit[0]?.g || null };
 }
 /* dress from what they OWN, for the weather — leaning on their favourite whenever its weight
-   suits the day. Falls back to conjuring a sensible set for anyone without a wardrobe yet. */
+   suits the day. Returns the uids of the pieces to put on, preferring the least worn of any
+   duplicates, so nobody walks out in the torn shirt while a good one hangs in the wardrobe. */
 function dressForSeason(ent, season, temp) {
   const band = temp <= 6 ? "winter" : temp >= 24 ? "summer" : "medium";
   const h = hash32((ent.id || "player") + season);
-  if (ent.enforcer) return ["guard_helm", "guard_mail", "guard_greaves"];
-  if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") return ["hunter_hat", "leather_coat", "leather_legs"];
-  const owned = (ent.wardrobe && ent.wardrobe.length) ? ent.wardrobe : startingWardrobe(ent).wardrobe;
+  const kit = kitOf(ent);
+  const pick = (test) => {
+    const opts = kit.filter(test);
+    if (!opts.length) return null;
+    const best = Math.min(...opts.map(o => (o.t ? 1 : 0) * 1e6 + o.w));    // sound before torn, fresh before worn
+    const good = opts.filter(o => (o.t ? 1 : 0) * 1e6 + o.w === best);
+    return good[h % good.length];
+  };
+  if (ent.enforcer) {
+    const set = ["guard_helm", "guard_mail", "guard_greaves"].map(g => pick(k => k.g === g)).filter(Boolean);
+    if (set.length) return set.map(k => k.u);
+  }
+  if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") {
+    const set = ["hunter_hat", "leather_coat", "leather_legs"].map(g => pick(k => k.g === g)).filter(Boolean);
+    if (set.length) return set.map(k => k.u);
+  }
   const fav = ent.favorite;
   const out = [];
+  let covered = null;                                        // a dress fills the legs slot as well
   for (const slot of GARMENT_SLOTS) {
-    // their own things of the right weight for this slot, favourite first if it qualifies
-    let opts = owned.filter(id => GARMENTS[id]?.slot === slot && GARMENTS[id].wear === band && !GARMENTS[id].guard);
-    if (!opts.length) opts = owned.filter(id => GARMENTS[id]?.slot === slot && !GARMENTS[id].guard);
-    if (!opts.length) opts = garmentsOfBand(band).filter(id => GARMENTS[id].slot === slot);
-    if (!opts.length) continue;
+    if (covered === slot) continue;
+    const ok = (k) => GARMENTS[k.g]?.slot === slot && !GARMENTS[k.g].guard;
+    let chosen = fav && GARMENTS[fav]?.slot === slot && GARMENTS[fav].wear === band ? pick(k => k.g === fav) : null;
+    chosen = chosen || pick(k => ok(k) && GARMENTS[k.g].wear === band) || pick(ok);
+    if (!chosen) continue;
     if (slot === "head" && h % 3 === 0) continue;            // not everybody wears a hat
-    out.push(fav && opts.includes(fav) ? fav : opts[h % opts.length]);
+    out.push(chosen.u);
+    if (GARMENTS[chosen.g].covers) covered = GARMENTS[chosen.g].covers;
   }
   return out;
 }
+/* Saves written before clothes became individual things stored them as garment
+   ids, with wear and tears in two side tables keyed by id, and the player's
+   spares as counts in the pack. Rebuild all of that as real pieces — worn ones
+   keep the wear and the tear they had, spares come through sound. */
+function migrateWardrobe(ent) {
+  if (!ent) return;
+  /* Detecting the old shape by "has no kit" does NOT work: a save is applied with
+     Object.assign, which cannot delete keys, so a fresh entity's kit survives an
+     old save that has none. Test the old fields themselves — and treat `worn`
+     holding garment ids rather than uids as the giveaway. */
+  const old = ent.wardrobe !== undefined || ent.wornWear !== undefined || ent.wornTorn !== undefined
+    || (ent.worn || []).some(u => GARMENTS[u]);
+  /* Garments also arrive in the pack the ordinary way — bought over a counter,
+     handed over as a gift, pulled out of a crate. Anything of that kind sitting
+     in `inv` becomes a real piece here, or it would be unwearable. */
+  const loose = ent.inv ? Object.keys(ent.inv).filter(id => GARMENTS[id] && ent.inv[id] > 0) : [];
+  if (!old && Array.isArray(ent.kit)) {
+    for (const gid of loose) {
+      for (let i = 0; i < Math.min(ent.inv[gid], 12); i++) ent.kit.push(newPiece(gid));
+      delete ent.inv[gid];
+    }
+    ent.worn = (ent.worn || []).filter(u => ent.kit.some(k => k.u === u));   // never leave a dangling uid
+    return;
+  }
+  const kit = [], seen = new Map();
+  const add = (gid, wear = 0, torn = false) => {
+    if (!GARMENTS[gid]) return null;
+    const pc = newPiece(gid, hash32((ent.id || "player") + gid + kit.length));
+    pc.w = wear; pc.t = torn; kit.push(pc); return pc;
+  };
+  const wornOld = Array.isArray(ent.worn) ? ent.worn : [];
+  for (const gid of wornOld) {
+    const pc = add(gid, ent.wornWear?.[gid] || 0, !!ent.wornTorn?.[gid]);
+    if (pc) seen.set(gid, pc);
+  }
+  for (const gid of (ent.wardrobe || [])) if (!seen.has(gid)) add(gid);
+  if (ent.inv) for (const [gid, n] of Object.entries(ent.inv)) {        // spares used to stack in the pack
+    if (!GARMENTS[gid]) continue;
+    for (let i = 0; i < Math.min(n, 12); i++) add(gid);
+    delete ent.inv[gid];
+  }
+  ent.kit = kit;
+  ent.worn = wornOld.map(g => seen.get(g)?.u).filter(Boolean);
+  delete ent.wardrobe; delete ent.wornWear; delete ent.wornTorn;
+}
+/* How much faster you get filthy for every hole you're walking around in. One
+   torn piece and you grubby up half again as fast; a full set of rags is more
+   than double. Clean living is not available to someone dressed in tatters. */
+const TORN_GRIME = 0.55;
+const tornGrime = (ent) => 1 + wornPieces(ent).filter(pc => pc.t).length * TORN_GRIME;
 /* the two numbers armour trades against each other */
-const toughnessOf = (ent) => (ent.worn || []).reduce((s, id) => s + (ent.wornTorn?.[id] ? 0 : (GARMENTS[id]?.tough || 0)), 0);
-const enduranceOf = (ent) => (ent.worn || []).reduce((s, id) => s + (GARMENTS[id]?.endur || 0), 0);   // torn or not, you still carry it
+const toughnessOf = (ent) => wornPieces(ent).reduce((s, pc) => s + (pc.t ? 0 : (GARMENTS[pc.g]?.tough || 0)), 0);
+const enduranceOf = (ent) => wornPieces(ent).reduce((s, pc) => s + (GARMENTS[pc.g]?.endur || 0), 0);   // torn or not, you still carry it
 const maxEnergyOf = (ent) => clamp(100 + enduranceOf(ent), 40, 100);
 /* the Watch's kit is Watch issue — unless the valley thinks well enough of you to look away */
 const GUARD_KIT_FAME = 25;
@@ -3005,6 +3155,10 @@ function iconKit(ctx, cx, cy, T) {
   };
   const tri = (a, b, c, f) => pg([a, b, c], f);
   const rpg = (pts, f, r) => rpoly(ctx, cx, cy, T, pts, f, r);
+  /* tilt a whole shape about the icon's centre — `pts.map(k.rot(-12))`. Lets a
+     recipe be authored square and then set on a slant as one piece. */
+  const rot = (deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    return ([x, y]) => [x * c - y * s, x * s + y * c]; };
   const rrc = (x, y, w, h, f, r = 0.05) => rpg([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], f, r);
   /* an organic lump — a circle pushed in and out around its rim. Dough, cotton
      bolls and berries all want this instead of a clean ellipse. */
@@ -3027,7 +3181,7 @@ function iconKit(ctx, cx, cy, T) {
     return { at, ux, uy, nx, ny, L,
       bar: (t0, t1, w, f, r) => rpg([at(t0, -w), at(t1, -w), at(t1, w), at(t0, w)], f, r ?? 0) };
   };
-  return { pg, rc, el, ci, ln, tri, rpg, rrc, blob, ax };
+  return { pg, rc, el, ci, ln, tri, rpg, rrc, blob, ax, rot };
 }
 
 /* shared assemblies — the reason this stays a family */
@@ -3089,6 +3243,61 @@ const SH = {
     k.pg([[0.00, -0.30], [0.22, -0.06], [0.00, 0.28], [-0.22, -0.06]], c);
     k.ln(0.00, -0.26, 0.00, 0.24, 0.035, PAL.leafDk);
   },
+  /* ---- garment blanks. Several pieces share a cut and differ only in colour
+     and trim, so the shapes live here once and the recipes just dress them. ---- */
+  gTunic: (k, c, a) => {                                     // loose, sleeveless, over the head
+    k.rpg([[-0.28, -0.14], [-0.11, -0.26], [0.11, -0.26], [0.28, -0.14], [0.21, -0.02], [0.23, 0.28], [-0.23, 0.28], [-0.21, -0.02]], c, 0.05);
+    k.rpg([[-0.10, -0.26], [0.10, -0.26], [0.00, -0.11]], a, 0.03);
+  },
+  gShirt: (k, c, a, buttons = true) => {                     // set-in sleeves, placket, collar
+    k.rpg([[-0.32, -0.13], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.13], [0.25, 0.03], [0.26, 0.29], [-0.26, 0.29], [-0.25, 0.03]], c, 0.05);
+    k.rpg([[-0.03, -0.22], [0.03, -0.22], [0.03, 0.29], [-0.03, 0.29]], a, 0.015);
+    k.rpg([[-0.12, -0.26], [0.00, -0.13], [0.12, -0.26], [0.06, -0.28], [-0.06, -0.28]], a, 0.02);   // collar
+    if (buttons) for (const y of [-0.10, 0.00, 0.10, 0.20]) k.ci(0, y, 0.024, "#efe7d2");
+  },
+  gDress: (k, c, a) => {                                     // bodice, waist, skirt falling from it
+    k.rpg([[-0.24, -0.14], [-0.10, -0.26], [0.10, -0.26], [0.24, -0.14], [0.19, 0.00], [-0.19, 0.00]], c, 0.05);
+    k.rrc(-0.20, -0.01, 0.40, 0.05, a, 0.015);
+    k.rpg([[-0.19, 0.03], [0.19, 0.03], [0.31, 0.30], [-0.31, 0.30]], c, [0.03, 0.03, 0.09, 0.09]);
+    k.rpg([[-0.29, 0.24], [0.29, 0.24], [0.31, 0.30], [-0.31, 0.30]], a, [0.04, 0.04, 0.08, 0.08]);
+  },
+  gVest: (k, c, a) => {                                      // open at the front, over a shirt
+    k.rpg([[-0.30, -0.13], [-0.11, -0.24], [0.11, -0.24], [0.30, -0.13], [0.26, 0.28], [-0.26, 0.28]], a, 0.05);
+    k.rpg([[-0.30, -0.13], [-0.09, -0.23], [-0.03, 0.28], [-0.26, 0.28]], c, 0.04);
+    k.rpg([[0.30, -0.13], [0.09, -0.23], [0.03, 0.28], [0.26, 0.28]], c, 0.04);
+    for (const y of [0.02, 0.14]) k.ci(-0.07, y, 0.026, "#efe7d2");
+  },
+  gCoat: (k, c, a, long = false) => {                        // lapels, seam, belt, optional long skirt
+    const h = long ? 0.34 : 0.28;
+    k.rpg([[-0.33, -0.12], [-0.12, -0.26], [0.12, -0.26], [0.33, -0.12], [0.29, h], [-0.29, h]], c, 0.05);
+    k.rpg([[-0.12, -0.26], [-0.01, -0.24], [-0.01, -0.02], [-0.15, -0.10]], a, 0.03);   // lapels
+    k.rpg([[0.12, -0.26], [0.01, -0.24], [0.01, -0.02], [0.15, -0.10]], a, 0.03);
+    k.rpg([[-0.02, -0.20], [0.02, -0.20], [0.02, h], [-0.02, h]], a, 0.01);
+    k.rrc(-0.30, long ? 0.06 : 0.08, 0.60, 0.06, a, 0.02);                              // the belt
+    for (const y of [-0.02 + (long ? 0.10 : 0.12), 0.10 + (long ? 0.10 : 0.12)]) k.ci(-0.09, y, 0.026, "#d8cbb0");
+  },
+  gQuilt: (k, c, a) => {                                     // padded channels, sleeveless
+    k.rpg([[-0.29, -0.13], [-0.11, -0.24], [0.11, -0.24], [0.29, -0.13], [0.26, 0.28], [-0.26, 0.28]], c, 0.06);
+    for (const y of [-0.08, 0.02, 0.12, 0.22]) k.rrc(-0.26, y, 0.52, 0.045, a, 0.02);
+    k.rpg([[-0.02, -0.20], [0.02, -0.20], [0.02, 0.28], [-0.02, 0.28]], a, 0.01);
+  },
+  gTrous: (k, c, a, crop = 0) => {                           // two legs from one waistband
+    const hem = 0.32 - crop;
+    k.rpg([[-0.26, -0.26], [0.26, -0.26], [0.22, hem], [0.04, hem], [0.00, 0.02], [-0.04, hem], [-0.22, hem]], c, 0.03);
+    k.rrc(-0.26, -0.28, 0.52, 0.07, a, 0.02);
+    if (crop > 0) { k.rrc(-0.23, hem - 0.05, 0.19, 0.05, a, 0.015); k.rrc(0.04, hem - 0.05, 0.19, 0.05, a, 0.015); }
+  },
+  gSkirt: (k, c, a) => {                                     // waistband and a flare
+    k.rrc(-0.20, -0.26, 0.40, 0.07, a, 0.02);
+    k.rpg([[-0.19, -0.20], [0.19, -0.20], [0.32, 0.28], [-0.32, 0.28]], c, [0.03, 0.03, 0.09, 0.09]);
+    for (const x of [-0.14, 0.00, 0.14]) k.ln(x, -0.16, x * 1.6, 0.24, 0.02, a);        // the pleats
+  },
+  gHat: (k, c, a, brim) => {                                 // one crown, a brim you choose the width of
+    k.el(0, 0.10, brim, brim * 0.36, c);
+    k.el(0, 0.09, brim * 0.62, brim * 0.22, a);
+    k.rpg([[-0.17, 0.08], [-0.14, -0.16], [0.14, -0.16], [0.17, 0.08]], c, [0.04, 0.09, 0.09, 0.04]);
+    k.rrc(-0.18, 0.00, 0.36, 0.06, a, 0.02);
+  },
 };
 
 /* one recipe per object. Anything without an entry falls back to a labelled
@@ -3098,11 +3307,13 @@ const ICON_ART = {
   bread:        k => SH.loaf(k),
   /* a bâtard: round at both ends, near-flat along the top, dark where it sits,
      with the light catching the ridges between the slashes. */
-  fresh_bread:  k => { k.rpg([[-0.38, 0.06], [-0.30, -0.13], [0.00, -0.17], [0.30, -0.13], [0.38, 0.06], [0.30, 0.24], [0.00, 0.27], [-0.30, 0.24]],
+  fresh_bread:  k => { const r = k.rot(-13);                                            // the whole loaf set on a slant
+                       k.rpg([[-0.38, 0.06], [-0.30, -0.13], [0.00, -0.17], [0.30, -0.13], [0.38, 0.06], [0.30, 0.24], [0.00, 0.27], [-0.30, 0.24]].map(r),
                              "#d59a4e", [0.15, 0.10, 0.08, 0.10, 0.15, 0.14, 0.10, 0.14]);
-                       k.rpg([[-0.36, 0.11], [0.36, 0.11], [0.30, 0.25], [-0.30, 0.25]], "#a8703a", [0.04, 0.04, 0.14, 0.14]);
-                       k.rpg([[-0.28, -0.08], [0.00, -0.13], [0.28, -0.08], [0.00, 0.02]], "#eab871", 0.10);
-                       for (const x of [-0.17, 0.00, 0.17]) k.ln(x - 0.05, -0.07, x + 0.05, 0.09, 0.05, PAL.crumb); },
+                       k.rpg([[-0.36, 0.11], [0.36, 0.11], [0.30, 0.25], [-0.30, 0.25]].map(r), "#a8703a", [0.04, 0.04, 0.14, 0.14]);
+                       k.rpg([[-0.28, -0.08], [0.00, -0.13], [0.28, -0.08], [0.00, 0.02]].map(r), "#eab871", 0.10);
+                       for (const x of [-0.17, 0.00, 0.17])
+                         k.ln(...r([x - 0.05, -0.07]), ...r([x + 0.05, 0.09]), 0.05, PAL.crumb); },
   /* the classic crescent: fat middle, tapered horns, every lobe rounded */
   croissant:    k => { k.rpg([[-0.37, 0.16], [-0.26, -0.10], [-0.09, -0.21], [0.09, -0.21], [0.26, -0.10], [0.37, 0.16], [0.22, 0.11], [0.00, 0.03], [-0.22, 0.11]],
                              "#dda85a", [0.06, 0.11, 0.11, 0.11, 0.11, 0.06, 0.09, 0.11, 0.09]);
@@ -3361,9 +3572,14 @@ const ICON_ART = {
                        k.rpg([a.at(-0.30, -0.12), a.at(-0.06, -0.12), a.at(-0.06, 0.10), a.at(-0.30, 0.10)], PAL.wood, 0.05);   // handle
                        k.rpg([a.at(-0.24, -0.07), a.at(-0.10, -0.07), a.at(-0.10, 0.05), a.at(-0.24, 0.05)], "#5f4326", 0.03);
                        k.rpg([a.at(-0.04, -0.11), a.at(1.00, -0.05), a.at(1.00, 0.05), a.at(-0.04, 0.09)], PAL.steel, 0.02);    // blade, tapering
-                       for (let i = 0; i < 9; i++) {                                   // teeth, along the blade's own edge
-                         const t = 0.02 + i * 0.108, w = 0.05 + t * 0.04;
-                         k.tri(a.at(t, w), a.at(t + 0.055, w), a.at(t + 0.03, w + 0.055), PAL.steelDk);
+                       /* The toothed edge runs from s=0.09 at the handle to s=0.05 at the tip
+                          — it NARROWS. Sizing the teeth the other way walked them off the
+                          blade toward the point, so each one is now placed on the edge it
+                          belongs to, interpolated along the same taper as the blade itself. */
+                       const edge = (t) => 0.09 + (0.05 - 0.09) * t;
+                       for (let i = 0; i < 10; i++) {
+                         const t0 = 0.00 + i * 0.098, t1 = t0 + 0.098;
+                         k.tri(a.at(t0, edge(t0)), a.at(t1, edge(t1)), a.at((t0 + t1) / 2, edge(t0) + 0.055), PAL.steelDk);
                        }
                        k.rpg([a.at(-0.02, -0.09), a.at(0.30, -0.07), a.at(0.30, 0.00), a.at(-0.02, 0.02)], "#d8dee4", 0.015); },  // a highlight down the spine
   screwdriver:  k => { const a = k.ax(-0.26, 0.32, 0.32, -0.32);
@@ -3522,8 +3738,28 @@ const ICON_ART = {
                        k.ci(0.21, -0.13, 0.105, "#8a9096");                                 // the one round piece
                        k.ci(0.18, -0.17, 0.042, "#b4bac0");
                        k.ci(-0.24, -0.02, 0.05, "#5f646a"); },
-  hardware:     k => { k.ci(-0.14, -0.06, 0.13, PAL.steelDk); k.ci(-0.14, -0.06, 0.05, "#4a5058");
-                       k.rc(0.02, 0.04, 0.28, 0.08, PAL.steel); k.ci(0.06, 0.08, 0.06, PAL.iron); },
+  /* a handful of fixings: a cog, a bolt with its thread and head, a washer and
+     a couple of loose nuts — small parts you'd tip out of a tin */
+  hardware:     k => { const cog = (cx2, cy2, r, teeth, c, cd) => {                     // a proper toothed wheel
+                         for (let i = 0; i < teeth; i++) {
+                           const a = (i / teeth) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+                           k.rpg([[cx2 + ca * r * 0.86 - sa * r * 0.20, cy2 + sa * r * 0.86 + ca * r * 0.20],
+                                  [cx2 + ca * r * 1.24 - sa * r * 0.14, cy2 + sa * r * 1.24 + ca * r * 0.14],
+                                  [cx2 + ca * r * 1.24 + sa * r * 0.14, cy2 + sa * r * 1.24 - ca * r * 0.14],
+                                  [cx2 + ca * r * 0.86 + sa * r * 0.20, cy2 + sa * r * 0.86 - ca * r * 0.20]], c, 0.012);
+                         }
+                         k.ci(cx2, cy2, r, c); k.ci(cx2, cy2, r * 0.62, cd); k.ci(cx2, cy2, r * 0.30, c);
+                       };
+                       cog(-0.16, -0.10, 0.15, 8, PAL.steelDk, "#4a5058");
+                       k.rrc(-0.02, 0.10, 0.30, 0.09, PAL.steel, 0.02);                 // the bolt's shank
+                       for (const x of [0.04, 0.10, 0.16, 0.22]) k.ln(x, 0.10, x, 0.19, 0.016, "#8f979f");   // its thread
+                       k.rpg([[-0.10, 0.06], [-0.02, 0.05], [-0.02, 0.24], [-0.10, 0.23]], PAL.iron, 0.02);  // its head
+                       k.ci(0.19, -0.11, 0.115, "#8a9096"); k.ci(0.19, -0.11, 0.052, "#4a5058");             // a washer
+                       for (const [x, y, r] of [[0.05, -0.20, 0.062], [0.31, 0.03, 0.055]]) {                // loose nuts
+                         const pts = [];
+                         for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.5; pts.push([x + Math.cos(a) * r, y + Math.sin(a) * r]); }
+                         k.rpg(pts, PAL.iron, 0.012); k.ci(x, y, r * 0.42, "#4a5058");
+                       } },
   /* a length of pipe with flanged collars at both ends and a bolted joint */
   pipe:         k => { k.rrc(-0.30, -0.09, 0.60, 0.19, PAL.steelDk, 0.03);
                        k.rrc(-0.30, -0.07, 0.60, 0.06, "#a3abb3", 0.02);                    // the highlight along the top
@@ -3535,9 +3771,21 @@ const ICON_ART = {
                        k.rrc(-0.05, -0.13, 0.10, 0.27, PAL.steel, 0.02);                    // the joint collar
                        for (const y of [-0.09, 0.06]) k.ci(0.00, y, 0.028, "#5f666d");      // its bolts
                        k.el(-0.30, 0.00, 0.035, 0.095, "#727980"); },                       // the bore, seen end-on
-  nozzle:       k => { k.pg([[-0.28, -0.06], [0.06, -0.16], [0.06, 0.16], [-0.28, 0.06]], PAL.steelDk);
-                       k.rc(0.06, -0.09, 0.20, 0.18, PAL.steel);
-                       for (const y of [-0.05, 0.03]) k.ln(0.26, y, 0.36, y, 0.03, "#a8d4e8"); },
+  /* a hose nozzle: threaded collar at the inlet, a knurled grip, a tapering
+     body and a spray head with the jets fanning out of it */
+  nozzle:       k => { k.rrc(-0.38, -0.09, 0.10, 0.18, PAL.steel, 0.02);                        // the inlet collar
+                       for (const y of [-0.07, -0.01, 0.05]) k.ln(-0.38, y, -0.28, y, 0.022, "#8f979f");   // its thread
+                       k.rpg([[-0.29, -0.11], [-0.13, -0.14], [-0.13, 0.14], [-0.29, 0.11]], PAL.steelDk, 0.02);
+                       for (const x of [-0.27, -0.23, -0.19, -0.15]) k.ln(x, -0.13, x, 0.13, 0.018, "#5f666d");   // knurling
+                       k.rpg([[-0.13, -0.14], [0.10, -0.10], [0.10, 0.10], [-0.13, 0.14]], PAL.steelDk, 0.025);   // the body, tapering
+                       k.rpg([[-0.12, -0.11], [0.09, -0.07], [0.09, -0.01], [-0.12, -0.04]], "#a3abb3", 0.02);    // a highlight along it
+                       k.rrc(0.10, -0.13, 0.09, 0.26, PAL.steel, 0.025);                        // the head
+                       k.rrc(0.19, -0.09, 0.06, 0.18, "#8f979f", 0.02);                         // the spray plate
+                       for (const [y, dy] of [[-0.06, -0.05], [0.00, 0.00], [0.06, 0.05]]) {    // the jets, fanning
+                         k.ln(0.25, y, 0.36, y + dy, 0.026, "#a8d4e8");
+                         k.ci(0.38, y + dy * 1.3, 0.022, "#cfe6f4");
+                       }
+                       k.rpg([[-0.06, 0.10], [0.04, 0.12], [0.02, 0.26], [-0.08, 0.24]], "#c05a4a", 0.025); },   // the trigger
   /* a heating element: one wire switching back on itself in a flat serpentine,
      glowing hottest at the middle of the run, screwed to a mounting plate. */
   heatcoil:     k => { k.rrc(-0.34, 0.20, 0.68, 0.13, PAL.steelDk, 0.03);                    // the base plate
@@ -3664,8 +3912,12 @@ const ICON_ART = {
   /* ---------- garments (drawn as the piece, not a person wearing it) ---------- */
   sun_hat:      k => { k.el(0, 0.10, 0.38, 0.14, "#e2c882"); k.el(0, 0.02, 0.18, 0.16, "#efdca4");
                        k.rc(-0.18, 0.02, 0.36, 0.06, "#c2a05a"); },
-  cloth_cap:    k => { k.pg([[-0.26, 0.04], [-0.18, -0.20], [0.14, -0.24], [0.26, 0.04]], "#6f7f8c");
-                       k.pg([[0.10, 0.02], [0.36, 0.06], [0.34, 0.14], [0.08, 0.10]], "#5f6d78"); },
+  /* a flat cap: soft crown slouched forward over a stiff peak */
+  cloth_cap:    k => { k.rpg([[-0.30, 0.06], [-0.24, -0.14], [-0.02, -0.24], [0.20, -0.16], [0.28, 0.06]],
+                             "#6f7f8c", [0.08, 0.12, 0.12, 0.12, 0.08]);
+                       k.rpg([[-0.24, -0.10], [-0.03, -0.20], [0.16, -0.13], [0.00, -0.04]], "#84939f", 0.09);   // the lit panel
+                       k.rrc(-0.30, 0.03, 0.58, 0.07, "#53606b", 0.03);                                          // the headband
+                       k.rpg([[-0.30, 0.05], [-0.42, 0.09], [-0.40, 0.17], [-0.26, 0.13]], "#53606b", 0.04); },  // the peak
   /* knitted, so nothing on it is straight: a soft dome with a rolled brim and the
      face opening cut round out of it. */
   wool_hood:    k => { k.rpg([[-0.29, 0.24], [-0.26, -0.12], [-0.14, -0.27], [0.00, -0.31], [0.14, -0.27], [0.26, -0.12], [0.29, 0.24], [0.13, 0.15], [-0.13, 0.15]],
@@ -3707,6 +3959,52 @@ const ICON_ART = {
   guard_greaves:k => { k.pg([[-0.24, -0.24], [-0.04, -0.24], [-0.06, 0.30], [-0.22, 0.30]], PAL.steel);
                        k.pg([[0.04, -0.24], [0.24, -0.24], [0.22, 0.30], [0.06, 0.30]], PAL.steel);
                        for (const y of [-0.10, 0.04, 0.18]) { k.rc(-0.24, y, 0.20, 0.05, PAL.steelDk); k.rc(0.04, y, 0.20, 0.05, PAL.steelDk); } },
+
+  /* ---------- the rest of the wardrobe: shared cuts, their own colours ---------- */
+  /* a square of cloth folded to a triangle and knotted — the fold runs across
+     the top, the point hangs at the back, the tails trail off one side */
+  /* worn on the head: cloth over the crown, gathered to a knot at one side,
+     with the folded point hanging behind it */
+  head_scarf:   k => { k.rpg([[-0.27, 0.02], [-0.22, -0.16], [0.00, -0.26], [0.22, -0.16], [0.27, 0.02], [0.16, 0.10], [-0.16, 0.10]],
+                             "#efe7d2", [0.08, 0.12, 0.12, 0.12, 0.08, 0.06, 0.06]);
+                       k.rpg([[-0.21, -0.10], [0.00, -0.21], [0.18, -0.11], [0.00, -0.02]], "#f8f4e8", 0.09);   // where the light sits
+                       k.rrc(-0.27, 0.00, 0.54, 0.07, "#e0d6b8", 0.03);                                         // the folded edge
+                       k.rpg([[0.18, 0.00], [0.30, -0.04], [0.34, 0.06], [0.22, 0.09]], "#dbd0b0", 0.045);      // the knot
+                       k.rpg([[0.27, 0.05], [0.37, 0.12], [0.30, 0.24], [0.21, 0.14]], "#e6dcc2", 0.05);        // the tail hanging from it
+                       k.rpg([[-0.14, 0.08], [0.10, 0.08], [0.00, 0.30]], "#e0d6b8", 0.06); },                  // the point, behind
+  knit_beanie:  k => { k.rpg([[-0.26, 0.06], [-0.22, -0.16], [0.00, -0.28], [0.22, -0.16], [0.26, 0.06]], "#5f7f9c", [0.08, 0.12, 0.12, 0.12, 0.08]);
+                       k.rrc(-0.28, 0.04, 0.56, 0.13, "#44607a", 0.05);                     // the turn-up
+                       for (const x of [-0.16, -0.05, 0.06, 0.17]) k.ln(x, -0.20, x, 0.03, 0.02, "#4e6b85");
+                       k.ci(0, -0.30, 0.075, "#44607a"); },                                  // the bobble
+  /* an ushanka: domed crown, a thick fur band round the brow, flaps tied up */
+  /* domed crown with a shaggy fur band pulled down over the brow, and the ear
+     flaps hanging either side of it rather than floating free */
+  fur_cap:      k => { for (const s of [-1, 1])                                              // flaps first, behind the crown
+                         k.rpg([[s * 0.16, -0.02], [s * 0.30, -0.02], [s * 0.28, 0.20], [s * 0.14, 0.20]], "#5c4028", [0.04, 0.08, 0.09, 0.05]);
+                       k.rpg([[-0.26, 0.00], [-0.22, -0.18], [0.00, -0.29], [0.22, -0.18], [0.26, 0.00]],
+                             "#6b4a2e", [0.08, 0.13, 0.13, 0.13, 0.08]);
+                       k.rpg([[-0.19, -0.12], [0.00, -0.23], [0.17, -0.13], [0.00, -0.04]], "#8a6238", 0.09);   // the lit crown
+                       k.blob(0.00, 0.05, 0.28, 0.10, "#a8815a", 9, 0.22, 0.3);              // the fur band
+                       k.blob(-0.11, 0.03, 0.10, 0.055, "#c2a077", 6, 0.26, 1.4);
+                       k.blob(0.13, 0.06, 0.085, 0.05, "#c2a077", 6, 0.26, 2.6); },
+  linen_shirt:  k => SH.gShirt(k, "#efe7d2", "#cfc3a4"),
+  sun_dress:    k => SH.gDress(k, "#f4dcd8", "#d8b0aa"),
+  airy_vest:    k => SH.gVest(k, "#dbe6e8", "#adc3c8"),
+  flannel:      k => { SH.gShirt(k, "#8a5a5a", "#6a4040");                                   // a check over the shirt blank
+                       for (const x of [-0.20, -0.08, 0.10, 0.20]) k.ln(x, -0.20, x, 0.28, 0.022, "#6a4040");
+                       for (const y of [-0.14, -0.02, 0.10, 0.22]) k.ln(-0.28, y, 0.28, y, 0.022, "#6a4040"); },
+  waistcoat:    k => SH.gVest(k, "#3f5f7a", "#2c465c"),
+  day_dress:    k => SH.gDress(k, "#5f7f9c", "#44607a"),
+  wool_coat:    k => SH.gCoat(k, "#3f4a3a", "#2c3529", true),
+  quilt_vest:   k => SH.gQuilt(k, "#4a3f5f", "#352c45"),
+  linen_skirt:  k => SH.gSkirt(k, "#efe7d2", "#cfc3a4"),
+  canvas_skirt: k => SH.gSkirt(k, "#7a8a5a", "#5c6b3f"),
+  wool_skirt:   k => SH.gSkirt(k, "#5f3f4a", "#452c34"),
+  crop_trous:   k => SH.gTrous(k, "#f2e2cc", "#d4bb98", 0.10),
+  corduroys:    k => { SH.gTrous(k, "#8a6a4a", "#6a4e33");                                   // the wale, running down
+                       for (const x of [-0.18, -0.12, 0.12, 0.18]) k.ln(x, -0.18, x, 0.28, 0.016, "#6a4e33"); },
+  padded_trous: k => { SH.gTrous(k, "#3a3f52", "#282c3b");
+                       for (const y of [-0.12, 0.00, 0.12, 0.24]) { k.rrc(-0.22, y, 0.19, 0.045, "#282c3b", 0.02); k.rrc(0.03, y, 0.19, 0.045, "#282c3b", 0.02); } },
 };
 
 /* Draw any object at (cx,cy) with T as its full width. Used both for the little
@@ -3747,6 +4045,65 @@ const ItemIcon = ({ id, size = 22, style = null }) => {
     <img src={itemIconURL(id, size)} width={size} height={size} alt={nm} title={nm} draggable={false}
       style={{ display: "inline-block", verticalAlign: "middle", flex: "0 0 auto", ...(style || {}) }} />
   );
+};
+
+/* =====================================================================
+   Clothing does not stack, so it cannot be listed like flour. A row per
+   KIND folds open into the individual pieces you own, each with its own
+   condition — the only honest way to show three work shirts at 92%, at
+   40%, and torn through. Actions apply to the piece you picked, never to
+   "one of those".
+   ===================================================================== */
+const condWord = (pc) => pc.t ? "torn through" : `${pieceCondition(pc)}%`;
+const condTint = (pc) => pc.t ? "#a05252" : pieceCondition(pc) < 30 ? "#b07a3a" : "#6b8f5e";
+const ClothingRows = ({ pieces, wornSet, fs, empty, action }) => {
+  const [open, setOpen] = useState({});
+  const kinds = {};
+  for (const pc of pieces) (kinds[pc.g] = kinds[pc.g] || []).push(pc);
+  const ids = Object.keys(kinds).filter(id => GARMENTS[id])
+    .sort((a, b) => GARMENTS[a].name.localeCompare(GARMENTS[b].name));
+  if (!ids.length) return <div style={{ ...S.folkCard, opacity: 0.7 }}>{empty}</div>;
+  return <>{ids.map(id => {
+    const G = GARMENTS[id];
+    const list = kinds[id].slice().sort((a, b) => (a.t - b.t) || (a.w - b.w));   // soundest first
+    const shown = open[id];
+    const best = list[0], sound = list.filter(p => !p.t).length, holed = list.length - sound;
+    // the body is a flex column, so without flex:0 0 auto these rows get
+    // squashed and clip their own second line
+    return (
+      <div key={id} style={{ ...S.folkCard, padding: 0, overflow: "hidden", flex: "0 0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", cursor: list.length ? "pointer" : "default" }}
+          onClick={() => setOpen(o => ({ ...o, [id]: !o[id] }))}>
+          <ItemIcon id={id} size={20} />
+          <span style={{ flex: 1, fontSize: fs - 1, minWidth: 0 }}>
+            <b>{G.name}</b> <span style={{ opacity: 0.6 }}>×{list.length}</span>
+            <br />
+            <span style={{ opacity: 0.65, fontSize: fs - 3 }}>
+              {G.slot} · {G.wear} · best <span style={{ color: condTint(best) }}>{condWord(best)}</span>
+              {holed > 0 && <span style={{ color: "#a05252" }}> · {holed} torn</span>}
+            </span>
+          </span>
+          <span style={{ opacity: 0.5, fontSize: fs + 2, transform: shown ? "rotate(90deg)" : "none", transition: "transform .12s" }}>›</span>
+        </div>
+        {shown && <div style={{ borderTop: "1px solid #0001", background: "#0000000a" }}>
+          {list.map((pc, i) => {
+            const on = wornSet?.has(pc.u);
+            return (
+              <div key={pc.u} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 6px 34px" }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, flex: "0 0 auto",
+                  background: colourway(id, pc.c)[0], border: "1px solid #0003" }} />
+                <span style={{ flex: 1, fontSize: fs - 2, minWidth: 0 }}>
+                  #{i + 1} · <span style={{ color: condTint(pc) }}>{condWord(pc)}</span>
+                  {on && <span style={{ opacity: 0.7 }}> · worn</span>}
+                </span>
+                {action?.(pc, on)}
+              </div>
+            );
+          })}
+        </div>}
+      </div>
+    );
+  })}</>;
 };
 
 let USER_API_KEY = "";
@@ -3969,11 +4326,11 @@ const invLine = (ent) => {
 // drink, and medicine counts, so the director can nudge the under-provisioned to stock up.
 /* Stage 17: what someone has on, and whether it actually suits the day — read by every brain */
 const wearLine = (ent, felt) => {
-  const worn = (ent.worn || []).map(id => `${GARMENTS[id].name}${ent.wornTorn?.[id] ? " (TORN)" : ""}`);
+  const worn = wornPieces(ent).map(pc => `${GARMENTS[pc.g].name}${pc.t ? " (TORN)" : ""}`);
   const st = tempStress(felt);
   const verdict = st.cold ? "and they are COLD in it" : st.hot ? "and they are OVERHEATING in it" : "and it suits the weather";
   const fav = ent.favorite && GARMENTS[ent.favorite] ? `; favourite: ${GARMENTS[ent.favorite].name}` : "";
-  const owns = (ent.wardrobe || []).length ? `. Wardrobe: ${ent.wardrobe.map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}` : "";
+  const owns = kitOf(ent).length ? `. Wardrobe: ${ownedIds(ent).map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}` : "";
   return `${worn.length ? worn.join(", ") : "little more than rags"} — ${verdict}${fav}${owns}`;
 };
 const provisionLine = (ent) => {
@@ -4704,8 +5061,8 @@ export default function Alderbrook() {
       hygiene: 65 + (i * 5) % 30, health: 100, alive: true, wanted: 0,
       // Stage 17/21: dressed from the very first morning, out of a wardrobe they actually own —
       // a set for the heat, one for the cold, everyday clothes between, and a favourite.
-      ...(() => { const w = startingWardrobe(def); return { wardrobe: w.wardrobe, favorite: w.favorite,
-        worn: dressForSeason({ ...def, ...w }, seasonOf(1), SEASONS[seasonOf(1)].base), wornTorn: {}, wornWear: {} }; })(),
+      ...(() => { const w = startingWardrobe(def); return { kit: w.kit, favorite: w.favorite,
+        worn: dressForSeason({ ...def, ...w }, seasonOf(1), SEASONS[seasonOf(1)].base) }; })(),
       legs: [], path: [], goal: null, activity: "starting the day", hidden: false,
       bubble: null, lastGreet: -999, mood: "neutral",
       evicted: false, vagrantWarned: false,             // Stage 3: rent debt + the officer's one free pass
@@ -4749,12 +5106,16 @@ export default function Alderbrook() {
       time: CFG.START_HOUR * 60, day: 1,
       player: { scene: "t:alderbrook", x: bld("home_p").door.x, y: bld("home_p").door.y, home: "home_p",   // home was never set — furniture stations checked p.home and always failed
         hunger: 85, thirst: 85, energy: 95, hygiene: 90, health: 100, alive: true,
-        coins: CFG.START_COINS, inv: { bread: 1, water: 1, cloth_cap: 1, summer_tunic: 1, light_shorts: 1, wool_hood: 1, winter_jacket: 1 }, fame: 0, renown: 0,
+        coins: CFG.START_COINS, inv: { bread: 1, water: 1 }, fame: 0, renown: 0,
         /* Stage 21: you arrive with a packed bag, not one shirt — everyday clothes on your back,
-           and something for the heat and the cold folded in the pack. */
-        worn: ["work_shirt", "work_trous"], wornTorn: {}, wornWear: {},
-        wardrobe: ["work_shirt", "work_trous", "cloth_cap", "summer_tunic", "light_shorts", "wool_hood", "winter_jacket"],
-        favorite: "work_shirt",
+           and something for the heat and the cold folded in the pack. Clothes live in the kit,
+           never in `inv`: each piece is its own thing with its own wear. */
+        ...(() => {
+          const kit = ["work_shirt", "work_trous", "cloth_cap", "linen_shirt", "summer_tunic", "light_shorts",
+                       "crop_trous", "wool_hood", "winter_jacket", "winter_trous"].map((g, i) => newPiece(g, 6151 + i * 4093));
+          const on = [kit[0].u, kit[1].u];
+          return { kit, worn: on, favorite: "work_shirt" };
+        })(),
         wanted: 0, bedrest: false, incap: null, dying: null, sick: null, hospitalBill: 0,
         evicted: false, vagrantWarned: false,           // Stage 3
         name: "",                                       // Stage 10: what you call yourself — blank until you say
@@ -4839,8 +5200,7 @@ export default function Alderbrook() {
         hygiene: n.hygiene, health: n.health, alive: n.alive, wanted: n.wanted,
         coins: n.coins, inv: n.inv, fame: n.fame, renown: n.renown, sick: n.sick, skills: n.skills,
         expertise: n.expertise, domainXp: n.domainXp,
-        worn: n.worn, wornTorn: n.wornTorn, wornWear: n.wornWear,   // Stage 17: the wardrobe travels with the save
-        wardrobe: n.wardrobe, favorite: n.favorite,                 // Stage 21: what they own, and what they love
+        worn: n.worn, kit: n.kit, favorite: n.favorite,             // every piece they own, each with its own wear
         furniture: n.furniture, stored: n.stored, chest: n.chest,
         occupation: n.occupation, work: n.work,
         home: n.home, evicted: !!n.evicted, vagrantWarned: !!n.vagrantWarned,
@@ -4902,12 +5262,10 @@ export default function Alderbrook() {
     }
     sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
     sim.weather = data.weather || { kind: "clear", day: sim.day };
-    // Stage 17: pre-wardrobe saves get dressed on the way in
-    for (const n of sim.npcs) {
-      if (!n.wardrobe?.length) { const w = startingWardrobe(n); n.wardrobe = w.wardrobe; n.favorite = n.favorite || w.favorite; }
-      n.worn = n.worn?.length ? n.worn : dressForSeason(n, sim.season, outdoorTemp(sim));
-      n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
-    }
+    /* NOTE: the wardrobe conversion CANNOT run here — the player and the NPCs
+       have not had their saved data copied onto them yet at this point, so it
+       would convert the fresh new-game entities and then be overwritten. It
+       runs at the very end of this function instead. */
     // the wild reloads as it was standing: position and wounds, no memory of who it was chasing
     sim.beasts = (data.beasts || []).filter(b => BEAST_SPECIES[b.sp])
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
@@ -4976,6 +5334,14 @@ export default function Alderbrook() {
       if (!n.work) n.work = freshWork;
       if (!n.knownGossip) n.knownGossip = [];
       if (n.work?.bId && n.work.station) n.work.station = validStation(n.work.bId, n.work.station);
+    }
+    /* LAST, once everyone actually carries their saved data: turn old-shape
+       wardrobes into individual pieces, hand a kit to anyone who somehow has
+       none, and dress anybody who came in with nothing on. */
+    for (const ent of [sim.player, ...sim.npcs]) {
+      migrateWardrobe(ent);
+      if (!kitOf(ent).length) { const w = startingWardrobe(ent); ent.kit = w.kit; ent.favorite = ent.favorite || w.favorite; }
+      if (!(ent.worn || []).length) ent.worn = dressForSeason(ent, sim.season, outdoorTemp(sim));
     }
     syncPlacements(sim, worldRef.current);               // stand owned furniture up in its rooms (auto-slot legacy saves)
   };
@@ -5988,14 +6354,13 @@ export default function Alderbrook() {
     ent.health = clamp(ent.health - soaked, 0, 100);
     // taking hits is hard on what you're wearing — that's how good kit ends up torn
     if (tough > 0 && Math.random() < 0.34) {
-      const hit = (ent.worn || []).filter(id => !ent.wornTorn?.[id] && (GARMENTS[id]?.tough || 0) > 0);
+      const hit = wornPieces(ent).filter(pc => !pc.t && (GARMENTS[pc.g]?.tough || 0) > 0);
       if (hit.length) {
-        const id = rand(hit);
-        ent.wornWear = ent.wornWear || {};
-        ent.wornWear[id] = (ent.wornWear[id] || 0) + amount * 1.6;
-        if (ent.wornWear[id] >= (GARMENTS[id]?.dur || 100)) {
-          (ent.wornTorn = ent.wornTorn || {})[id] = true;
-          if (!ent.id) showToast(`🧵 Your ${GARMENTS[id].name} is torn apart by the blow.`);
+        const pc = rand(hit);
+        pc.w += amount * 1.6;
+        if (pc.w >= pieceMax(pc) && !pc.t) {
+          pc.t = true;
+          if (!ent.id) showToast(`🧵 Your ${GARMENTS[pc.g].name} is torn apart by the blow.`);
         }
       }
     }
@@ -7637,22 +8002,27 @@ export default function Alderbrook() {
       if (!tt.served && (!stn || dist(npc, stn) < 2.4)) {
         tt.served = true;
         const felt = feltTemp(sim, npc);
-        const torn = (npc.worn || []).filter(id => npc.wornTorn[id]);
+        const torn = kitOf(npc).filter(pc => pc.t);      // everything they own that's holed, not just what's on
         let spent = 0, note = "";
-        for (const id of torn) {                        // mending first — it's what they came for
+        for (const pc of torn) {                         // mending first — it's what they came for
           if (npc.coins < CFG.TAILOR.patchFee) break;
           npc.coins -= CFG.TAILOR.patchFee; spent += CFG.TAILOR.patchFee;
-          delete npc.wornTorn[id]; npc.wornWear[id] = (GARMENTS[id].dur || 100) * 0.35;
-          note = `had their ${GARMENTS[id].name.toLowerCase()} patched`;
+          pc.t = false; pc.w = pieceMax(pc) * 0.35;
+          note = `had their ${GARMENTS[pc.g].name.toLowerCase()} patched`;
         }
         if (!torn.length) {                              // nothing torn — then it's the weather they came about
           const band = felt <= 6 ? "winter" : felt >= 24 ? "summer" : "medium";
-          const want = garmentsOfBand(band).find(id => GARMENTS[id].slot === "torso") || null;
+          /* something they don't already own, so a shopping trip actually widens
+             the wardrobe instead of buying a fourth identical shirt */
+          const have = new Set(ownedIds(npc));
+          const rack = garmentsOfBand(band).filter(id => GARMENTS[id].slot === "torso");
+          const want = rack.find(id => !have.has(id)) || rack[0] || null;
           if (want && npc.coins >= (ITEMS[want]?.price || 99)) {
             npc.coins -= ITEMS[want].price; spent += ITEMS[want].price;
             takeStock(sim, TAILOR_BID, want);            // off the rack if there's one on it
-            const old = wornInSlot(npc, "torso");
-            npc.worn = [...(npc.worn || []).filter(x => x !== old), want];
+            const pc = newPiece(want, hash32(npc.id + want + sim.day));
+            npc.kit = [...kitOf(npc), pc];
+            wearPiece(npc, pc.u);
             note = `bought a ${GARMENTS[want].name.toLowerCase()}`;
           }
         }
@@ -7855,24 +8225,27 @@ export default function Alderbrook() {
      paid for it), because a torn coat in a snowstorm is a problem they'd actually solve. */
   const applyWearChoice = (sim, n, plan) => {
     if (!plan || !n.alive) return;
-    n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
-    if (!n.wardrobe?.length) { const w = startingWardrobe(n); n.wardrobe = w.wardrobe; n.favorite = n.favorite || w.favorite; }
+    n.worn = n.worn || [];
+    if (!kitOf(n).length) { const w = startingWardrobe(n); n.kit = w.kit; n.favorite = n.favorite || w.favorite; }
     // Stage 21: the day may have changed what they love — but only to something they own
-    if (plan.favourite && n.wardrobe.includes(plan.favourite) && plan.favourite !== n.favorite) {
+    if (plan.favourite && ownedIds(n).includes(plan.favourite) && plan.favourite !== n.favorite) {
       n.favorite = plan.favourite;
       n.memories = [...n.memories, `Grown fond of my ${GARMENTS[plan.favourite].name.toLowerCase()}`].slice(-CFG.MAX_MEMORIES);
     }
     const want = plan.wear;
     if (want && want !== "keep") {
-      if (want === "leathers") n.worn = ["hunter_hat", "leather_coat", "leather_legs"];
-      else if (["summer", "medium", "winter"].includes(want) && !n.enforcer) {
+      if (want === "leathers") {
+        const set = ["hunter_hat", "leather_coat", "leather_legs"]
+          .map(g => kitOf(n).find(k => k.g === g && !k.t) || kitOf(n).find(k => k.g === g)).filter(Boolean);
+        if (set.length) n.worn = set.map(k => k.u);
+      } else if (["summer", "medium", "winter"].includes(want) && !n.enforcer) {
         // dress out of their OWN wardrobe at that weight, favourite first when it qualifies
         const temp = want === "winter" ? 0 : want === "summer" ? 28 : 16;
         n.worn = dressForSeason(n, sim.season, temp);
       }
     }
     if (plan.shop) {   // they went and had the torn things replaced
-      for (const id of [...n.worn]) if (n.wornTorn[id]) { delete n.wornTorn[id]; n.wornWear[id] = 0; }
+      for (const pc of kitOf(n)) if (pc.t) { pc.t = false; pc.w = 0; }
       if (n.coins >= 6) n.coins -= 6;
     }
   };
@@ -8640,12 +9013,14 @@ export default function Alderbrook() {
         const t9 = outdoorTemp(sim);
         for (const n of sim.npcs) {
           if (!n.alive) continue;
-          n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
-          /* Stage 19: you re-layer what you OWN for the weather — but torn pieces stay torn.
-             A hole doesn't mend itself overnight; that's what the walk to Ferndale is for. */
-          const torn = (n.worn || []).filter(id => n.wornTorn[id]);
+          n.worn = n.worn || [];
+          migrateWardrobe(n);   // anything gifted or bought yesterday joins the wardrobe properly
+          if (!kitOf(n).length) { const w = startingWardrobe(n); n.kit = w.kit; n.favorite = n.favorite || w.favorite; }
+          /* Stage 19: you re-layer what you OWN for the weather. Dressing already
+             prefers the soundest piece of its kind, so a hole only stays on the
+             body when it's the only thing they have — that's the walk to Ferndale. */
           const want = dressForSeason(n, sim.season, t9);
-          if (want.join() !== n.worn.join()) n.worn = [...new Set([...want, ...torn])].slice(0, 4);
+          if (want.length && want.join() !== n.worn.join()) n.worn = want;
         }
       }
       if (wasSeason !== sim.season) {
@@ -9590,19 +9965,22 @@ export default function Alderbrook() {
         p.hunger = clamp(p.hunger - CFG.DECAY.hunger * dtHours * stress.hunger, 0, 100);
         p.thirst = clamp(p.thirst - CFG.DECAY.thirst * dtHours * stress.thirst, 0, 100);
         p.energy = clamp(p.energy - CFG.DECAY.energy * dtHours * (dx || dy ? 1.4 : 1) * stress.energy, 0, 100);
-        p.hygiene = clamp(p.hygiene - CFG.HYGIENE.decay * dtHours, 0, 100);
+        /* Torn clothes get filthy fast. Every hole is dirt straight onto skin and
+           one less layer between you and the weather, so each torn piece you have
+           on multiplies how quickly you grubby up. Three holes and you cannot stay
+           presentable at all — which is exactly the pressure to go and get mended. */
+        p.hygiene = clamp(p.hygiene - CFG.HYGIENE.decay * dtHours * tornGrime(p), 0, 100);
         // Stage 17: clothes wear. Walking, working and weather all rub at them; when a piece is
         // used up it TEARS — it keeps you no warmer than a rag and gives no protection at all.
         {
           const wet = (CFG.WEATHER.kinds[sim.weather?.kind] || {}).wet || 0;
           const rub = dtHours * (1 + (dx || dy ? 0.7 : 0) + wet * 0.8);
-          p.wornWear = p.wornWear || {}; p.wornTorn = p.wornTorn || {};
-          for (const id of (p.worn || [])) {
-            if (p.wornTorn[id]) continue;
-            p.wornWear[id] = (p.wornWear[id] || 0) + rub;
-            if (p.wornWear[id] >= (GARMENTS[id]?.dur || 100)) {
-              p.wornTorn[id] = true;
-              sfx.alert(); showToast(`🧵 Your ${GARMENTS[id].name} has torn through — a tailor could patch it.`);
+          for (const pc of wornPieces(p)) {
+            if (pc.t) continue;
+            pc.w += rub;
+            if (pc.w >= pieceMax(pc)) {
+              pc.t = true;
+              sfx.alert(); showToast(`🧵 Your ${GARMENTS[pc.g].name} has torn through — a tailor could patch it.`);
             }
           }
           p.energy = Math.min(p.energy, maxEnergyOf(p));   // armour you're carrying caps what you've got in you
@@ -9835,7 +10213,7 @@ export default function Alderbrook() {
           npc.hunger = clamp(npc.hunger - CFG.DECAY.hunger * CFG.NPC_DECAY_SCALE * dtHours * ns.hunger, 0, 100);
           npc.thirst = clamp(npc.thirst - CFG.DECAY.thirst * CFG.NPC_DECAY_SCALE * dtHours * ns.thirst, 0, 100);
           npc.energy = clamp(npc.energy - CFG.DECAY.energy * CFG.NPC_DECAY_SCALE * dtHours * ns.energy, 0, 100);
-          npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
+          npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours * tornGrime(npc), 0, 100);
           // Stage 3.5: survival damage — same rules as the player, nobody is exempt
           if (npc.jailedUntil) { npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor); npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor); }
           /* WARD SAFETY NET: the hospital feeds its patients too. Without this a bedrest NPC's
@@ -11387,7 +11765,7 @@ export default function Alderbrook() {
         break;
       }
       case "rally": { holdRally(); break; }   // Stage 15: the stump speech
-      case "tailorbench": { setTailorPanel({ tab: "make" }); break; }   // Stage 17: make, mend, and get dressed
+      case "tailorbench": { migrateWardrobe(simRef.current.player); setTailorPanel({ tab: "make" }); break; }   // Stage 17: make, mend, and get dressed
       case "takeorder": {
         const items = Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => rand(["🍔", "🍟", "🌭", "🥤"]));
         sim.foodOrder = { items, cooked: 0, stage: "cook" };
@@ -12973,10 +13351,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       coins: Math.floor(n.coins), inv: invLine(n), tier: fameTier(n.fame, n.renown),
       health: healthDesc(n.health), wanted: n.wanted, mayor: !!n.mayor,
       // Stage 19: what they've got on, and whether the sky is beating them up in it
-      wearing: (n.worn || []).map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${n.wornTorn?.[id] ? " (torn)" : ""}`).join(", ") || "little to speak of",
+      wearing: wornPieces(n).map(pc => `${GARMENTS[pc.g].emoji} ${GARMENTS[pc.g].name}${pc.t ? " (torn)" : ""}`).join(", ") || "little to speak of",
       felt: feltTemp(sim, n),
       favorite: n.favorite && GARMENTS[n.favorite] ? `${GARMENTS[n.favorite].emoji} ${GARMENTS[n.favorite].name}` : null,
-      wardrobeN: (n.wardrobe || []).length,
+      wardrobeN: kitOf(n).length,
       toYou: n.relationships.player || "neutral",
       memories: [...n.memories], likes: n.likes, dislikes: n.dislikes,
       rels: Object.entries(n.relationships).filter(([id]) => id !== "player")
@@ -13287,37 +13665,86 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const swing = phase * 0.085;
     const stoop = L.stoop;
 
-    const head = wornInSlot(ref, "head"), torso = wornInSlot(ref, "torso"), legs = wornInSlot(ref, "legs");
-    const torn = (id) => id && ref.wornTorn?.[id];
-    const shirtC = torso ? garmentColor(torso, L) : L.shirt;
-    const trousC = legs ? garmentColor(legs, L) : L.trous;
+    /* what they actually have on, as PIECES — each one carries its own colourway,
+       its own pattern and its own tear, so two people in work shirts look different
+       and one person's second shirt looks different from their first. */
+    const headP = wornPieceIn(ref, "head"), torsoP = wornPieceIn(ref, "torso"), legsP = wornPieceIn(ref, "legs");
+    const head = headP?.g, torso = torsoP?.g, legs = legsP?.g;
+    const cutOf = (p) => p && GARMENTS[p.g]?.cut;
+    const tCut = cutOf(torsoP), lCut = cutOf(legsP);
+    const [shirtC, shirtA] = torsoP ? colourway(torso, torsoP.c) : [L.shirt, L.accent];
+    const [trousC, trousA] = legsP ? colourway(legs, legsP.c) : [L.trous, L.accent];
+    const tPat = torsoP ? CLOTH_PATTERNS[torsoP.p % CLOTH_PATTERNS.length] : L.pattern;
+    /* a dress runs on down over the legs, so it paints them too */
+    const gown = GARMENTS[torso]?.covers === "legs";
+    const legC = gown ? shirtC : trousC, legA = gown ? shirtA : trousA;
 
     /* ---- legs (back to front: they sit under the torso) ---- */
-    R(-0.155, 0.10 + stoop, 0.13, 0.30 + swing, trousC);
-    R(0.025, 0.10 + stoop, 0.13, 0.30 - swing, trousC);
+    if (lCut === "skirt" && !gown) {                            // a skirt hangs instead of trouser legs
+      R(-0.20, 0.08 + stoop, 0.40, 0.06, trousC);
+      R(-0.235, 0.14 + stoop, 0.47, 0.20, trousC);
+      if (trousA) R(-0.235, 0.30 + stoop, 0.47, 0.04, trousA);
+      R(-0.135, 0.34 + stoop, 0.10, 0.06 + swing, L.skin);      // bare shins below the hem
+      R(0.035, 0.34 + stoop, 0.10, 0.06 - swing, L.skin);
+    } else {
+      const legLen = (lCut === "shorts" && !gown) ? 0.17 : 0.30;
+      R(-0.155, 0.10 + stoop, 0.13, legLen + swing, legC);
+      R(0.025, 0.10 + stoop, 0.13, legLen - swing, legC);
+      if (legLen < 0.28) {                                      // shorts: the rest of the leg is skin
+        R(-0.145, 0.10 + legLen + stoop, 0.11, 0.30 - legLen + swing, L.skin);
+        R(0.035, 0.10 + legLen + stoop, 0.11, 0.30 - legLen - swing, L.skin);
+      }
+      if (lCut === "quiltlegs" && legA) for (const y of [0.14, 0.24, 0.34])   // padded seams across
+        { R(-0.155, y + stoop, 0.13, 0.03, legA); R(0.025, y + stoop, 0.13, 0.03, legA); }
+      if (lCut === "greaves") { R(-0.16, 0.16 + stoop, 0.14, 0.04, "#a4acb8"); R(0.02, 0.16 + stoop, 0.14, 0.04, "#a4acb8"); }
+    }
     R(-0.165, 0.385 + stoop, 0.15, 0.055, "#3a3128");           // boots
     R(0.015, 0.385 + stoop, 0.15, 0.055, "#3a3128");
-    /* ---- arms, swung opposite the legs ---- */
-    const armC = torso ? shirtC : L.skin;
-    R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, 0.30, armC);
-    R(0.155, -0.11 + stoop + swing * 0.5, 0.10, 0.30, armC);
+    /* ---- arms, swung opposite the legs. Sleeve length is the cut's business ---- */
+    const sleeveless = tCut === "vest" || tCut === "quilt" || tCut === "tunic";
+    const armC = torso ? (sleeveless ? L.skin : shirtC) : L.skin;
+    const sleeve = !torso ? 0 : sleeveless ? 0 : tCut === "longcoat" ? 0.30 : tCut === "dress" ? 0.12 : 0.22;
+    R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, 0.30, L.skin);
+    R(0.155, -0.11 + stoop + swing * 0.5, 0.10, 0.30, L.skin);
+    if (sleeve > 0) {
+      R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, sleeve, armC);
+      R(0.155, -0.11 + stoop + swing * 0.5, 0.10, sleeve, armC);
+    }
     R(-0.255, 0.17 + stoop - swing * 0.5, 0.10, 0.055, L.skin);  // hands
     R(0.155, 0.17 + stoop + swing * 0.5, 0.10, 0.055, L.skin);
     /* ---- torso ---- */
-    R(-0.175, -0.14 + stoop, 0.35, 0.27, shirtC);
-    /* the simple patterns: a stripe, a waistband, or an honest patch */
-    if (L.pattern === "stripe") { R(-0.175, -0.055 + stoop, 0.35, 0.045, L.accent); R(-0.175, 0.035 + stoop, 0.35, 0.045, L.accent); }
-    else if (L.pattern === "band") R(-0.175, 0.075 + stoop, 0.35, 0.055, L.accent);
-    else if (L.pattern === "patch") R(0.055, -0.10 + stoop, 0.075, 0.075, L.accent);
+    if (gown) {                                                  // the skirt of a dress, under the bodice
+      R(-0.225, 0.06 + stoop, 0.45, 0.22, shirtC);
+      if (shirtA) R(-0.225, 0.24 + stoop, 0.45, 0.04, shirtA);
+    }
+    const bodyTop = -0.14 + stoop, bodyH = tCut === "longcoat" ? 0.34 : 0.27;
+    R(-0.175, bodyTop, 0.35, bodyH, shirtC);
+    if (tCut === "vest" || tCut === "quilt") {                    // a vest sits over a shirt, not instead of one
+      R(-0.175, bodyTop, 0.35, bodyH, L.shirt);
+      R(-0.175, bodyTop, 0.11, bodyH, shirtC); R(0.065, bodyTop, 0.11, bodyH, shirtC);
+      R(-0.175, bodyTop, 0.35, 0.05, shirtC);
+    }
+    /* the simple patterns: a stripe, a waistband, a check, or an honest patch */
+    if (tPat === "stripe") { R(-0.175, -0.055 + stoop, 0.35, 0.04, shirtA); R(-0.175, 0.035 + stoop, 0.35, 0.04, shirtA); }
+    else if (tPat === "band") R(-0.175, 0.075 + stoop, 0.35, 0.055, shirtA);
+    else if (tPat === "patch") R(0.055, -0.10 + stoop, 0.075, 0.075, shirtA);
+    else if (tPat === "check") {
+      for (const x of [-0.175, -0.06, 0.055]) R(x, bodyTop, 0.03, bodyH, shirtA);
+      for (const y of [-0.09, 0.00, 0.09]) R(-0.175, y + stoop, 0.35, 0.025, shirtA);
+    }
+    if (tCut === "quilt" && shirtA) for (const y of [-0.10, -0.01, 0.08])      // padded channels
+      { R(-0.175, y + stoop, 0.11, 0.03, shirtA); R(0.065, y + stoop, 0.11, 0.03, shirtA); }
+    if (tCut === "shirt") { R(-0.015, bodyTop, 0.03, bodyH, shirtA);           // placket and buttons
+      for (const y of [-0.08, 0.00, 0.08]) R(-0.005, y + stoop, 0.015, 0.02, "#efe7d2"); }
+    if (tCut === "coat" || tCut === "longcoat") R(-0.02, bodyTop, 0.04, bodyH, shirtA);   // the front seam
+    if (tCut === "dress" && shirtA) R(-0.175, 0.04 + stoop, 0.35, 0.035, shirtA);          // the waist
     /* torn clothing SHOWS — a ragged notch of skin through the weave */
-    if (torn(torso)) { R(0.035, -0.02 + stoop, 0.06, 0.10, L.skin); R(-0.12, 0.05 + stoop, 0.05, 0.07, L.skin); }
-    if (torn(legs)) R(-0.11, 0.24 + stoop, 0.05, 0.08, L.skin);
+    if (torsoP?.t) { R(0.035, -0.02 + stoop, 0.06, 0.10, L.skin); R(-0.12, 0.05 + stoop, 0.05, 0.07, L.skin); }
+    if (legsP?.t) R(-0.11, 0.24 + stoop, 0.05, 0.08, L.skin);
     /* armour reads as plate over the shirt, not instead of it */
-    if (torso && GARMENTS[torso]?.guard && !torn(torso)) {
-      R(-0.175, -0.14 + stoop, 0.35, 0.06, "#8f97a3");
-      R(-0.06, -0.14 + stoop, 0.12, 0.27, "#a4acb8");
-    } else if (torso === "leather_coat" && !torn(torso)) {
-      R(-0.02, -0.14 + stoop, 0.04, 0.27, "#3b2a1c");           // the coat's front seam
+    if (tCut === "mail" && !torsoP?.t) {
+      R(-0.175, bodyTop, 0.35, 0.06, "#8f97a3");
+      R(-0.06, bodyTop, 0.12, 0.27, "#a4acb8");
     }
     /* ---- head ---- */
     const hy = -0.30 + stoop, hr = 0.145 * L.headMul;
@@ -13330,25 +13757,34 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     R(-hr * 0.52, hy + hr * 0.45, 0.045, 0.05, "#2a2620");
     R(hr * 0.14, hy + hr * 0.45, 0.045, 0.05, "#2a2620");
     /* ---- headwear over the lot ---- */
-    if (head && !torn(head)) {
-      const G = GARMENTS[head], hc = garmentColor(head, L);
-      if (G.guard) { R(-hr - 0.02, hy - hr * 0.75, hr * 2 + 0.04, 0.11, "#a4acb8"); R(-0.02, hy - hr * 0.4, 0.04, 0.12, "#8f97a3"); }
-      else if (head === "sun_hat") { R(-0.26, hy - hr * 0.28, 0.52, 0.045, hc); R(-hr * 0.8, hy - hr * 0.85, hr * 1.6, 0.09, hc); }
-      else if (head === "hunter_hat") { R(-0.22, hy - hr * 0.3, 0.44, 0.05, hc); R(-hr * 0.75, hy - hr * 0.95, hr * 1.5, 0.10, hc); R(hr * 0.4, hy - hr * 0.95, 0.05, 0.16, L.accent); }
-      else if (head === "wool_hood") { R(-hr - 0.025, hy - hr * 0.8, hr * 2 + 0.05, 0.14, hc); R(-hr - 0.03, hy + hr * 0.5, hr * 2 + 0.06, 0.06, hc); }
-      else { R(-hr - 0.015, hy - hr * 0.72, hr * 2 + 0.03, 0.10, hc); R(-hr - 0.06, hy - hr * 0.05, hr * 0.9, 0.035, hc); }   // cloth cap + peak
+    if (headP && !headP.t) {
+      const [hc, ha] = colourway(head, headP.c);
+      switch (GARMENTS[head]?.cut) {
+        case "helm":                                                    // Watch plate
+          R(-hr - 0.02, hy - hr * 0.75, hr * 2 + 0.04, 0.11, "#a4acb8"); R(-0.02, hy - hr * 0.4, 0.04, 0.12, "#8f97a3"); break;
+        case "brim":                                                    // wide straw brim
+          R(-0.26, hy - hr * 0.28, 0.52, 0.045, hc); R(-hr * 0.8, hy - hr * 0.85, hr * 1.6, 0.09, hc);
+          R(-hr * 0.8, hy - hr * 0.34, hr * 1.6, 0.03, ha); break;
+        case "kerchief":                                                // tied back, with the knot showing
+          R(-hr - 0.01, hy - hr * 0.68, hr * 2 + 0.02, 0.10, hc);
+          R(hr * 0.55, hy - hr * 0.2, 0.06, 0.10, hc); break;
+        case "hunter":
+          R(-0.22, hy - hr * 0.3, 0.44, 0.05, hc); R(-hr * 0.75, hy - hr * 0.95, hr * 1.5, 0.10, hc);
+          R(hr * 0.4, hy - hr * 0.95, 0.05, 0.16, ha); break;
+        case "hood":                                                    // covers the crown and wraps the neck
+          R(-hr - 0.025, hy - hr * 0.8, hr * 2 + 0.05, 0.14, hc); R(-hr - 0.03, hy + hr * 0.5, hr * 2 + 0.06, 0.06, hc); break;
+        case "furcap":                                                  // a band of fur under a crown
+          R(-hr - 0.02, hy - hr * 0.85, hr * 2 + 0.04, 0.09, hc);
+          R(-hr - 0.03, hy - hr * 0.3, hr * 2 + 0.06, 0.055, ha); break;
+        case "beanie":                                                  // pulled right down, with a turn-up
+          R(-hr - 0.01, hy - hr * 0.85, hr * 2 + 0.02, 0.14, hc);
+          R(-hr - 0.02, hy - hr * 0.05, hr * 2 + 0.04, 0.045, ha); break;
+        default:                                                        // a cap with its peak
+          R(-hr - 0.015, hy - hr * 0.72, hr * 2 + 0.03, 0.10, hc); R(-hr - 0.06, hy - hr * 0.05, hr * 0.9, 0.035, ha);
+      }
     }
     /* the player keeps their blue band so you can always find yourself */
     if (e.kind === "player" && !head) R(-hr, hy - hr * 0.62, hr * 2, 0.05, "#2e6fe0");
-  };
-  /* a garment's colour: its own if it has one, otherwise the wearer's palette */
-  const garmentColor = (id, L) => {
-    const G = GARMENTS[id]; if (!G) return L.shirt;
-    if (G.guard) return "#7f8794";
-    if (id.startsWith("leather") || id === "hunter_hat") return "#6b4a2e";
-    if (G.wear === "winter") return L.accent;
-    if (G.wear === "summer") return "#e8e0cc";
-    return L.shirt;
   };
 
   const drawEntity = (ctx, e, T, px, py) => {
@@ -13516,7 +13952,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         {hud?.sick && <div style={{ ...S.clockChip, color: "#7fae5f" }}>🤒 {hud.sick}</div>}
         {hud?.wanted > 0 && <div style={{ ...S.clockChip, color: "#e0a832" }}>{"★".repeat(Math.min(5, hud.wanted))}</div>}
         <div style={S.clockChip}>🪙 {hud?.coins ?? 0}</div>
-        <button style={S.iconBtn} onClick={() => setInvOpen(true)}>🎒</button>
+        <button style={S.iconBtn} onClick={() => { migrateWardrobe(simRef.current.player); setInvOpen(true); }}>🎒</button>
         <button style={S.iconBtn} onClick={() => { setSpeakText(""); setSpeakOpen(true); }}>💬</button>
         <button style={S.iconBtn} onClick={openFolk}>👥</button>
         <button style={S.iconBtn} onClick={() => setSettingsOpen(true)}>⚙️</button>
@@ -14388,7 +14824,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           if (G.guard) return G.slot === "torso" ? "expert" : "hard";
           return G.tier === "hard" ? "hard" : G.tier === "medium" ? "simple" : "easy";
         };
-        const beginSew = (id, kind) => {
+        const beginSew = (id, kind, uid = null) => {
           const G = GARMENTS[id];
           if (kind === "make" && G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
           const cost = kind === "patch"
@@ -14403,16 +14839,19 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             ? ({ expert: "hard", hard: "simple", simple: "easy", easy: "easy" })[sewTierFor(id)]
             : sewTierFor(id);
           const T9 = CFG.SEWING.tiers[tierKey];
-          setTailorPanel({ tab, sewing: { id, kind, tierKey, cfg: T9, spent: cost, misses: sewingMisses(T9.misses, lvl) } });
+          setTailorPanel({ tab, sewing: { id, kind, uid, tierKey, cfg: T9, spent: cost, misses: sewingMisses(T9.misses, lvl) } });
         };
         const sewDone = () => {
           const S9 = tailorPanel.sewing; if (!S9) return;
           const G = GARMENTS[S9.id];
           if (S9.kind === "patch") {
-            delete p2.wornTorn[S9.id]; p2.wornWear[S9.id] = (G.dur || 100) * 0.35;   // a patch doesn't make it new
+            /* mends THAT piece — the exact one you brought to the bench, not
+               every shirt of its kind you happen to own */
+            const pc = pieceOf(p2, S9.uid) || kitOf(p2).find(k => k.g === S9.id && k.t);
+            if (pc) { pc.t = false; pc.w = pieceMax(pc) * 0.35; }                     // a patch doesn't make it new
             sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`);
           } else {
-            p2.inv[S9.id] = (p2.inv[S9.id] || 0) + 1;
+            p2.kit = [...kitOf(p2), newPiece(S9.id)];                                 // a new piece, its own colourway and wear
             sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`);
           }
           const before9 = skillLevel(p2, "tailoring");
@@ -14433,21 +14872,17 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           showToast(`✂️ The ${G.name.toLowerCase()} is ruined. Scrapped for ${back.join(" ") || "nothing worth keeping"}.`);
           setTailorPanel({ tab }); bump();
         };
-        const wearIt = (id) => {
-          const G = GARMENTS[id];
+        /* Wearing is now about a PIECE, not a kind of thing: you put on that
+           particular jacket, and the one it replaces goes back in the wardrobe
+           carrying its own wear rather than dissolving into a stack. */
+        const wearIt = (uid) => {
+          const pc = pieceOf(p2, uid); if (!pc) return;
+          const G = GARMENTS[pc.g];
           if (G.guard && !mayWearGuardKit(p2)) { showToast("That's Watch issue. They'd want a word."); return; }
-          if (!(have(id) > 0)) return;
-          const cur = wornInSlot(p2, G.slot);
-          if (cur) { p2.inv[cur] = (p2.inv[cur] || 0) + 1; p2.worn = p2.worn.filter(x => x !== cur); }   // back in the pack
-          p2.inv[id]--; if (p2.inv[id] <= 0) delete p2.inv[id];
-          p2.worn = [...p2.worn, id];
+          wearPiece(p2, uid);
           sfx.pop(); showToast(`${G.emoji} ${G.name} on.`); bump();
         };
-        const takeOff = (id) => {
-          p2.worn = p2.worn.filter(x => x !== id);
-          p2.inv[id] = (p2.inv[id] || 0) + 1;
-          bump();
-        };
+        const takeOff = (uid) => { p2.worn = (p2.worn || []).filter(x => x !== uid); bump(); };
         const felt = feltTemp(sim2, p2), st = tempStress(felt);
         return (
           <div style={S.chatOverlay} onClick={() => setTailorPanel(null)}>
@@ -14476,7 +14911,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               })() : (
               <div style={S.chatBody}>
                 <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
-                  Wearing: <b>{(p2.worn || []).length ? p2.worn.map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${p2.wornTorn?.[id] ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
+                  Wearing: <b>{wornPieces(p2).length ? wornPieces(p2).map(pc => `${GARMENTS[pc.g].emoji} ${GARMENTS[pc.g].name}${pc.t ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
                   Toughness <b>+{toughnessOf(p2)}</b> · Endurance <b>{enduranceOf(p2)}</b> (max energy {maxEnergyOf(p2)})<br />
                   <span style={{ color: st.cold ? "#7fb4e0" : st.hot ? "#e08a52" : "#8aa87a" }}>
                     You feel {felt}° — {tempWord(felt)}{st.cold ? " · you're burning food to stay warm" : st.hot ? " · you're losing water fast" : " · comfortable"}
@@ -14525,45 +14960,28 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 </>}
 
                 {tab === "wear" && <>
-                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>On you</div>
-                  {(p2.worn || []).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing but what you stand up in.</div>}
-                  {(p2.worn || []).map(id => (
-                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <ItemIcon id={id} size={20} />
-                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b>{p2.wornTorn?.[id] && <span style={{ color: "#a05252" }}> · torn</span>}
-                        <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>{GARMENTS[id].slot} · {Math.round(100 - Math.min(100, (p2.wornWear?.[id] || 0) / (GARMENTS[id].dur || 100) * 100))}% condition</span></span>
-                      <button style={S.smallBtn} onClick={() => takeOff(id)}>Take off</button>
-                    </div>
-                  ))}
-                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 8 }}>In your pack</div>
-                  {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>No spare clothes.</div>}
-                  {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).map(id => (
-                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <ItemIcon id={id} size={20} />
-                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b> ×{p2.inv[id]}
-                        <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>warmth {GARMENTS[id].warmth > 0 ? `+${GARMENTS[id].warmth}` : GARMENTS[id].warmth} · tough +{GARMENTS[id].tough} · endur {GARMENTS[id].endur}</span></span>
-                      <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => wearIt(id)}>Wear</button>
-                    </div>
-                  ))}
+                  <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
+                    Every piece is its own — open a row to see each one you own and how much life is left in it.
+                  </div>
+                  <ClothingRows pieces={kitOf(p2)} wornSet={new Set(p2.worn || [])} fs={fs}
+                    empty="Nothing but what you stand up in."
+                    action={(pc, on) => on
+                      ? <button style={S.smallBtn} onClick={() => takeOff(pc.u)}>Take off</button>
+                      : <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => wearIt(pc.u)}>Wear</button>} />
                 </>}
 
                 {tab === "mend" && <>
                   <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
-                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Tailoring ({skillTierName(p2, "tailoring")}) decides how forgiving the work is.
+                    A torn piece keeps you barely warm, stops nothing, and gets you filthy far quicker. Patching costs a fraction of sewing new — and your Tailoring ({skillTierName(p2, "tailoring")}) decides how forgiving the work is.
                   </div>
-                  {(p2.worn || []).filter(id => p2.wornTorn?.[id]).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing you're wearing is torn.</div>}
-                  {(p2.worn || []).filter(id => p2.wornTorn?.[id]).map(id => {
-                    const G = GARMENTS[id];
-                    const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
-                    return (
-                      <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                        <ItemIcon id={id} size={20} />
-                        <span style={{ flex: 1, fontSize: fs - 1 }}><b>{G.name}</b> <span style={{ color: "#a05252" }}>· torn</span>
-                          <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>patch with {matLine(cost)}</span></span>
-                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => beginSew(id, "patch")}>Patch</button>
-                      </div>
-                    );
-                  })}
+                  <ClothingRows pieces={kitOf(p2).filter(pc => pc.t)} wornSet={new Set(p2.worn || [])} fs={fs}
+                    empty="Nothing you own is torn."
+                    action={(pc) => {
+                      const G = GARMENTS[pc.g];
+                      const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
+                      return <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)}
+                        title={`patch with ${matLine(cost)}`} onClick={() => beginSew(pc.g, "patch", pc.u)}>Patch</button>;
+                    }} />
                 </>}
               </div>
               )}
@@ -15196,7 +15614,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <div style={{ ...S.chatPanel, maxWidth: 440, padding: 22 }}>
               <div style={{ ...S.chatHeader, background: "#2a2f38" }}>
                 <span style={{ fontWeight: 700 }}>⛓️ {bld(jailScreen.bId).name} — {player.jailedUntil === Infinity ? "Holding Cell · LIFE" : `Holding Cell · ${Math.max(0, Math.ceil(((player.jailedUntil || 0) - absMin) / 60))}h left`}</span>
-                <button style={S.closeBtn} title="Your pack" onClick={() => setInvOpen(true)}>🎒</button>
+                <button style={S.closeBtn} title="Your pack" onClick={() => { migrateWardrobe(simRef.current.player); setInvOpen(true); }}>🎒</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
                 {(() => {
@@ -15472,8 +15890,23 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     }}>Resign</button>
                 )}
               </div>
+              {/* Clothing is kept apart from the stacking goods, because it doesn't
+                  stack: each piece has its own wear, so each gets its own line. */}
+              {kitOf(player).length > 0 && <>
+                <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 4 }}>👕 Wardrobe</div>
+                <ClothingRows pieces={kitOf(player)} wornSet={new Set(player.worn || [])} fs={fs}
+                  empty="No clothes to your name."
+                  action={(pc, on) => on
+                    ? <button style={S.smallBtn} onClick={() => { player.worn = (player.worn || []).filter(u => u !== pc.u); bump(); }}>Take off</button>
+                    : <button style={{ ...S.smallBtn, background: "#4a6a5a" }}
+                        onClick={() => {
+                          if (GARMENTS[pc.g].guard && !mayWearGuardKit(player)) { showToast("That's Watch issue. They'd want a word."); return; }
+                          wearPiece(player, pc.u); sfx.pop(); showToast(`${GARMENTS[pc.g].emoji} ${GARMENTS[pc.g].name} on.`); bump();
+                        }}>Wear</button>} />
+                <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 8 }}>🎒 Carried</div>
+              </>}
               {Object.entries(player.inv).filter(([, c]) => c > 0).length === 0 &&
-                <div style={{ ...S.folkCard, opacity: 0.7 }}>Empty. The mart in Mossford stocks nearly everything.</div>}
+                <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing carried. The mart in Mossford stocks nearly everything.</div>}
               {Object.entries(player.inv).filter(([, c]) => c > 0).map(([id, c]) => (
                 <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10 }}>
                   <ItemIcon id={id} size={22} />
