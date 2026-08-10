@@ -2459,9 +2459,9 @@ const GARMENTS = {
   winter_jacket:{ name: "Winter Jacket",   emoji: "🧥", slot: "torso", warmth: 13, tough: 5,  endur: -3, tier: "medium", mats: { cotton: 5, finefiber: 2 },       dur: 150, wear: "winter" },
   winter_trous: { name: "Lined Trousers",  emoji: "👖", slot: "legs",  warmth: 8,  tough: 2,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 1 },       dur: 140, wear: "winter" },
   /* ---- HUNTER'S LEATHERS: pelt work, warm and genuinely tough ---- */
-  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium" },
-  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium" },
-  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium" },
+  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium", hunt: true },
+  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium", hunt: true },
+  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium", hunt: true },
   /* ---- THE WATCH'S PLATE: guard issue. Heavy, hard, and not for just anyone. ---- */
   guard_helm:   { name: "Watch Helm",      emoji: "⛑️", slot: "head",  warmth: 3,  tough: 7,  endur: -3, tier: "hard",   mats: { ore: 4, finefiber: 1 },          dur: 260, wear: "medium", guard: true },
   guard_mail:   { name: "Watch Hauberk",   emoji: "🦺", slot: "torso", warmth: 5,  tough: 18, endur: -9, tier: "hard",   mats: { ore: 9, pelt: 2, finefiber: 2 }, dur: 320, wear: "medium", guard: true },
@@ -2470,7 +2470,10 @@ const GARMENTS = {
 const GARMENT_SLOTS = ["head", "torso", "legs"];
 /* the three weights, and what each one is FOR — used by the tailor menus and the AI */
 const WEAR_BANDS = { summer: "light and airy, for heat", medium: "everyday wear", winter: "heavy and insulating, for cold" };
-const garmentsOfBand = (band) => Object.entries(GARMENTS).filter(([, G]) => G.wear === band && !G.guard).map(([id]) => id);
+/* everyday clothes of a given weight. Hunter's leathers and Watch plate are still MADE at the
+   bench and still count as medium wear — they're just not what an ordinary baker reaches for,
+   so they stay out of the pool that dresses the valley each morning. */
+const garmentsOfBand = (band) => Object.entries(GARMENTS).filter(([, G]) => G.wear === band && !G.guard && !G.hunt).map(([id]) => id);
 /* the two things the bench makes that aren't clothes: the fibre everything good needs, and
    the bolt of cloth the tailor sells over the counter. */
 const TAILOR_MATS = {
@@ -2534,20 +2537,45 @@ const TAILOR_BID = "tailor_f";
 /* dress someone sensibly for the weather from what their character would own. Watch officers
    draw their issued plate; hunters and outlaws favour leathers; everyone else wears the band
    that fits the season. Deterministic, so a given soul's wardrobe is stable. */
-function dressForSeason(ent, season, temp) {
-  const band = temp <= 6 ? "winter" : temp >= 24 ? "summer" : "medium";
-  const h = hash32((ent.id || "player") + season);
-  const out = [];
-  if (ent.enforcer) out.push("guard_helm", "guard_mail", "guard_greaves");
-  else if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") out.push("hunter_hat", "leather_coat", "leather_legs");
-  else {
+/* Stage 21: nobody owns exactly one outfit. Everyone starts with a WARDROBE — something for
+   the heat, something for the cold, and everyday clothes in between — plus a favourite piece
+   they reach for whenever the weather lets them. */
+function startingWardrobe(ent) {
+  const h = hash32(ent.id || "player");
+  const kit = [];
+  if (ent.enforcer) kit.push("guard_helm", "guard_mail", "guard_greaves");
+  if (ent.outlaw || ent.thief || ent.hunter) kit.push("hunter_hat", "leather_coat", "leather_legs");
+  let i = 0;
+  for (const band of ["summer", "medium", "winter"]) {      // a set for each weight
     const pool = garmentsOfBand(band);
     for (const slot of GARMENT_SLOTS) {
       const opts = pool.filter(id => GARMENTS[id].slot === slot);
-      if (!opts.length) continue;
-      if (slot === "head" && h % 3 === 0) continue;          // not everybody wears a hat
-      out.push(opts[h % opts.length]);
+      if (opts.length) kit.push(opts[(h + i++) % opts.length]);
     }
+  }
+  const owned = [...new Set(kit)];
+  // the favourite: a torso piece they're fond of, so it actually shows
+  const torsos = owned.filter(id => GARMENTS[id].slot === "torso");
+  return { wardrobe: owned, favorite: torsos.length ? torsos[h % torsos.length] : owned[0] || null };
+}
+/* dress from what they OWN, for the weather — leaning on their favourite whenever its weight
+   suits the day. Falls back to conjuring a sensible set for anyone without a wardrobe yet. */
+function dressForSeason(ent, season, temp) {
+  const band = temp <= 6 ? "winter" : temp >= 24 ? "summer" : "medium";
+  const h = hash32((ent.id || "player") + season);
+  if (ent.enforcer) return ["guard_helm", "guard_mail", "guard_greaves"];
+  if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") return ["hunter_hat", "leather_coat", "leather_legs"];
+  const owned = (ent.wardrobe && ent.wardrobe.length) ? ent.wardrobe : startingWardrobe(ent).wardrobe;
+  const fav = ent.favorite;
+  const out = [];
+  for (const slot of GARMENT_SLOTS) {
+    // their own things of the right weight for this slot, favourite first if it qualifies
+    let opts = owned.filter(id => GARMENTS[id]?.slot === slot && GARMENTS[id].wear === band && !GARMENTS[id].guard);
+    if (!opts.length) opts = owned.filter(id => GARMENTS[id]?.slot === slot && !GARMENTS[id].guard);
+    if (!opts.length) opts = garmentsOfBand(band).filter(id => GARMENTS[id].slot === slot);
+    if (!opts.length) continue;
+    if (slot === "head" && h % 3 === 0) continue;            // not everybody wears a hat
+    out.push(fav && opts.includes(fav) ? fav : opts[h % opts.length]);
   }
   return out;
 }
@@ -3000,7 +3028,9 @@ const wearLine = (ent, felt) => {
   const worn = (ent.worn || []).map(id => `${GARMENTS[id].name}${ent.wornTorn?.[id] ? " (TORN)" : ""}`);
   const st = tempStress(felt);
   const verdict = st.cold ? "and they are COLD in it" : st.hot ? "and they are OVERHEATING in it" : "and it suits the weather";
-  return `${worn.length ? worn.join(", ") : "little more than rags"} — ${verdict}`;
+  const fav = ent.favorite && GARMENTS[ent.favorite] ? `; favourite: ${GARMENTS[ent.favorite].name}` : "";
+  const owns = (ent.wardrobe || []).length ? `. Wardrobe: ${ent.wardrobe.map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}` : "";
+  return `${worn.length ? worn.join(", ") : "little more than rags"} — ${verdict}${fav}${owns}`;
 };
 const provisionLine = (ent) => {
   let food = 0, drink = 0, med = 0;
@@ -3058,12 +3088,13 @@ TODAY'S SKY — ${sky || "settled weather"}.
 ${dayLog.length ? `Yesterday: ${dayLog.join(". ")}.` : "Yesterday was quiet."}
 
 Respond ONLY with JSON, no markdown:
-{"npcs":{"<id>":{"intent":"their small plan today, under 8 words","mood":"happy|neutral|grumpy|tired","spot":"${spots}|null","wear":"summer|medium|winter|leathers|keep","shop":true|false}},
+{"npcs":{"<id>":{"intent":"their small plan today, under 8 words","mood":"happy|neutral|grumpy|tired","spot":"${spots}|null","wear":"summer|medium|winter|leathers|keep","favourite":"<a garment id from THEIR OWN wardrobe, or empty to keep their current favourite>","shop":true|false}},
 "encounters":[{"a":"<id>","b":"<id>","lines":["Name: line","Name: line","Name: line"]}],
 "drift":[{"a":"<id>","b":"<id>","change":"warmer|cooler"}],
 "bonds":[{"a":"<id>","b":"<id>","move":"closer|cooler","reply":"accept|reject|rebuff"}]}
 Rules: every resident gets an entry. Max 2 encounters between residents with history, lines under 12 words. Max 2 drifts, only if yesterday justifies one. Stay in character.
 WEATHER & CLOTHES: for each resident set "wear" — what weight they'd choose to put on given today's sky and their character ("keep" to stay as they are, "leathers" for hunters and hard cases). Anyone marked COLD or OVERHEATING should change, and anyone in TORN clothes may set "shop":true to go and get something new made. A vain character dresses for looks; a poor one makes do.
+FAVOURITES: everyone owns several outfits (listed as their Wardrobe) and has a favourite piece they reach for whenever the weather allows. Set "favourite" only when the day genuinely changes their mind about what they love wearing — a compliment, a ruined coat, a new look they've taken to. It must be an id from THEIR OWN wardrobe. Otherwise leave it empty.
 BONDS (residents only, never the player): at most ONE entry, and only when the day genuinely earned it. Two residents whose history warrants it may grow "closer" or go "cooler". "reply" is how the approached one takes it: "accept" (warmly), "reject" (kindly but no), or "rebuff" (rudely — they were graceless about it). Leave the array empty on an ordinary day.
 IF A RESIDENT IS THE MAYOR: their intent should read like a mayor's — being seen around town, hearing folk out, showing up at the hall, tending to unrest or a project — fitting their character (dutiful, vain, scheming, generous, whatever they are).
 IMPORTANT — SELF-CARE: anyone marked ⚠LOW-SUPPLIES, or with a need below 30, should have an intent that gets them sorted: buying food/water to carry, stocking up, or heading to eat/drink. A resident keeping a few meals and drinks in their pocket is normal, sensible behavior — lean toward it. Nobody should wander idly while low on supplies or needs.`;
@@ -3592,9 +3623,10 @@ export default function Alderbrook() {
       y: def.home ? bld(def.home).door.y : world.towns[def.town].spots.bench.y,
       hunger: 60 + (i * 4) % 30, thirst: 60 + (i * 7) % 30, energy: 80,
       hygiene: 65 + (i * 5) % 30, health: 100, alive: true, wanted: 0,
-      // Stage 17: dressed from the very first morning — waiting for the midnight roll left the
-      // whole valley standing around in nothing on day one.
-      worn: dressForSeason({ ...def }, seasonOf(1), SEASONS[seasonOf(1)].base), wornTorn: {}, wornWear: {},
+      // Stage 17/21: dressed from the very first morning, out of a wardrobe they actually own —
+      // a set for the heat, one for the cold, everyday clothes between, and a favourite.
+      ...(() => { const w = startingWardrobe(def); return { wardrobe: w.wardrobe, favorite: w.favorite,
+        worn: dressForSeason({ ...def, ...w }, seasonOf(1), SEASONS[seasonOf(1)].base), wornTorn: {}, wornWear: {} }; })(),
       legs: [], path: [], goal: null, activity: "starting the day", hidden: false,
       bubble: null, lastGreet: -999, mood: "neutral",
       evicted: false, vagrantWarned: false,             // Stage 3: rent debt + the officer's one free pass
@@ -3638,8 +3670,12 @@ export default function Alderbrook() {
       time: CFG.START_HOUR * 60, day: 1,
       player: { scene: "t:alderbrook", x: bld("home_p").door.x, y: bld("home_p").door.y, home: "home_p",   // home was never set — furniture stations checked p.home and always failed
         hunger: 85, thirst: 85, energy: 95, hygiene: 90, health: 100, alive: true,
-        coins: CFG.START_COINS, inv: { bread: 1, water: 1 }, fame: 0, renown: 0,
-        worn: ["work_shirt", "work_trous"], wornTorn: {}, wornWear: {},   // Stage 17: you start in everyday clothes
+        coins: CFG.START_COINS, inv: { bread: 1, water: 1, cloth_cap: 1, summer_tunic: 1, light_shorts: 1, wool_hood: 1, winter_jacket: 1 }, fame: 0, renown: 0,
+        /* Stage 21: you arrive with a packed bag, not one shirt — everyday clothes on your back,
+           and something for the heat and the cold folded in the pack. */
+        worn: ["work_shirt", "work_trous"], wornTorn: {}, wornWear: {},
+        wardrobe: ["work_shirt", "work_trous", "cloth_cap", "summer_tunic", "light_shorts", "wool_hood", "winter_jacket"],
+        favorite: "work_shirt",
         wanted: 0, bedrest: false, incap: null, dying: null, sick: null, hospitalBill: 0,
         evicted: false, vagrantWarned: false,           // Stage 3
         name: "",                                       // Stage 10: what you call yourself — blank until you say
@@ -3723,6 +3759,7 @@ export default function Alderbrook() {
         coins: n.coins, inv: n.inv, fame: n.fame, renown: n.renown, sick: n.sick, skills: n.skills,
         expertise: n.expertise, domainXp: n.domainXp,
         worn: n.worn, wornTorn: n.wornTorn, wornWear: n.wornWear,   // Stage 17: the wardrobe travels with the save
+        wardrobe: n.wardrobe, favorite: n.favorite,                 // Stage 21: what they own, and what they love
         furniture: n.furniture, stored: n.stored, chest: n.chest,
         occupation: n.occupation, work: n.work,
         home: n.home, evicted: !!n.evicted, vagrantWarned: !!n.vagrantWarned,
@@ -3774,7 +3811,11 @@ export default function Alderbrook() {
     sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
     sim.weather = data.weather || { kind: "clear", day: sim.day };
     // Stage 17: pre-wardrobe saves get dressed on the way in
-    for (const n of sim.npcs) { n.worn = n.worn || dressForSeason(n, sim.season, outdoorTemp(sim)); n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {}; }
+    for (const n of sim.npcs) {
+      if (!n.wardrobe?.length) { const w = startingWardrobe(n); n.wardrobe = w.wardrobe; n.favorite = n.favorite || w.favorite; }
+      n.worn = n.worn?.length ? n.worn : dressForSeason(n, sim.season, outdoorTemp(sim));
+      n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
+    }
     // the wild reloads as it was standing: position and wounds, no memory of who it was chasing
     sim.beasts = (data.beasts || []).filter(b => BEAST_SPECIES[b.sp])
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
@@ -6704,13 +6745,19 @@ export default function Alderbrook() {
   const applyWearChoice = (sim, n, plan) => {
     if (!plan || !n.alive) return;
     n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
+    if (!n.wardrobe?.length) { const w = startingWardrobe(n); n.wardrobe = w.wardrobe; n.favorite = n.favorite || w.favorite; }
+    // Stage 21: the day may have changed what they love — but only to something they own
+    if (plan.favourite && n.wardrobe.includes(plan.favourite) && plan.favourite !== n.favorite) {
+      n.favorite = plan.favourite;
+      n.memories = [...n.memories, `Grown fond of my ${GARMENTS[plan.favourite].name.toLowerCase()}`].slice(-CFG.MAX_MEMORIES);
+    }
     const want = plan.wear;
     if (want && want !== "keep") {
       if (want === "leathers") n.worn = ["hunter_hat", "leather_coat", "leather_legs"];
       else if (["summer", "medium", "winter"].includes(want) && !n.enforcer) {
-        const pool = garmentsOfBand(want);
-        const h = hash32(n.id + want);
-        n.worn = GARMENT_SLOTS.map(slot => { const o = pool.filter(id => GARMENTS[id].slot === slot); return o.length ? o[h % o.length] : null; }).filter(Boolean);
+        // dress out of their OWN wardrobe at that weight, favourite first when it qualifies
+        const temp = want === "winter" ? 0 : want === "summer" ? 28 : 16;
+        n.worn = dressForSeason(n, sim.season, temp);
       }
     }
     if (plan.shop) {   // they went and had the torn things replaced
@@ -11686,6 +11733,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       // Stage 19: what they've got on, and whether the sky is beating them up in it
       wearing: (n.worn || []).map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${n.wornTorn?.[id] ? " (torn)" : ""}`).join(", ") || "little to speak of",
       felt: feltTemp(sim, n),
+      favorite: n.favorite && GARMENTS[n.favorite] ? `${GARMENTS[n.favorite].emoji} ${GARMENTS[n.favorite].name}` : null,
+      wardrobeN: (n.wardrobe || []).length,
       toYou: n.relationships.player || "neutral",
       memories: [...n.memories], likes: n.likes, dislikes: n.dislikes,
       rels: Object.entries(n.relationships).filter(([id]) => id !== "player")
@@ -14240,7 +14289,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   </div>
                   <div style={{ fontSize: fs - 2, opacity: 0.8, marginTop: 4 }}>{f.intent ? `Today: ${f.intent}` : f.activity} · {f.tier} · {f.health}{f.sick && <span style={{ color: "#7a9a5f" }}> · 🤒 {f.sick}</span>}</div>
                   <div style={{ fontSize: fs - 2, marginTop: 4 }}>
-                    <span style={{ opacity: 0.6 }}>Wearing</span> {f.wearing}{(() => { const st = tempStress(f.felt); return st.cold ? <span style={{ color: "#7fb4e0" }}> · cold at {f.felt}°</span> : st.hot ? <span style={{ color: "#e08a52" }}> · overheating at {f.felt}°</span> : null; })()}<br />
+                    <span style={{ opacity: 0.6 }}>Wearing</span> {f.wearing}{(() => { const st = tempStress(f.felt); return st.cold ? <span style={{ color: "#7fb4e0" }}> · cold at {f.felt}°</span> : st.hot ? <span style={{ color: "#e08a52" }}> · overheating at {f.felt}°</span> : null; })()}
+                    {f.favorite && <span style={{ opacity: 0.6 }}> · favourite {f.favorite}{f.wardrobeN > 1 ? ` (owns ${f.wardrobeN})` : ""}</span>}<br />
                     <span style={{ opacity: 0.6 }}>Carries</span> {f.inv} · <span style={{ opacity: 0.6 }}>Likes</span> {f.likes.join(", ")} · <span style={{ opacity: 0.6 }}>Dislikes</span> {f.dislikes.join(", ")}
                   </div>
                   {f.rels.length > 0 && <div style={{ fontSize: fs - 2, marginTop: 3 }}><span style={{ opacity: 0.6 }}>Feels:</span> {f.rels.join(" · ")}</div>}
