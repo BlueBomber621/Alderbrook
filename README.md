@@ -28,7 +28,10 @@ Anthropic Messages API **directly from your browser**:
   is stored on your device (via the save file / browser storage) only when you
   save. Clearing the key pauses the AI; the town still runs.
 - The model is set in one place near the top of `index.tsx`:
-  `const CLAUDE_MODEL = "claude-sonnet-4-6";`
+  `const CLAUDE_MODEL = "claude-sonnet-5";`
+- Every call asks for `thinking: { type: "disabled" }`. Sonnet 5 thinks
+  adaptively by default and `max_tokens` covers thinking *and* the answer, so
+  leaving it on would burn these small budgets before the JSON reply arrived.
 
 Because the browser talks to Anthropic directly, the request uses the
 `anthropic-dangerous-direct-browser-access` header (this is a personal,

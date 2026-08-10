@@ -2939,7 +2939,7 @@ let USER_API_KEY = "";
 const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 
 // The model every AI call runs on. Change it here to swap models globally.
-const CLAUDE_MODEL = "claude-sonnet-4-6";
+const CLAUDE_MODEL = "claude-sonnet-5";
 
 // Persist the key on its own so it survives reloads and pre-fills the title
 // screen — independent of any save file. Stored on this device only.
@@ -2970,7 +2970,16 @@ async function callClaude(prompt, maxTokens) {
     res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers,
-      body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: maxTokens,
+        // Sonnet 5 runs adaptive thinking when `thinking` is omitted, and
+        // max_tokens caps thinking + answer together. Every call here is a
+        // tiny strict-JSON reply on a 16-900 token budget, so leaving it on
+        // would spend the whole budget reasoning and truncate the JSON.
+        thinking: { type: "disabled" },
+        messages: [{ role: "user", content: prompt }],
+      }),
     });
   } catch (e) {
     throw new Error("Couldn't reach the Anthropic API (network/CORS). Check your connection and key.");
@@ -12005,7 +12014,22 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   useEffect(() => {
     const map = { w: "up", arrowup: "up", s: "down", arrowdown: "down", a: "left", arrowleft: "left", d: "right", arrowright: "right" };
     const bins = { 1: "red", 2: "green", 3: "blue" };
+    /* Typing beats walking. The movement keys live on `window`, so without this
+       every text field in the game eats W/A/S/D (and +/-, and the verb keys):
+       you couldn't type "Wade" or "Sandra" into the name box on the title
+       screen. If the event started inside anything editable, the field owns it. */
+    const typing = (e) => {
+      const t = e.target;
+      if (!t || t.nodeType !== 1) return false;
+      if (t.isContentEditable) return true;
+      const tag = (t.tagName || "").toLowerCase();
+      if (tag === "textarea" || tag === "select") return true;
+      if (tag !== "input") return false;
+      // range/checkbox/button inputs aren't text, and arrows/space are their controls
+      return !["range", "checkbox", "radio", "button", "submit", "reset", "file", "color"].includes((t.type || "text").toLowerCase());
+    };
     const dn = (e) => {
+      if (typing(e)) return;
       if (modalRef.current) return;
       if (minigameRef.current?.type === "office") { const cats = minigameRef.current.cats || ["red", "green", "blue"]; const c = cats[Number(e.key) - 1]; if (c) { fileBin(c); return; } }
       // Stage 3.6: Computer players get the spacebar as the timing button (phone taps the on-screen button)
