@@ -1377,7 +1377,8 @@ const EATERY_MEAL = { cafe: "meal", diner: "stew", inn: "stew", cafe_s: "coffee"
 /* five trades; every paid task grants xp in exactly one of them */
 const SKILL_TRACKS = {
   crafting: "Crafting",
-  mechanic: "Mechanic", office: "Clerical", kitchen: "Cooking", service: "Service", stock: "Logistics", fishing: "Fishing", healthcare: "Medicine", foraging: "Foraging" };   // healthcare was missing (Pass 4 toast bug); foraging is v7 Stage 3
+  mechanic: "Mechanic", office: "Clerical", kitchen: "Cooking", service: "Service", stock: "Logistics", fishing: "Fishing", healthcare: "Medicine", foraging: "Foraging",
+  tailoring: "Tailoring" };   // healthcare was missing (Pass 4 toast bug); foraging is v7 Stage 3; tailoring is Stage 23
 /* Stage 3.7c: DOMAINS — specialties WITHIN a track. Raw track XP helps a little everywhere;
    domain EXPERTISE (earned by repetition, or seeded for veterans) is the big near-guarantee,
    and ONLY in that domain. "Good at something" means good AT SOMETHING, not everything. */
@@ -2571,6 +2572,21 @@ CFG.TAILOR = { npcSpend: 10, patchFee: 6, maxTrips: 3, openHour: 9, closeHour: 1
 /* Stage 22: the hunter's working day — how often he tries, what a stalk yields, and the
    wholesale he gets when he walks it round to the kitchens. */
 CFG.HUNTER = { everyMin: 55, reach: 6, stalkOdds: 0.34, cuts: [1, 3], carryCap: 8, perDrop: 4, wholesale: 0.7, supplyFrom: 3 };
+/* Stage 23: the tailor's bench is a CRAFT now. Each tier runs its own minigame, with a miss
+   allowance that widens as your Tailoring skill grows. Botch it and the piece is scrapped —
+   you get roughly half the materials back out of the ruin. */
+CFG.SEWING = {
+  scrapBack: 0.5,                       // what you salvage from a ruined piece
+  tiers: {
+    easy:   { game: "stitch", dots: 5, misses: 99, label: "a simple seam" },
+    simple: { game: "stitch", dots: 7, misses: 99, label: "a plain garment" },
+    hard:   { game: "cut",    size: 3, misses: 3,  label: "a cut-and-sewn piece" },
+    expert: { game: "needle", reps: 4, misses: 1,  label: "fine tailoring" },
+  },
+  lenPerLevel: 0.5,                     // every two skill levels buys one more miss
+};
+/* how forgiving this attempt is, given what the tailor actually knows */
+const sewingMisses = (base, lvl) => base >= 99 ? 99 : base + Math.floor(lvl * CFG.SEWING.lenPerLevel);
 
 /* =====================================================================
    STAGE 17 — HOW PEOPLE LOOK. Every soul gets a stable palette and a
@@ -3487,6 +3503,141 @@ Respond ONLY with JSON, no markdown: {"action":"rob|ask","coins":<int>,"items":[
    reset/re-randomized — the oven repair "kept re-initiating"). ===== */
 /* MECHANIC MINIGAME 1 — plumbing: slide each highlighted slider fully left→right, N times
    each; it snaps back to the left when the next rep is up. Overcomplicated Simon says. */
+/* =====================================================================
+   STAGE 23 — THE TAILOR'S MINIGAMES
+   Easy/Simple: STITCH LINE — connect the dots in order. Miss and the needle
+   goes through the wrong place. Hard and Expert allow only so many misses,
+   and the allowance widens as your Tailoring improves.
+   ===================================================================== */
+const StitchGame = ({ dots, misses, onDone, onFail }) => {
+  const [pts] = useState(() => {
+    // a ring of dots with a little jitter — always solvable, never the same twice
+    const n = dots, out = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.35;
+      const r = 0.30 + Math.random() * 0.16;
+      out.push({ x: 50 + Math.cos(a) * r * 100, y: 50 + Math.sin(a) * r * 100 });
+    }
+    return out.sort(() => Math.random() - 0.5);
+  });
+  const [at, setAt] = useState(0);
+  const [miss, setMiss] = useState(0);
+  const [shake, setShake] = useState(-1);
+  const hit = (i) => {
+    if (i === at) {
+      sfx.pop();
+      const nx = at + 1;
+      setAt(nx);
+      if (nx >= pts.length) onDone();
+    } else {
+      const m = miss + 1;
+      setMiss(m); setShake(i); setTimeout(() => setShake(-1), 260);
+      sfx.alert();
+      if (m > misses) onFail();
+    }
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 8, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>
+        Stitch the seam: tap the dots <b>in order</b>. {at}/{pts.length}
+        {misses < 99 && <> · misses {miss}/{misses}</>}
+      </div>
+      <div style={{ position: "relative", width: 280, height: 280, background: "#20242e", borderRadius: 10, border: "1px solid #3a4150" }}>
+        <svg width="280" height="280" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {pts.slice(0, Math.max(0, at)).map((pt, i) => {
+            const nxt = pts[i + 1]; if (!nxt || i + 1 > at - 1) return null;
+            return <line key={i} x1={pt.x * 2.8} y1={pt.y * 2.8} x2={nxt.x * 2.8} y2={nxt.y * 2.8} stroke="#c9a84a" strokeWidth="2.5" strokeDasharray="5 4" />;
+          })}
+        </svg>
+        {pts.map((pt, i) => (
+          <button key={i} onClick={() => hit(i)}
+            style={{
+              position: "absolute", left: pt.x * 2.8 - 15, top: pt.y * 2.8 - 15, width: 30, height: 30,
+              borderRadius: 15, border: "none", cursor: "pointer",
+              background: i < at ? "#5a8a4a" : i === shake ? "#a05252" : "#6b5280",
+              color: "#fff", fontWeight: 700, fontSize: 12,
+              transform: i === shake ? "scale(1.25)" : "scale(1)", transition: "transform .12s",
+            }}>{i + 1}</button>
+        ))}
+      </div>
+    </div>
+  );
+};
+/* HARD — PATTERN MATCH: the cutting table. Reproduce the shown panel layout by toggling
+   squares; every wrong square left set counts as a miss when you commit. */
+const CutGame = ({ size, misses, onDone, onFail }) => {
+  const [target] = useState(() => Array.from({ length: size * size }, () => Math.random() < 0.42));
+  const [grid, setGrid] = useState(() => Array(size * size).fill(false));
+  const [peek, setPeek] = useState(true);
+  const [tries, setTries] = useState(0);
+  useEffect(() => { const t = setTimeout(() => setPeek(false), 2600); return () => clearTimeout(t); }, []);
+  const commit = () => {
+    const wrong = target.reduce((s, v, i) => s + (v !== grid[i] ? 1 : 0), 0);
+    if (wrong === 0) { sfx.pop(); onDone(); return; }
+    const t = tries + 1; setTries(t); sfx.alert();
+    if (t > misses) onFail(); else setPeek(true), setTimeout(() => setPeek(false), 1500);
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 8, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>
+        {peek ? "Study the pattern…" : "Cut it from memory."} · attempts {tries}/{misses}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${size}, 40px)`, gap: 4 }}>
+        {(peek ? target : grid).map((on, i) => (
+          <button key={i} disabled={peek} onClick={() => setGrid(g => g.map((v, j) => j === i ? !v : v))}
+            style={{ width: 40, height: 40, borderRadius: 6, border: "none",
+              background: on ? (peek ? "#c9a84a" : "#6b5280") : "#2a2f3a", cursor: peek ? "default" : "pointer" }} />
+        ))}
+      </div>
+      <button style={{ ...S.binBtn, width: "100%", opacity: peek ? 0.4 : 1 }} disabled={peek} onClick={commit}>✂️ Cut it</button>
+    </div>
+  );
+};
+/* EXPERT — THE NEEDLE: a moving shuttle you must stop inside a narrowing band, N times.
+   One slip and the piece is ruined (unless your skill has bought you a second chance). */
+const NeedleGame = ({ reps, misses, onDone, onFail }) => {
+  const [rep, setRep] = useState(0);
+  const [miss, setMiss] = useState(0);
+  const [pos, setPos] = useState(0);
+  const dir = useRef(1);
+  const band = Math.max(9, 26 - rep * 4);
+  useEffect(() => {
+    let raf, last = performance.now();
+    const step = (t) => {
+      const dt = Math.min(50, t - last); last = t;
+      setPos(v => {
+        let nv = v + dir.current * dt * (0.055 + rep * 0.012);
+        if (nv >= 100) { nv = 100; dir.current = -1; }
+        if (nv <= 0) { nv = 0; dir.current = 1; }
+        return nv;
+      });
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [rep]);
+  const stop = () => {
+    if (Math.abs(pos - 50) <= band / 2) {
+      sfx.pop();
+      const nx = rep + 1; setRep(nx);
+      if (nx >= reps) onDone();
+    } else {
+      const m = miss + 1; setMiss(m); sfx.alert();
+      if (m > misses) onFail();
+    }
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 10, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>Set the needle: stop it in the band. {rep}/{reps} · slips {miss}/{misses}</div>
+      <div style={{ position: "relative", width: 280, height: 34, background: "#20242e", borderRadius: 8, overflow: "hidden", border: "1px solid #3a4150" }}>
+        <div style={{ position: "absolute", left: `${50 - band / 2}%`, width: `${band}%`, top: 0, bottom: 0, background: "#3f6b33" }} />
+        <div style={{ position: "absolute", left: `${pos}%`, top: 0, bottom: 0, width: 3, background: "#e8c84a", transform: "translateX(-1.5px)" }} />
+      </div>
+      <button style={{ ...S.binBtn, width: "100%" }} onClick={stop}>🪡 Set the stitch</button>
+    </div>
+  );
+};
+
 const SliderGame = ({ reps, sliders, onDone }) => {
   const [rep, setRep] = useState(0);            // total completed slides
   const [v, setV] = useState(0);
@@ -10298,27 +10449,40 @@ export default function Alderbrook() {
           const spawned = spawnBeastAt(sim, p.scene, fx, fy, Math.random() < 0.12 ? "stag" : "hare");
           if (spawned) { sfx.alert(); showToast(spawned.sp === "stag" ? "🦌 A STAG crashes out of the thicket — and it's seen you." : "🐇 A hare bursts out of the leaves and bolts!"); }
           else give("herb", 1, "🌿 Something rustled off before you could see it — a herb, at least.");
-        } else if (Math.random() >= anything) {
-          showToast(`🍃 Nothing but leaves this time.${tierNote}`);
-        } else if (Math.random() < interest) {           // the notable finds
-          const r2 = Math.random();
-          if (r2 < 0.42) { const c = 1 + Math.floor(Math.random() * (tier === "rich" ? 4 : 3)); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
-          else if (r2 < 0.60) { give("ring", 1, "💍 A tarnished ring — someone lost this…"); sfx.coin(); }
-          else if (r2 < 0.70) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
-          // Stage 22: the hedgerows feed you too — wild roots and windfall fruit, now and then
-          else if (r2 < 0.80) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("veg", q, `🥕 Wild roots${q > 1 ? " — a good double handful" : ""}.`); }
-          else if (r2 < 0.90) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("fruit", q, `🍎 Windfall fruit${q > 1 ? ", and plenty of it" : ""}.`); }
-          else if (r2 < 0.95) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
-          else { give("goodie_crate", 1, "📦 A weathered crate, half-buried. Somebody's cache…"); sfx.coin(); }
-        } else {                                          // the staples — weighted by what's actually growing here
-          const table = F9?.gives || { fiber: 3, stick: 3, rock: 2, herb: 2 };
-          const total = Object.values(table).reduce((s, v) => s + v, 0);
-          let r3 = Math.random() * total, pick = "fiber";
-          for (const [id, w] of Object.entries(table)) { r3 -= w; if (r3 <= 0) { pick = id; break; } }
-          const bonus = tier === "rich" ? (Math.random() < 0.45 ? 1 : 0) : tier === "fair" ? (Math.random() < 0.2 ? 1 : 0) : 0;
-          const q = 1 + bonus;
-          const IT = ITEMS[pick];
-          give(pick, q, `${IT?.emoji || "🌿"} ${q > 1 ? `${q}× ` : ""}${IT?.name || pick}${F9 ? ` from the ${F9.name.toLowerCase()}` : ""}.${tierNote}`);
+        } else {
+          /* Stage 23: a practised hand comes back with more than one thing. Adept and
+             Professional sometimes gather two at a time; Expert can manage three; a Master
+             never comes back with less than two, and now and then brings four. */
+          let hands = 1;
+          if (lv >= 7)      hands = 2 + (Math.random() < 0.35 ? 1 : 0) + (Math.random() < 0.15 ? 1 : 0);
+          else if (lv === 6) hands = 1 + (Math.random() < 0.55 ? 1 : 0) + (Math.random() < 0.20 ? 1 : 0);
+          else if (lv >= 4)  hands = 1 + (Math.random() < (lv === 5 ? 0.35 : 0.25) ? 1 : 0) + (Math.random() < 0.05 ? 1 : 0);
+          let got = 0;
+          for (let hand = 0; hand < hands; hand++) {
+            if (Math.random() >= anything) continue;       // not every handful finds something
+            got++;
+            if (Math.random() < interest) {                // the notable finds
+              const r2 = Math.random();
+              if (r2 < 0.42) { const c = 1 + Math.floor(Math.random() * (tier === "rich" ? 4 : 3)); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
+              else if (r2 < 0.60) { give("ring", 1, "💍 A tarnished ring — someone lost this…"); sfx.coin(); }
+              else if (r2 < 0.70) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
+              else if (r2 < 0.80) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("veg", q, `🥕 Wild roots${q > 1 ? " — a good double handful" : ""}.`); }
+              else if (r2 < 0.90) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("fruit", q, `🍎 Windfall fruit${q > 1 ? ", and plenty of it" : ""}.`); }
+              else if (r2 < 0.95) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
+              else { give("goodie_crate", 1, "📦 A weathered crate, half-buried. Somebody's cache…"); sfx.coin(); }
+            } else {                                       // the staples — weighted by what's growing here
+              const table = F9?.gives || { fiber: 3, stick: 3, rock: 2, herb: 2 };
+              const total = Object.values(table).reduce((s, v) => s + v, 0);
+              let r3 = Math.random() * total, pick = "fiber";
+              for (const [id, w] of Object.entries(table)) { r3 -= w; if (r3 <= 0) { pick = id; break; } }
+              const bonus = tier === "rich" ? (Math.random() < 0.45 ? 1 : 0) : tier === "fair" ? (Math.random() < 0.2 ? 1 : 0) : 0;
+              const q = 1 + bonus;
+              const IT = ITEMS[pick];
+              give(pick, q, `${IT?.emoji || "🌿"} ${q > 1 ? `${q}× ` : ""}${IT?.name || pick}${F9 ? ` from the ${F9.name.toLowerCase()}` : ""}.${tierNote}`);
+            }
+          }
+          if (!got) showToast(`🍃 Nothing but leaves this time.${tierNote}`);
+          else if (got > 1) showToast(`🧺 ${got} finds in one sweep — that's the eye you've built.`);
         }
         if (skillLevel(p, "foraging") > before) showToast(`📈 ${SKILL_TRACKS.foraging} — now ${skillTierName(p, "foraging")}!`);
         bump(); break;
@@ -13257,35 +13421,67 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const have = (id) => p2.inv[id] || 0;
         const canMake = (mats) => Object.entries(mats).every(([m, q]) => have(m) >= q);
         const matLine = (mats) => Object.entries(mats).map(([m, q]) => `${ITEMS[m]?.emoji || ""}${q}${have(m) >= q ? "" : `/${have(m)}`}`).join(" ");
-        const lvl = skillLevel(p2, "service");
+        const lvl = skillLevel(p2, "tailoring");
         const makeMat = (id) => {
           const R = TAILOR_MATS[id];
           if (!canMake(R.mats)) { showToast("Not enough to work with."); return; }
           for (const [m, q] of Object.entries(R.mats)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
           p2.inv[id] = (p2.inv[id] || 0) + R.out;
           sim2.time += 20; p2.energy = clamp(p2.energy - 4, 0, 100);
-          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 0);
+          p2.skills.tailoring = (p2.skills.tailoring || 0) + taskXp("tailoring", 0);
           sfx.pop(); showToast(`${R.emoji} ${R.name} ×${R.out} — spun at the bench.`); bump();
         };
-        const makeGarment = (id) => {
+        /* Stage 23: sewing is a craft you PERFORM. The materials go in the moment you start, and
+           the minigame decides whether they come out as a garment or as scrap. */
+        const sewTierFor = (id) => {
           const G = GARMENTS[id];
-          if (G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
-          if (!canMake(G.mats)) { showToast("Not enough materials."); return; }
-          for (const [m, q] of Object.entries(G.mats)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
-          p2.inv[id] = (p2.inv[id] || 0) + 1;
-          sim2.time += 45; p2.energy = clamp(p2.energy - 8, 0, 100);
-          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 1);
-          sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`); bump();
+          if (G.guard) return G.slot === "torso" ? "expert" : "hard";
+          return G.tier === "hard" ? "hard" : G.tier === "medium" ? "simple" : "easy";
         };
-        const patch = (id) => {
+        const beginSew = (id, kind) => {
           const G = GARMENTS[id];
-          const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
-          if (!canMake(cost)) { showToast(`Patching needs ${matLine(cost)}.`); return; }
+          if (kind === "make" && G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
+          const cost = kind === "patch"
+            ? Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]))
+            : G.mats;
+          if (!canMake(cost)) { showToast(kind === "patch" ? `Patching needs ${matLine(cost)}.` : "Not enough materials."); return; }
           for (const [m, q] of Object.entries(cost)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
-          delete p2.wornTorn[id]; p2.wornWear[id] = (GARMENTS[id].dur || 100) * 0.35;   // a patch doesn't make it new
-          sim2.time += 25; p2.energy = clamp(p2.energy - 5, 0, 100);
-          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 0);
-          sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`); bump();
+          sim2.time += kind === "patch" ? 25 : 45;
+          p2.energy = clamp(p2.energy - (kind === "patch" ? 5 : 8), 0, 100);
+          // patching is a gentler job than cutting new — one tier easier, never expert
+          const tierKey = kind === "patch"
+            ? ({ expert: "hard", hard: "simple", simple: "easy", easy: "easy" })[sewTierFor(id)]
+            : sewTierFor(id);
+          const T9 = CFG.SEWING.tiers[tierKey];
+          setTailorPanel({ tab, sewing: { id, kind, tierKey, cfg: T9, spent: cost, misses: sewingMisses(T9.misses, lvl) } });
+        };
+        const sewDone = () => {
+          const S9 = tailorPanel.sewing; if (!S9) return;
+          const G = GARMENTS[S9.id];
+          if (S9.kind === "patch") {
+            delete p2.wornTorn[S9.id]; p2.wornWear[S9.id] = (G.dur || 100) * 0.35;   // a patch doesn't make it new
+            sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`);
+          } else {
+            p2.inv[S9.id] = (p2.inv[S9.id] || 0) + 1;
+            sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`);
+          }
+          const before9 = skillLevel(p2, "tailoring");
+          p2.skills.tailoring = (p2.skills.tailoring || 0) + taskXp("tailoring", S9.tierKey === "expert" ? 3 : S9.tierKey === "hard" ? 2 : 1);
+          if (skillLevel(p2, "tailoring") > before9) showToast(`📈 Tailoring — now ${skillTierName(p2, "tailoring")}!`);
+          setTailorPanel({ tab }); bump();
+        };
+        const sewFail = () => {
+          const S9 = tailorPanel.sewing; if (!S9) return;
+          const G = GARMENTS[S9.id];
+          const back = [];
+          for (const [m, q] of Object.entries(S9.spent)) {          // scrap the ruin for what's salvageable
+            const r = Math.floor(q * CFG.SEWING.scrapBack);
+            if (r > 0) { p2.inv[m] = (p2.inv[m] || 0) + r; back.push(`${ITEMS[m]?.emoji || ""}${r}`); }
+          }
+          p2.skills.tailoring = (p2.skills.tailoring || 0) + taskXp("tailoring", 0);   // you learn from a botch too
+          sfx.alert();
+          showToast(`✂️ The ${G.name.toLowerCase()} is ruined. Scrapped for ${back.join(" ") || "nothing worth keeping"}.`);
+          setTailorPanel({ tab }); bump();
         };
         const wearIt = (id) => {
           const G = GARMENTS[id];
@@ -13310,6 +13506,24 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <span style={{ fontWeight: 700 }}>🧵 Tailor's Bench</span>
                 <button style={S.closeBtn} onClick={() => setTailorPanel(null)}>✕</button>
               </div>
+              {/* Stage 23: the work itself — a minigame per tier, materials already committed */}
+              {tailorPanel.sewing ? (() => {
+                const S9 = tailorPanel.sewing, G = GARMENTS[S9.id], C = S9.cfg;
+                return (
+                  <div style={S.chatBody}>
+                    <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
+                      {S9.kind === "patch" ? "Patching" : "Sewing"} <b>{G.emoji} {G.name}</b> — {C.label}
+                      <br /><span style={{ opacity: 0.7, fontSize: fs - 3 }}>
+                        Tailoring {skillTierName(p2, "tailoring")}{S9.misses < 99 ? ` · you may slip ${S9.misses} time${S9.misses === 1 ? "" : "s"}` : " · take your time"}.
+                        Botch it and the piece is scrapped for about half its materials.
+                      </span>
+                    </div>
+                    {C.game === "stitch" && <StitchGame key={S9.id + S9.kind} dots={C.dots} misses={S9.misses} onDone={sewDone} onFail={sewFail} />}
+                    {C.game === "cut" && <CutGame key={S9.id + S9.kind} size={C.size} misses={S9.misses} onDone={sewDone} onFail={sewFail} />}
+                    {C.game === "needle" && <NeedleGame key={S9.id + S9.kind} reps={C.reps} misses={S9.misses} onDone={sewDone} onFail={sewFail} />}
+                  </div>
+                );
+              })() : (
               <div style={S.chatBody}>
                 <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
                   Wearing: <b>{(p2.worn || []).length ? p2.worn.map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${p2.wornTorn?.[id] ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
@@ -13352,7 +13566,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                               </span>
                             </span>
                             <button style={{ ...S.smallBtn, opacity: canMake(G.mats) && !locked ? 1 : 0.4 }} disabled={!canMake(G.mats) || locked}
-                              onClick={() => makeGarment(id)}>{locked ? "Watch only" : "Sew"}</button>
+                              onClick={() => beginSew(id, "make")}>{locked ? "Watch only" : "Sew"}</button>
                           </div>
                         );
                       })}
@@ -13385,7 +13599,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
 
                 {tab === "mend" && <>
                   <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
-                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Service skill ({skillTierName(p2, "service")}) is the tailor's craft.
+                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Tailoring ({skillTierName(p2, "tailoring")}) decides how forgiving the work is.
                   </div>
                   {(p2.worn || []).filter(id => p2.wornTorn?.[id]).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing you're wearing is torn.</div>}
                   {(p2.worn || []).filter(id => p2.wornTorn?.[id]).map(id => {
@@ -13396,12 +13610,13 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         <span style={{ fontSize: 20 }}>{G.emoji}</span>
                         <span style={{ flex: 1, fontSize: fs - 1 }}><b>{G.name}</b> <span style={{ color: "#a05252" }}>· torn</span>
                           <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>patch with {matLine(cost)}</span></span>
-                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => patch(id)}>Patch</button>
+                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => beginSew(id, "patch")}>Patch</button>
                       </div>
                     );
                   })}
                 </>}
               </div>
+              )}
             </div>
           </div>
         );
