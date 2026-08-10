@@ -2935,6 +2935,426 @@ const PLEDGES = {
   },
 };
 
+/* ===== Stage 24 — AN ACTUAL PIECE FOR EVERY THING =====
+   Emoji were always placeholders. They render differently on every machine,
+   they carry some font designer's opinion of what a "meat cut" looks like, and
+   they sit badly beside a valley drawn in flat polygons. Every object in the
+   game now has real vertex art in the same language as the flora, the trees and
+   the people: a small kit of shared shapes — plate, bottle, mug, blade, haft —
+   that the individual pieces dress up, so a hundred-odd things read as one
+   family instead of a hundred-odd unrelated doodles.
+
+   Coordinates run about -0.45..0.45 around the icon's centre, exactly like the
+   flora, so one recipe draws at any size: 18px in an inventory row, a whole
+   tile lying on the ground. */
+const PAL = {
+  wood: "#8a6134", woodDk: "#63431f", bark: "#54402a",
+  steel: "#b9c0c8", steelDk: "#7c858e", iron: "#6f7378",
+  stone: "#9a9187", stoneDk: "#6f685f", rope: "#c2a86a", twine: "#b9a06a",
+  cloth: "#d8cdb4", linen: "#eae2cc", leaf: "#4f7f3e", leafDk: "#355c2b",
+  crust: "#c68b45", crumb: "#f0dcae", dough: "#e8d7b0",
+  meat: "#a8443f", meatDk: "#7d2f2c", fat: "#e6c3ae",
+  plate: "#efeadc", rim: "#cbc2ae", glass: "#cfe3ee", milk: "#f7f4ec",
+  cocoa: "#5a3c2a", tea: "#8fa863", berry: "#5b3a72", rose: "#c05a76",
+  gold: "#d8a93c", amber: "#c98a2e", fish: "#7fa9c4", fishDk: "#4d7791",
+  flame: "#e08a3c", green: "#6b8f5e", cream: "#f4e7c8", choc: "#4a2f22",
+  ink: "#3a352c", paper: "#efe7d2", pink: "#e2879b", purple: "#6f4a86",
+};
+
+/* the kit: every primitive draws in icon space, closing over the canvas */
+function iconKit(ctx, cx, cy, T) {
+  const pg = (pts, fill) => poly(ctx, cx, cy, T, pts, fill);
+  const rc = (x, y, w, h, f) => pg([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], f);
+  const el = (x, y, rx, ry, f, n = 14) => {
+    const pts = [];
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; pts.push([x + Math.cos(a) * rx, y + Math.sin(a) * ry]); }
+    pg(pts, f);
+  };
+  const ci = (x, y, r, f, n = 14) => el(x, y, r, r, f, n);
+  const ln = (x1, y1, x2, y2, w, f) => {              // a thick segment, as a quad
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / L) * (w / 2), ny = (dx / L) * (w / 2);
+    pg([[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]], f);
+  };
+  const tri = (a, b, c, f) => pg([a, b, c], f);
+  return { pg, rc, el, ci, ln, tri };
+}
+
+/* shared assemblies — the reason this stays a family */
+const SH = {
+  plate: (k, food = null) => {                         // a dish, seen slightly from above
+    k.el(0, 0.20, 0.40, 0.13, PAL.rim);
+    k.el(0, 0.17, 0.34, 0.10, PAL.plate);
+    if (food) food(k);
+  },
+  bowl: (k, fill) => {
+    k.pg([[-0.32, -0.02], [0.32, -0.02], [0.22, 0.26], [-0.22, 0.26]], PAL.rim);
+    k.el(0, -0.02, 0.32, 0.09, PAL.plate);
+    k.el(0, -0.01, 0.26, 0.07, fill);
+  },
+  bottle: (k, liquid, cap = PAL.steelDk) => {
+    k.rc(-0.09, -0.38, 0.18, 0.09, cap);
+    k.pg([[-0.06, -0.30], [0.06, -0.30], [0.06, -0.20], [0.16, -0.08], [0.16, 0.32], [-0.16, 0.32], [-0.16, -0.08], [-0.06, -0.20]], PAL.glass);
+    k.pg([[-0.13, 0.02], [0.13, 0.02], [0.13, 0.29], [-0.13, 0.29]], liquid);
+  },
+  mug: (k, brew, body = PAL.linen) => {
+    k.pg([[-0.24, -0.20], [0.20, -0.20], [0.16, 0.28], [-0.20, 0.28]], body);
+    k.el(-0.02, -0.20, 0.22, 0.07, brew);
+    k.pg([[0.20, -0.12], [0.34, -0.08], [0.34, 0.10], [0.20, 0.14], [0.20, 0.06], [0.27, 0.03], [0.27, -0.03], [0.20, -0.05]], body);
+  },
+  glassCup: (k, drink, straw = null) => {
+    k.pg([[-0.20, -0.26], [0.20, -0.26], [0.15, 0.30], [-0.15, 0.30]], PAL.glass);
+    k.pg([[-0.17, -0.16], [0.17, -0.16], [0.13, 0.27], [-0.13, 0.27]], drink);
+    if (straw) k.ln(0.06, -0.36, -0.02, -0.12, 0.06, straw);
+  },
+  fishBody: (k, body, dk) => {
+    k.pg([[-0.34, 0.00], [-0.10, -0.20], [0.16, -0.14], [0.30, 0.00], [0.16, 0.14], [-0.10, 0.20]], body);
+    k.tri([0.30, 0.00], [0.44, -0.14], [0.44, 0.14], dk);       // tail
+    k.tri([-0.04, -0.19], [0.08, -0.32], [0.12, -0.16], dk);    // dorsal
+    k.ci(-0.20, -0.02, 0.045, "#20262b");
+  },
+  haft: (k, c = PAL.wood) => k.ln(-0.26, 0.36, 0.10, -0.16, 0.10, c),
+  loaf: (k, top = PAL.crust, cut = PAL.crumb) => {
+    k.pg([[-0.36, 0.20], [-0.34, -0.02], [-0.22, -0.16], [0.00, -0.20], [0.22, -0.16], [0.34, -0.02], [0.36, 0.20]], top);
+    k.pg([[-0.36, 0.12], [0.36, 0.12], [0.34, 0.20], [-0.34, 0.20]], "#a8703a");
+    for (const x of [-0.16, 0.00, 0.16]) k.ln(x - 0.05, -0.10, x + 0.05, 0.02, 0.045, cut);
+  },
+  gem: (k, c, dk) => { k.tri([0, -0.26], [-0.22, 0.02], [0.22, 0.02], c); k.tri([-0.22, 0.02], [0.22, 0.02], [0, 0.28], dk); },
+  sack: (k, c, tie = PAL.twine) => {
+    k.pg([[-0.26, 0.32], [-0.30, -0.06], [-0.12, -0.22], [0.12, -0.22], [0.30, -0.06], [0.26, 0.32]], c);
+    k.rc(-0.14, -0.26, 0.28, 0.07, tie);
+  },
+  pouchLeaf: (k, c = PAL.leaf) => {
+    k.pg([[0.00, -0.30], [0.22, -0.06], [0.00, 0.28], [-0.22, -0.06]], c);
+    k.ln(0.00, -0.26, 0.00, 0.24, 0.035, PAL.leafDk);
+  },
+};
+
+/* one recipe per object. Anything without an entry falls back to a labelled
+   crate, which is deliberately ugly so a missing piece is obvious, not silent. */
+const ICON_ART = {
+  /* ---------- bread, baking, sweets ---------- */
+  bread:        k => SH.loaf(k),
+  fresh_bread:  k => { k.pg([[-0.38, 0.14], [-0.30, -0.10], [0.30, -0.16], [0.38, 0.08], [0.30, 0.22], [-0.30, 0.26]], "#d59a4e");
+                       for (const x of [-0.18, -0.02, 0.14]) k.ln(x, -0.10, x + 0.06, 0.16, 0.045, PAL.crumb); },
+  croissant:    k => { k.pg([[-0.36, 0.22], [-0.30, -0.06], [-0.10, -0.20], [0.10, -0.20], [0.30, -0.06], [0.36, 0.22], [0.20, 0.14], [0.00, 0.06], [-0.20, 0.14]], "#dda85a");
+                       for (const x of [-0.16, 0.00, 0.16]) k.ln(x, -0.14, x, 0.10, 0.05, "#c08e42");
+                       k.ci(-0.28, 0.14, 0.07, "#e8c07a"); k.ci(0.28, 0.14, 0.07, "#e8c07a"); },
+  cookies:      k => { k.ci(0, 0.04, 0.30, "#c9944e"); for (const [x, y] of [[-0.10, -0.06], [0.10, 0.00], [-0.02, 0.14], [0.14, -0.12]]) k.ci(x, y, 0.045, PAL.choc); },
+  cake:         k => { k.rc(-0.30, -0.02, 0.60, 0.14, PAL.cream); k.rc(-0.26, 0.12, 0.52, 0.14, "#e6b07a");
+                       k.pg([[-0.30, -0.02], [0.30, -0.02], [0.24, -0.12], [-0.24, -0.12]], PAL.rose); k.ci(0, -0.18, 0.06, "#c0344f"); },
+  pie:          k => { k.el(0, 0.10, 0.36, 0.16, "#cf9550"); k.el(0, 0.04, 0.30, 0.13, PAL.berry);
+                       k.ln(-0.22, 0.00, 0.22, 0.10, 0.05, "#cf9550"); k.ln(-0.20, 0.12, 0.24, -0.02, 0.05, "#cf9550"); },
+  herb_tart:    k => { k.el(0, 0.10, 0.36, 0.16, "#c99a58"); k.el(0, 0.05, 0.29, 0.12, "#6d8c46");
+                       for (const [x, y] of [[-0.12, 0.02], [0.10, 0.08], [0.00, 0.12]]) k.ci(x, y, 0.045, PAL.leaf); },
+  game_pie:     k => { k.el(0, 0.10, 0.36, 0.16, "#b5813f"); k.el(0, 0.04, 0.29, 0.12, PAL.meatDk);
+                       k.tri([-0.10, -0.02], [0.00, -0.14], [0.10, -0.02], "#d8ab62"); },
+  candy_apple:  k => { k.ln(0, -0.14, 0, 0.36, 0.05, PAL.wood); k.ci(0, -0.10, 0.24, "#c03a4a"); k.ci(-0.08, -0.18, 0.06, "#e88a92"); },
+  chocolate:    k => { k.rc(-0.28, -0.20, 0.56, 0.42, PAL.choc);
+                       for (const x of [-0.28, -0.10, 0.08]) k.rc(x + 0.02, -0.18, 0.14, 0.18, "#63402c"); },
+  sugar:        k => { SH.sack(k, PAL.linen); k.rc(-0.10, -0.02, 0.20, 0.14, "#fff"); },
+  flour:        k => { SH.sack(k, "#e6dcc2"); k.pg([[-0.10, 0.04], [0.00, -0.08], [0.10, 0.04], [0.00, 0.14]], "#c8b98f"); },
+  dough:        k => { SH.bowl(k, PAL.dough); k.ci(0.02, -0.02, 0.13, "#f0e2bd"); },
+
+  /* ---------- meals in a bowl or on a plate ---------- */
+  meal:         k => SH.bowl(k, "#c07a3a"),
+  stew:         k => { SH.bowl(k, "#a4652f"); k.ci(-0.08, -0.02, 0.05, PAL.meat); k.ci(0.08, 0.01, 0.045, "#d59a3e"); },
+  mystery_stew: k => { SH.bowl(k, "#5f6b47"); k.ci(0.04, -0.02, 0.05, "#8ea84e"); k.ci(-0.09, 0.00, 0.035, "#7b5a86"); },
+  wild_stew:    k => { SH.bowl(k, "#8b7a3c"); k.ci(-0.07, -0.02, 0.045, PAL.leaf); k.ci(0.08, 0.00, 0.04, "#b8863c"); },
+  hearty_stew:  k => { SH.bowl(k, "#9c5730"); k.ci(-0.08, -0.02, 0.05, PAL.meatDk); k.ci(0.07, 0.01, 0.045, "#cf9a45"); },
+  fish_stew:    k => { SH.bowl(k, "#7d94a2"); k.tri([0.00, -0.06], [0.14, 0.00], [0.00, 0.06], PAL.fish); },
+  veg_soup:     k => { SH.bowl(k, "#c2762f"); k.ci(-0.07, -0.02, 0.04, PAL.leaf); k.ci(0.07, 0.00, 0.04, "#e08a3c"); },
+  noodles:      k => { SH.bowl(k, "#e0cf9a"); for (const x of [-0.12, 0.00, 0.12]) k.ln(x, -0.06, x + 0.04, 0.06, 0.035, "#f2e3b4");
+                       k.ci(0.10, -0.03, 0.04, PAL.leaf); },
+  salad:        k => { SH.bowl(k, "#5f8a3f"); k.ci(-0.08, -0.02, 0.05, "#7fae4e"); k.ci(0.08, 0.00, 0.045, "#c0463c"); },
+  bland_salad:  k => { SH.bowl(k, "#8aa06a"); k.ci(0.02, -0.02, 0.05, "#a8bb84"); },
+  sushi:        k => { k.rc(-0.34, -0.04, 0.28, 0.26, PAL.linen);                       // nigiri: rice bed
+                       k.pg([[-0.36, -0.10], [-0.04, -0.16], [-0.04, -0.02], [-0.36, 0.02]], "#e07a6a");   // the fish over it
+                       k.rc(-0.24, -0.06, 0.07, 0.28, "#2f3a33");                        // its nori band
+                       k.rc(0.06, -0.06, 0.28, 0.28, "#2f3a33");                          // maki roll
+                       k.el(0.20, 0.08, 0.11, 0.11, PAL.linen); k.ci(0.20, 0.08, 0.05, "#c0463c"); },
+  taco:         k => { k.pg([[-0.34, 0.20], [-0.20, -0.16], [0.20, -0.16], [0.34, 0.20]], "#e0b155");
+                       k.pg([[-0.22, 0.02], [0.22, 0.02], [0.16, -0.10], [-0.16, -0.10]], PAL.meatDk);
+                       k.ln(-0.20, -0.02, 0.20, -0.04, 0.05, PAL.leaf); },
+  pizza:        k => { k.tri([0, -0.34], [-0.30, 0.28], [0.30, 0.28], "#e2b45e");
+                       k.tri([0, -0.24], [-0.24, 0.24], [0.24, 0.24], "#d9603c");
+                       for (const [x, y] of [[-0.10, 0.10], [0.10, 0.06], [0.00, -0.06]]) k.ci(x, y, 0.05, "#9c2f2f"); },
+  combo:        k => { k.pg([[-0.32, -0.10], [0.32, -0.10], [0.24, -0.26], [-0.24, -0.26]], "#daa55e");
+                       k.rc(-0.32, -0.08, 0.64, 0.08, PAL.leaf); k.rc(-0.32, 0.00, 0.64, 0.10, PAL.meatDk);
+                       k.pg([[-0.32, 0.10], [0.32, 0.10], [0.26, 0.28], [-0.26, 0.28]], "#daa55e"); },
+  gourmet_platter: k => { SH.plate(k); k.pg([[-0.22, 0.10], [-0.06, -0.06], [0.10, 0.10]], PAL.meatDk);
+                       k.ci(0.14, 0.06, 0.06, PAL.leaf); k.ci(-0.02, 0.12, 0.05, PAL.gold); },
+  burnt:        k => { SH.plate(k); k.pg([[-0.20, 0.12], [-0.10, -0.06], [0.06, 0.02], [0.18, 0.12]], "#2f2a26");
+                       k.ln(-0.06, -0.16, -0.02, -0.30, 0.05, "#6b6660"); },
+  sludge:       k => { SH.bowl(k, "#5e6b4a"); k.ci(0.04, -0.03, 0.05, "#7c8b58"); k.ci(-0.08, 0.00, 0.035, "#48553a"); },
+
+  /* ---------- meat and fish ---------- */
+  meat:         k => { k.pg([[-0.30, 0.06], [-0.18, -0.20], [0.14, -0.24], [0.32, -0.02], [0.20, 0.22], [-0.16, 0.24]], PAL.meat);
+                       k.pg([[-0.06, -0.10], [0.10, -0.14], [0.16, 0.02], [0.00, 0.08]], PAL.fat); },
+  roast_meat:   k => { k.pg([[-0.14, -0.24], [0.16, -0.18], [0.30, 0.06], [0.10, 0.26], [-0.16, 0.18]], "#9c5334");
+                       k.ln(-0.14, -0.22, -0.34, 0.24, 0.09, "#e8ddc6"); },
+  meat_skewer:  k => { k.ln(-0.34, 0.30, 0.34, -0.30, 0.045, PAL.woodDk);
+                       for (const [x, y] of [[-0.16, 0.12], [0.02, -0.02], [0.18, -0.16]]) k.pg([[x - 0.10, y], [x, y - 0.10], [x + 0.10, y], [x, y + 0.10]], PAL.meatDk); },
+  herb_roast:   k => { k.pg([[-0.16, -0.22], [0.18, -0.16], [0.30, 0.08], [0.08, 0.26], [-0.18, 0.16]], "#8e4a30");
+                       for (const [x, y] of [[-0.04, -0.10], [0.10, 0.02], [-0.06, 0.10]]) k.ci(x, y, 0.04, PAL.leaf); },
+  anymeat:      k => { k.pg([[-0.28, 0.04], [-0.16, -0.20], [0.14, -0.22], [0.30, 0.00], [0.18, 0.22], [-0.14, 0.22]], PAL.meat);
+                       k.ln(-0.06, -0.14, -0.06, 0.10, 0.05, PAL.fat); k.ci(0.10, 0.06, 0.05, PAL.fat);
+                       k.ln(0.20, -0.26, 0.20, -0.12, 0.05, PAL.gold); k.ci(0.20, -0.04, 0.035, PAL.gold); },   // the wildcard's question mark
+  fish:         k => SH.fishBody(k, PAL.fish, PAL.fishDk),
+  tropical_fish:k => { SH.fishBody(k, "#e8a33c", "#c05a2e"); k.ln(-0.16, -0.14, -0.10, 0.16, 0.05, "#f4d47a"); },
+  river_titan:  k => { SH.fishBody(k, "#63798c", "#3f5568"); k.ci(0.04, -0.22, 0.05, "#a8c4d8"); k.ci(0.12, -0.28, 0.035, "#a8c4d8"); },
+  grilled_fish: k => { SH.plate(k); k.pg([[-0.26, 0.08], [-0.06, -0.06], [0.18, 0.02], [0.26, 0.10], [0.02, 0.16], [-0.20, 0.16]], "#c08a54");
+                       k.ln(-0.14, 0.04, 0.12, 0.08, 0.03, "#8a5c34"); },
+  fish_sticks:  k => { SH.plate(k); for (const x of [-0.18, -0.02, 0.14]) k.rc(x, -0.06, 0.11, 0.22, "#d9a455"); },
+
+  /* ---------- fruit, veg, forage ---------- */
+  fruit:        k => { k.ci(0, 0.06, 0.26, "#c2402f"); k.ci(-0.09, -0.02, 0.07, "#e0806e");
+                       k.ln(0, -0.16, 0.02, -0.32, 0.04, PAL.bark); k.tri([0.02, -0.28], [0.20, -0.34], [0.08, -0.20], PAL.leaf); },
+  snack:        k => { k.ci(-0.10, 0.08, 0.15, "#b8324c"); k.ci(0.12, 0.04, 0.15, "#c94258");
+                       k.ln(-0.08, -0.06, 0.00, -0.30, 0.035, PAL.leaf); k.ln(0.12, -0.10, 0.02, -0.30, 0.035, PAL.leaf); },
+  berry:        k => { for (const [x, y, r] of [[-0.14, 0.08, 0.13], [0.10, 0.12, 0.12], [0.00, -0.06, 0.13]]) k.ci(x, y, r, PAL.berry);
+                       k.ci(-0.16, 0.03, 0.04, "#8a6aa2"); },
+  veg:          k => { k.pg([[0.02, 0.34], [-0.14, -0.08], [0.14, -0.08]], "#e07a2c");
+                       k.tri([-0.10, -0.10], [0.00, -0.34], [0.10, -0.10], PAL.leaf); },
+  herb:         k => { k.ln(0, 0.32, 0, -0.16, 0.045, "#4a6b34");
+                       for (const s of [-1, 1]) { k.tri([0, -0.02], [s * 0.24, -0.14], [0, -0.20], PAL.leaf); k.tri([0, 0.14], [s * 0.20, 0.04], [0, -0.02], PAL.leaf); } },
+  flower:       k => { k.ln(0, 0.34, 0, -0.04, 0.04, "#4a6b34");
+                       for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; k.ci(Math.cos(a) * 0.16, -0.10 + Math.sin(a) * 0.16, 0.09, "#f0e08a"); }
+                       k.ci(0, -0.10, 0.08, PAL.amber); },
+  flowers:      k => { for (const [x, c] of [[-0.16, "#d86a8a"], [0.00, "#f0e08a"], [0.16, "#8a7ac0"]]) {
+                         k.ln(x, 0.34, x * 0.5, -0.06, 0.04, "#4a6b34");
+                         k.ci(x * 0.5, -0.12, 0.11, c); k.ci(x * 0.5, -0.12, 0.045, PAL.amber); } },
+  fiber:        k => { for (const [tp, bt] of [[-0.26, -0.06], [-0.12, -0.03], [0.02, 0.00], [0.16, 0.03], [0.28, 0.06]])
+                         k.ln(bt, 0.34, tp, -0.32, 0.055, "#b8aa5c");
+                       k.rc(-0.20, 0.02, 0.40, 0.10, "#8a7434"); },
+  cotton:       k => { k.ln(0.00, 0.36, 0.00, 0.02, 0.05, "#6b7546");
+                       for (const [x, y] of [[-0.16, 0.06], [0.15, 0.02], [-0.01, -0.16]]) {
+                         k.pg([[x - 0.16, y], [x, y - 0.18], [x + 0.16, y], [x, y + 0.16]], "#7f8a52");   // the boll case
+                         k.pg([[x - 0.11, y], [x, y - 0.13], [x + 0.11, y], [x, y + 0.11]], "#fbfaf4"); } },
+
+  /* ---------- drinks ---------- */
+  milk:         k => SH.glassCup(k, PAL.milk),
+  choco_milk:   k => SH.glassCup(k, "#8a5f42", "#f0e0c0"),
+  water:        k => SH.bottle(k, "#a8d4e8"),
+  nutrient:     k => SH.bottle(k, "#8ac06a", "#c05a76"),
+  lemonade:     k => SH.glassCup(k, "#f0dc72", "#d86a8a"),
+  milkshake:    k => { SH.glassCup(k, "#f2d8c4", "#d86a8a"); k.ci(0.00, -0.24, 0.10, PAL.cream); },
+  trop_shake:   k => { SH.glassCup(k, "#f0a45c", "#5f8a3f"); k.tri([0.18, -0.26], [0.34, -0.34], [0.26, -0.18], PAL.leaf); },
+  coffee:       k => SH.mug(k, PAL.cocoa),
+  mocha:        k => { SH.mug(k, "#4a3226"); k.el(-0.02, -0.21, 0.13, 0.04, PAL.cream); },
+  hot_choc:     k => { SH.mug(k, "#5f3c28", "#e8dcc8"); k.ci(-0.06, -0.22, 0.05, PAL.cream); k.ci(0.06, -0.20, 0.045, PAL.cream); },
+  tea:          k => { SH.mug(k, PAL.tea, "#efe7d2"); k.ln(0.10, -0.24, 0.16, -0.34, 0.03, PAL.twine); },
+  cider:        k => { k.pg([[-0.22, -0.18], [0.22, -0.18], [0.18, 0.32], [-0.18, 0.32]], "#cf9a3c");
+                       k.el(0, -0.18, 0.22, 0.07, "#f2e3c0");
+                       k.pg([[0.22, -0.10], [0.34, -0.06], [0.34, 0.12], [0.22, 0.16]], "#d8d2c2"); },
+
+  /* ---------- tools ---------- */
+  hammer:       k => { SH.haft(k); k.pg([[0.00, -0.30], [0.26, -0.22], [0.22, -0.06], [-0.04, -0.14]], PAL.steel);
+                       k.pg([[0.00, -0.30], [0.06, -0.32], [0.02, -0.10], [-0.04, -0.14]], PAL.steelDk); },
+  saw:          k => { k.pg([[-0.34, 0.18], [-0.20, 0.06], [0.30, -0.18], [0.34, -0.08], [-0.16, 0.18]], PAL.steel);
+                       for (let i = 0; i < 7; i++) k.tri([-0.14 + i * 0.07, 0.18], [-0.10 + i * 0.07, 0.26], [-0.06 + i * 0.07, 0.18], PAL.steelDk);
+                       k.rc(-0.40, 0.06, 0.14, 0.16, PAL.wood); },
+  screwdriver:  k => { k.ln(0.06, -0.06, 0.30, -0.32, 0.06, PAL.steel); k.ln(-0.24, 0.30, 0.06, -0.02, 0.13, "#b8483c");
+                       k.pg([[0.28, -0.30], [0.36, -0.36], [0.32, -0.24]], PAL.steelDk); },
+  hatchet:      k => { SH.haft(k); k.pg([[0.02, -0.28], [0.28, -0.34], [0.34, -0.12], [0.08, -0.08]], PAL.steel);
+                       k.pg([[0.28, -0.34], [0.34, -0.12], [0.24, -0.14], [0.22, -0.30]], PAL.steelDk); },
+  broom:        k => { k.ln(-0.16, -0.36, 0.06, 0.06, 0.06, PAL.wood);
+                       k.pg([[-0.06, 0.02], [0.20, 0.10], [0.28, 0.34], [-0.02, 0.30]], PAL.twine);
+                       for (const t of [0.02, 0.10, 0.18]) k.ln(t - 0.02, 0.12, t + 0.02, 0.32, 0.025, "#9c8450"); },
+  bedroll:      k => { k.rc(-0.30, -0.20, 0.60, 0.40, "#5f7a8c");
+                       k.el(-0.30, 0.00, 0.11, 0.20, "#7f9aac"); k.el(-0.30, 0.00, 0.055, 0.10, "#455c6b");
+                       k.el(0.30, 0.00, 0.11, 0.20, "#4f6a7c");
+                       k.rc(-0.02, -0.21, 0.10, 0.42, "#c2a86a"); },
+  sharprock:    k => { k.pg([[-0.24, 0.22], [-0.10, -0.26], [0.18, -0.10], [0.26, 0.22]], PAL.stone);
+                       k.pg([[-0.10, -0.26], [0.18, -0.10], [-0.02, 0.00]], "#c2bbb0"); },
+  stoneawl:     k => { k.ln(-0.20, 0.32, 0.14, -0.20, 0.07, PAL.wood); k.tri([0.10, -0.16], [0.20, -0.36], [0.22, -0.12], PAL.stone); },
+  stonemaul:    k => { SH.haft(k); k.pg([[-0.06, -0.30], [0.24, -0.26], [0.26, -0.04], [-0.04, -0.08]], PAL.stone);
+                       k.rc(-0.02, -0.26, 0.06, 0.18, PAL.stoneDk); },
+  stoneaxe:     k => { SH.haft(k); k.pg([[0.00, -0.26], [0.22, -0.34], [0.30, -0.14], [0.08, -0.06]], PAL.stone);
+                       k.ln(0.02, -0.28, 0.06, -0.06, 0.03, PAL.twine); },
+
+  /* ---------- weapons ---------- */
+  club:         k => { k.ln(-0.26, 0.32, 0.16, -0.24, 0.09, PAL.wood); k.ci(0.20, -0.28, 0.13, PAL.woodDk); },
+  bat:          k => { k.ln(-0.24, 0.32, 0.10, -0.14, 0.08, PAL.wood); k.pg([[0.04, -0.10], [0.24, -0.34], [0.34, -0.22], [0.14, 0.00]], "#a8763f"); },
+  baton:        k => { k.ln(-0.22, 0.30, 0.20, -0.26, 0.08, "#2f3540"); k.rc(-0.26, 0.16, 0.14, 0.16, "#4a5566"); },
+  knife:        k => { k.pg([[-0.06, 0.06], [0.06, -0.02], [0.32, -0.32], [0.34, -0.22], [0.06, 0.12]], PAL.steel);
+                       k.ln(-0.24, 0.28, -0.04, 0.08, 0.10, PAL.woodDk); },
+  slingshot:    k => { k.ln(0, 0.34, 0, -0.02, 0.07, PAL.wood);
+                       k.ln(0, -0.02, -0.20, -0.30, 0.06, PAL.wood); k.ln(0, -0.02, 0.20, -0.30, 0.06, PAL.wood);
+                       k.ln(-0.20, -0.28, 0.20, -0.28, 0.03, "#8a5a4a"); },
+  sling:        k => { k.ln(-0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine); k.ln(0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine);
+                       k.pg([[-0.12, 0.10], [0.12, 0.10], [0.08, 0.28], [-0.08, 0.28]], "#8a6a4a"); k.ci(0, 0.19, 0.05, PAL.stone); },
+  bow:          k => { k.pg([[0.06, -0.34], [0.20, -0.10], [0.20, 0.10], [0.06, 0.34], [0.12, 0.30], [0.26, 0.06], [0.26, -0.06], [0.12, -0.30]], PAL.wood);
+                       k.ln(0.06, -0.34, 0.06, 0.34, 0.025, PAL.twine); k.ln(-0.24, 0.00, 0.12, 0.00, 0.03, "#a89060"); },
+  crudebow:     k => { k.pg([[0.02, -0.32], [0.18, -0.06], [0.16, 0.12], [0.04, 0.32], [0.10, 0.28], [0.24, 0.08], [0.24, -0.06], [0.10, -0.28]], "#7f6136");
+                       k.ln(0.02, -0.32, 0.04, 0.32, 0.022, PAL.twine); },
+  crossbow:     k => { k.pg([[-0.34, 0.10], [0.26, -0.06], [0.30, 0.04], [-0.26, 0.24]], PAL.wood);      // stock, angled
+                       k.pg([[0.06, -0.30], [0.14, -0.28], [0.20, 0.00], [0.14, 0.28], [0.06, 0.26], [0.12, 0.00]], PAL.woodDk);
+                       k.ln(0.10, -0.29, 0.10, 0.27, 0.022, PAL.twine);
+                       k.ln(0.10, -0.02, -0.20, 0.10, 0.03, "#a89060");                                   // the loaded bolt
+                       k.pg([[-0.34, 0.10], [-0.22, 0.06], [-0.20, 0.30], [-0.32, 0.32]], PAL.woodDk); },
+  stonespear:   k => { k.ln(-0.26, 0.34, 0.12, -0.14, 0.055, PAL.wood);
+                       k.tri([0.08, -0.10], [0.20, -0.36], [0.26, -0.10], PAL.stone); k.ln(0.06, -0.08, 0.20, -0.10, 0.03, PAL.twine); },
+  arrow:        k => { k.ln(-0.28, 0.30, 0.20, -0.24, 0.035, PAL.wood); k.tri([0.16, -0.20], [0.30, -0.34], [0.28, -0.16], PAL.steel);
+                       k.tri([-0.28, 0.30], [-0.18, 0.30], [-0.24, 0.16], PAL.linen); },
+  bolt:         k => { k.ln(-0.20, 0.24, 0.14, -0.18, 0.055, PAL.iron); k.tri([0.10, -0.14], [0.24, -0.30], [0.22, -0.10], PAL.steel); },
+
+  /* ---------- materials, parts, oddments ---------- */
+  wood:         k => { k.rc(-0.34, -0.10, 0.68, 0.22, PAL.wood); k.el(-0.34, 0.01, 0.09, 0.11, "#a8763f");
+                       k.el(-0.34, 0.01, 0.045, 0.055, PAL.woodDk); },
+  stick:        k => { for (const [a, b, c2] of [[-0.30, -0.20, 0.34], [-0.10, 0.30, 0.24], [0.10, -0.06, 0.30]])
+                         k.ln(a, c2, b, -0.30, 0.045, "#8a6a3f"); },
+  rope:         k => { for (const [y, c] of [[0.18, "#a8905a"], [0.06, PAL.rope], [-0.06, "#a8905a"], [-0.18, PAL.rope]]) {
+                         k.el(0, y, 0.30, 0.09, c);
+                         k.el(0, y, 0.13, 0.045, "#7f6a42"); }
+                       k.ln(0.26, -0.22, 0.36, -0.34, 0.045, PAL.rope); },
+  ore:          k => { for (const [x, y, r] of [[-0.14, 0.10, 0.13], [0.12, 0.12, 0.11], [0.00, -0.08, 0.15]])
+                         k.pg([[x - r, y], [x, y - r], [x + r, y], [x, y + r]], PAL.iron);
+                       k.ci(0.00, -0.10, 0.045, "#9aa0a6"); },
+  hardware:     k => { k.ci(-0.14, -0.06, 0.13, PAL.steelDk); k.ci(-0.14, -0.06, 0.05, "#4a5058");
+                       k.rc(0.02, 0.04, 0.28, 0.08, PAL.steel); k.ci(0.06, 0.08, 0.06, PAL.iron); },
+  pipe:         k => { k.rc(-0.32, -0.08, 0.52, 0.18, PAL.steelDk); k.rc(-0.36, -0.14, 0.10, 0.30, PAL.steel);
+                       k.rc(0.16, -0.14, 0.10, 0.30, PAL.steel); },
+  nozzle:       k => { k.pg([[-0.28, -0.06], [0.06, -0.16], [0.06, 0.16], [-0.28, 0.06]], PAL.steelDk);
+                       k.rc(0.06, -0.09, 0.20, 0.18, PAL.steel);
+                       for (const y of [-0.05, 0.03]) k.ln(0.26, y, 0.36, y, 0.03, "#a8d4e8"); },
+  heatcoil:     k => { k.rc(-0.30, 0.18, 0.60, 0.10, PAL.steelDk);
+                       for (let i = 0; i < 4; i++) k.ln(-0.24 + i * 0.16, 0.18, -0.18 + i * 0.16, -0.24, 0.05, "#c0503c"); },
+  frame:        k => { k.rc(-0.30, -0.28, 0.60, 0.56, PAL.wood); k.rc(-0.22, -0.20, 0.44, 0.40, "#cfe0ea");
+                       k.tri([-0.22, 0.20], [-0.02, -0.08], [0.14, 0.20], PAL.green); },
+  stamp:        k => { k.rc(-0.28, -0.24, 0.56, 0.48, PAL.paper);
+                       k.rc(-0.20, -0.16, 0.40, 0.32, "#c05a4a"); k.ci(0, 0, 0.09, PAL.paper); },
+  paint:        k => { k.rc(-0.32, -0.10, 0.64, 0.30, "#c8bda4");
+                       for (const [i, c] of [[0, "#c0403c"], [1, "#3c6ac0"], [2, "#d8a93c"], [3, "#4a8a46"]])
+                         k.ci(-0.22 + i * 0.15, 0.02, 0.055, c);
+                       k.ln(0.20, -0.12, 0.30, -0.34, 0.035, PAL.wood); },
+  candle:       k => { k.rc(-0.09, -0.14, 0.18, 0.36, PAL.linen); k.rc(-0.16, 0.20, 0.32, 0.10, PAL.steelDk);
+                       k.ln(0, -0.14, 0, -0.20, 0.02, PAL.ink); k.tri([0, -0.36], [-0.07, -0.20], [0.07, -0.20], PAL.flame); },
+  whistle:      k => { k.pg([[-0.34, -0.12], [0.22, -0.09], [0.22, 0.09], [-0.34, 0.12]], "#c9a45e");
+                       k.pg([[-0.34, -0.12], [-0.22, -0.09], [-0.22, 0.09], [-0.34, 0.12]], "#8a6a34");   // mouthpiece
+                       k.pg([[0.22, -0.09], [0.34, -0.16], [0.34, 0.16], [0.22, 0.09]], "#a8853f");        // flared bell
+                       for (const x of [-0.10, 0.02, 0.13]) k.ci(x, 0.00, 0.038, "#5f4520"); },
+  drum:         k => { k.el(0, -0.12, 0.30, 0.11, PAL.linen); k.rc(-0.30, -0.12, 0.60, 0.26, "#c05a4a");
+                       k.el(0, 0.14, 0.30, 0.11, "#9c4438");
+                       for (const x of [-0.18, 0.00, 0.18]) k.ln(x, -0.12, x - 0.06, 0.14, 0.025, PAL.linen); },
+  toy:          k => { k.ci(0, -0.16, 0.13, "#c9a45e"); k.rc(-0.14, -0.04, 0.28, 0.22, "#a8763f");
+                       k.ci(-0.10, 0.24, 0.06, PAL.woodDk); k.ci(0.10, 0.24, 0.06, PAL.woodDk); },
+  birdhouse:    k => { k.tri([0, -0.34], [-0.30, -0.04], [0.30, -0.04], "#a8563c");
+                       k.rc(-0.24, -0.04, 0.48, 0.32, PAL.wood); k.ci(0, 0.06, 0.09, "#3a2f24");
+                       k.ln(0, 0.14, 0, 0.30, 0.035, PAL.woodDk); },
+  tie:          k => { k.pg([[-0.26, -0.34], [-0.09, -0.30], [0.09, -0.30], [0.26, -0.34], [0.14, -0.20], [-0.14, -0.20]], "#e8e2d0");  // collar
+                       k.pg([[-0.10, -0.28], [0.10, -0.28], [0.13, -0.14], [-0.13, -0.14]], "#3f3158");                                    // knot
+                       k.pg([[-0.09, -0.12], [0.09, -0.12], [0.15, 0.18], [0.00, 0.34], [-0.15, 0.18]], "#5f4a86");
+                       k.ln(-0.08, 0.00, 0.10, 0.10, 0.032, "#8a76b0"); k.ln(-0.06, 0.14, 0.08, 0.22, 0.032, "#8a76b0"); },
+  ring:         k => { k.ci(0, 0.10, 0.21, "#8a7440"); k.ci(0, 0.10, 0.13, "#2f2a22");
+                       k.tri([0, -0.32], [-0.14, -0.12], [0.14, -0.12], "#a8d0e2");
+                       k.tri([-0.14, -0.12], [0.14, -0.12], [0, 0.02], "#6f9cb4"); },
+  rock:         k => { k.pg([[-0.26, 0.20], [-0.22, -0.08], [-0.02, -0.24], [0.20, -0.12], [0.26, 0.14], [0.06, 0.26]], PAL.stone);
+                       k.pg([[-0.14, -0.04], [0.00, -0.16], [0.10, -0.04], [-0.02, 0.04]], "#b4aca1"); },
+  goodie_crate: k => { k.rc(-0.32, -0.20, 0.64, 0.46, PAL.wood);
+                       k.rc(-0.32, -0.06, 0.64, 0.08, PAL.woodDk); k.rc(-0.06, -0.20, 0.12, 0.46, PAL.woodDk);
+                       k.tri([-0.32, -0.20], [0.00, -0.34], [0.32, -0.20], "#a8763f"); },
+  pelt:         k => { k.pg([[-0.30, -0.10], [-0.12, -0.28], [0.12, -0.28], [0.30, -0.10], [0.20, 0.24], [-0.20, 0.24]], "#8a6238");
+                       k.pg([[-0.14, -0.06], [0.14, -0.06], [0.10, 0.16], [-0.10, 0.16]], "#c2a077");
+                       k.tri([-0.30, -0.10], [-0.36, -0.28], [-0.16, -0.22], "#8a6238");
+                       k.tri([0.30, -0.10], [0.36, -0.28], [0.16, -0.22], "#8a6238"); },
+  finefiber:    k => { k.rc(-0.24, -0.30, 0.48, 0.07, "#a8996f"); k.rc(-0.24, 0.23, 0.48, 0.07, "#a8996f");
+                       k.rc(-0.17, -0.24, 0.34, 0.47, "#efe7d2");
+                       for (const y of [-0.18, -0.08, 0.02, 0.12]) k.ln(-0.17, y, 0.17, y + 0.05, 0.035, "#d8ccae");
+                       k.ln(0.17, -0.02, 0.34, -0.16, 0.028, "#efe7d2"); },
+  cloth:        k => { k.pg([[-0.34, 0.06], [-0.34, -0.16], [0.24, -0.30], [0.24, -0.08]], "#6f8fae");
+                       k.pg([[-0.34, 0.06], [0.24, -0.08], [0.24, 0.16], [-0.34, 0.30]], "#5f7d9c");
+                       k.pg([[0.24, -0.30], [0.34, -0.24], [0.34, 0.10], [0.24, 0.16]], "#4f6b88"); },
+
+  /* ---------- medicine ---------- */
+  medicine:     k => { k.el(0, 0, 0.20, 0.13, "#d8d2c8"); k.pg([[-0.20, -0.04], [0.20, -0.10], [0.20, 0.02], [-0.20, 0.08]], "#c04a4a");
+                       k.el(-0.13, 0.02, 0.08, 0.11, "#e8e2d8"); },
+  bandage:      k => { k.pg([[-0.36, 0.16], [-0.20, -0.12], [0.20, -0.24], [0.36, -0.02], [0.20, 0.26], [-0.20, 0.32]], "#efe0c4");
+                       k.pg([[-0.16, -0.10], [0.14, -0.19], [0.19, 0.00], [-0.11, 0.11]], "#dcc79a");      // the pad
+                       for (const [x, y] of [[-0.06, -0.09], [0.04, -0.12], [-0.03, 0.00], [0.07, -0.03]]) k.ci(x, y, 0.024, "#b89a68");
+                       k.ln(-0.34, 0.12, -0.22, 0.28, 0.05, "#e2d0ac"); },
+  salve:        k => { k.rc(-0.20, -0.16, 0.40, 0.40, "#cfe0d4"); k.rc(-0.24, -0.24, 0.48, 0.10, "#8a7a5a");
+                       k.rc(-0.14, -0.02, 0.28, 0.20, "#7f9a5c"); },
+
+  /* ---------- garments (drawn as the piece, not a person wearing it) ---------- */
+  sun_hat:      k => { k.el(0, 0.10, 0.38, 0.14, "#e2c882"); k.el(0, 0.02, 0.18, 0.16, "#efdca4");
+                       k.rc(-0.18, 0.02, 0.36, 0.06, "#c2a05a"); },
+  cloth_cap:    k => { k.pg([[-0.26, 0.04], [-0.18, -0.20], [0.14, -0.24], [0.26, 0.04]], "#6f7f8c");
+                       k.pg([[0.10, 0.02], [0.36, 0.06], [0.34, 0.14], [0.08, 0.10]], "#5f6d78"); },
+  wool_hood:    k => { k.pg([[-0.28, 0.22], [-0.24, -0.14], [0.00, -0.30], [0.24, -0.14], [0.28, 0.22], [0.12, 0.14], [-0.12, 0.14]], "#a86a5a");
+                       k.el(0, 0.00, 0.14, 0.16, "#d8c0a8"); },
+  hunter_hat:   k => { k.el(0, 0.14, 0.36, 0.11, "#5f4a34"); k.pg([[-0.18, 0.14], [-0.14, -0.24], [0.14, -0.24], [0.18, 0.14]], "#6f5a3e");
+                       k.rc(-0.19, 0.02, 0.38, 0.07, "#3f3324"); k.tri([0.10, -0.02], [0.28, -0.16], [0.14, -0.14], "#c2a05a"); },
+  guard_helm:   k => { k.pg([[-0.26, 0.16], [-0.22, -0.14], [0.00, -0.30], [0.22, -0.14], [0.26, 0.16]], PAL.steel);
+                       k.rc(-0.05, -0.28, 0.10, 0.40, PAL.steelDk); k.pg([[-0.26, 0.16], [0.26, 0.16], [0.22, 0.24], [-0.22, 0.24]], PAL.steelDk); },
+  summer_tunic: k => { k.pg([[-0.30, -0.16], [-0.12, -0.26], [0.12, -0.26], [0.30, -0.16], [0.22, -0.02], [0.24, 0.28], [-0.24, 0.28], [-0.22, -0.02]], "#8ac0b0");
+                       k.pg([[-0.10, -0.26], [0.10, -0.26], [0.00, -0.12]], "#6fa392"); },
+  work_shirt:   k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.24, 0.02], [0.26, 0.30], [-0.26, 0.30], [-0.24, 0.02]], "#5f7f9c");
+                       k.ln(0, -0.20, 0, 0.30, 0.035, "#4a6880");
+                       for (const y of [-0.06, 0.06, 0.18]) k.ci(0, y, 0.028, "#e8e2d0"); },
+  leather_coat: k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.26, 0.30], [-0.26, 0.30]], "#7a4f2c");
+                       k.pg([[-0.10, -0.24], [0.10, -0.24], [0.06, 0.30], [-0.06, 0.30]], "#5f3c20");
+                       k.rc(-0.28, 0.10, 0.56, 0.07, "#4a2f18"); },
+  winter_jacket:k => { k.pg([[-0.34, -0.12], [-0.12, -0.26], [0.12, -0.26], [0.34, -0.12], [0.28, 0.30], [-0.28, 0.30]], "#3f5f7a");
+                       for (const y of [-0.06, 0.06, 0.18]) k.rc(-0.26, y, 0.52, 0.06, "#527a98");
+                       k.el(0, -0.22, 0.16, 0.07, "#d8c4a8"); },
+  guard_mail:   k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.26, 0.30], [-0.26, 0.30]], PAL.steelDk);
+                       for (let r = 0; r < 4; r++) for (let c2 = 0; c2 < 5; c2++)
+                         k.ci(-0.20 + c2 * 0.10, -0.14 + r * 0.11, 0.033, r % 2 ? PAL.steel : "#9aa3ac"); },
+  light_shorts: k => { k.pg([[-0.26, -0.22], [0.26, -0.22], [0.24, 0.02], [0.06, 0.16], [-0.06, 0.16], [-0.24, 0.02]], "#c9b78a");
+                       k.rc(-0.26, -0.24, 0.52, 0.07, "#a89468"); k.ln(0, -0.10, 0, 0.16, 0.02, "#a89468"); },
+  work_trous:   k => { k.pg([[-0.26, -0.26], [0.26, -0.26], [0.22, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.22, 0.32]], "#4a5f7a");
+                       k.rc(-0.26, -0.28, 0.52, 0.07, "#38495e"); },
+  winter_trous: k => { k.pg([[-0.27, -0.26], [0.27, -0.26], [0.23, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.23, 0.32]], "#3a4a5e");
+                       k.rc(-0.27, -0.28, 0.54, 0.07, "#2c3a4a");
+                       k.rc(-0.20, 0.20, 0.14, 0.06, "#7f9ab0"); k.rc(0.06, 0.20, 0.14, 0.06, "#7f9ab0"); },
+  leather_legs: k => { k.pg([[-0.26, -0.26], [0.26, -0.26], [0.22, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.22, 0.32]], "#6f4728");
+                       k.rc(-0.26, -0.28, 0.52, 0.07, "#4a2f18"); k.rc(-0.22, 0.04, 0.10, 0.08, "#8a5f34"); },
+  guard_greaves:k => { k.pg([[-0.24, -0.24], [-0.04, -0.24], [-0.06, 0.30], [-0.22, 0.30]], PAL.steel);
+                       k.pg([[0.04, -0.24], [0.24, -0.24], [0.22, 0.30], [0.06, 0.30]], PAL.steel);
+                       for (const y of [-0.10, 0.04, 0.18]) { k.rc(-0.24, y, 0.20, 0.05, PAL.steelDk); k.rc(0.04, y, 0.20, 0.05, PAL.steelDk); } },
+};
+
+/* Draw any object at (cx,cy) with T as its full width. Used both for the little
+   icons in lists and for things lying on the ground in the world. */
+function drawItemIcon(ctx, id, cx, cy, T) {
+  const art = ICON_ART[id];
+  const k = iconKit(ctx, cx, cy, T);
+  if (art) { art(k); return true; }
+  k.rc(-0.30, -0.24, 0.60, 0.50, "#8c8577");        // the missing-art crate: loud on purpose
+  k.rc(-0.24, -0.18, 0.48, 0.38, "#b0a89a");
+  return false;
+}
+
+/* Icons appear by the hundred in an inventory or a shop list, and a live canvas
+   per row is a waste. Each (id,size) is painted once into an offscreen canvas
+   and kept as a data URL, so the second Bread costs an <img> and nothing more. */
+const ICON_CACHE = new Map();
+function itemIconURL(id, px = 22) {
+  const dpr = Math.min(3, Math.max(1, Math.round(window.devicePixelRatio || 1)));
+  const key = `${id}@${px}@${dpr}`;
+  const hit = ICON_CACHE.get(key);
+  if (hit) return hit;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = px * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  drawItemIcon(ctx, id, px / 2, px / 2, px);
+  const url = cv.toDataURL();
+  ICON_CACHE.set(key, url);
+  return url;
+}
+
+/* The icon slot used everywhere in the UI. Keeps the item's name as the alt and
+   the tooltip, so the art never costs you the ability to tell what a thing is. */
+const ItemIcon = ({ id, size = 22, style = null }) => {
+  const nm = (ITEMS[id] || GARMENTS[id] || {}).name || id;
+  return (
+    <img src={itemIconURL(id, size)} width={size} height={size} alt={nm} title={nm} draggable={false}
+      style={{ display: "inline-block", verticalAlign: "middle", flex: "0 0 auto", ...(style || {}) }} />
+  );
+};
+
 let USER_API_KEY = "";
 const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 
@@ -13257,7 +13677,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 const can = cookPanel?.chef ? true : canCookRecipe(player.inv, r);
                 return (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10, opacity: can ? 1 : 0.55 }}>
-                    <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                    <ItemIcon id={id} size={22} />
                     <span style={{ flex: 1 }}>
                       <b>{r.label}</b>
                       <div style={{ fontSize: fs - 2, opacity: 0.7 }}>
@@ -13676,7 +14096,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>🧶 Materials</div>
                   {Object.entries(TAILOR_MATS).map(([id, R]) => (
                     <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 20 }}>{R.emoji}</span>
+                      <ItemIcon id={id} size={20} />
                       <span style={{ flex: 1, fontSize: fs - 1 }}><b>{R.name}</b> ×{R.out}<br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>{matLine(R.mats)}</span></span>
                       <button style={{ ...S.smallBtn, opacity: canMake(R.mats) ? 1 : 0.4 }} disabled={!canMake(R.mats)} onClick={() => makeMat(id)}>Spin</button>
                     </div>
@@ -13691,7 +14111,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         const locked = G.guard && !mayWearGuardKit(p2);
                         return (
                           <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, opacity: locked ? 0.5 : 1 }}>
-                            <span style={{ fontSize: 20 }}>{G.emoji}</span>
+                            <ItemIcon id={id} size={20} />
                             <span style={{ flex: 1, fontSize: fs - 1 }}>
                               <b>{G.name}</b>{G.guard && " 🛡️"}<br />
                               <span style={{ opacity: 0.65, fontSize: fs - 3 }}>
@@ -13712,7 +14132,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   {(p2.worn || []).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing but what you stand up in.</div>}
                   {(p2.worn || []).map(id => (
                     <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 20 }}>{GARMENTS[id].emoji}</span>
+                      <ItemIcon id={id} size={20} />
                       <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b>{p2.wornTorn?.[id] && <span style={{ color: "#a05252" }}> · torn</span>}
                         <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>{GARMENTS[id].slot} · {Math.round(100 - Math.min(100, (p2.wornWear?.[id] || 0) / (GARMENTS[id].dur || 100) * 100))}% condition</span></span>
                       <button style={S.smallBtn} onClick={() => takeOff(id)}>Take off</button>
@@ -13722,7 +14142,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>No spare clothes.</div>}
                   {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).map(id => (
                     <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 20 }}>{GARMENTS[id].emoji}</span>
+                      <ItemIcon id={id} size={20} />
                       <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b> ×{p2.inv[id]}
                         <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>warmth {GARMENTS[id].warmth > 0 ? `+${GARMENTS[id].warmth}` : GARMENTS[id].warmth} · tough +{GARMENTS[id].tough} · endur {GARMENTS[id].endur}</span></span>
                       <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => wearIt(id)}>Wear</button>
@@ -13740,7 +14160,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
                     return (
                       <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 20 }}>{G.emoji}</span>
+                        <ItemIcon id={id} size={20} />
                         <span style={{ flex: 1, fontSize: fs - 1 }}><b>{G.name}</b> <span style={{ color: "#a05252" }}>· torn</span>
                           <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>patch with {matLine(cost)}</span></span>
                         <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => beginSew(id, "patch")}>Patch</button>
@@ -13933,7 +14353,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         const inbound = stockInbound(sim2, bId, id);
                         return (
                           <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ fontSize: 18 }}>{ITEMS[id].emoji}</span>
+                            <ItemIcon id={id} size={18} />
                             <span style={{ flex: 1, fontSize: fs - 1 }}><b>{ITEMS[id].name}</b><span style={{ opacity: 0.6, fontSize: fs - 3 }}> · base {ITEMS[id].price}c · {st} in stock</span></span>
                             <button style={S.smallBtn} onClick={() => playerSetPrice(sim2, bId, id, -1)}>−</button>
                             <b style={{ minWidth: 28, textAlign: "center" }}>{menu[id] ?? ITEMS[id].price}c</b>
@@ -13954,7 +14374,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                           <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 4 }}>Add to menu:</div>
                           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                             {pool.map(id => (
-                              <button key={id} style={{ ...S.smallBtn }} title={`${ITEMS[id].name} · base ${ITEMS[id].price}c`} onClick={() => playerMenuAdd(sim2, bId, id)}>{ITEMS[id].emoji} {ITEMS[id].name}</button>
+                              <button key={id} style={{ ...S.smallBtn }} title={`${ITEMS[id].name} · base ${ITEMS[id].price}c`} onClick={() => playerMenuAdd(sim2, bId, id)}><ItemIcon id={id} size={16} /> {ITEMS[id].name}</button>
                             ))}
                           </div>
                         </div>
@@ -14296,7 +14716,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div style={{ fontWeight: 700, opacity: 0.7 }}>In the chest:</div>
                 {Object.entries(player.chest || {}).filter(([, n]) => n > 0).map(([id, n]) => (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 20 }}>{ITEMS[id]?.emoji}</span>
+                    <ItemIcon id={id} size={20} />
                     <span style={{ flex: 1 }}><b>{ITEMS[id]?.name}</b> ×{n}</span>
                     <button style={S.smallBtn} onClick={() => chestMove(id, false)}>Take</button>
                   </div>
@@ -14304,7 +14724,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div style={{ fontWeight: 700, opacity: 0.7, marginTop: 6 }}>Carrying:</div>
                 {carried.map(id => (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, background: "#f0eade" }}>
-                    <span style={{ fontSize: 20 }}>{ITEMS[id]?.emoji}</span>
+                    <ItemIcon id={id} size={20} />
                     <span style={{ flex: 1 }}><b>{ITEMS[id]?.name}</b> ×{player.inv[id]}</span>
                     <button style={{ ...S.smallBtn, opacity: slotsUsed < cap ? 1 : 0.4 }} onClick={() => chestMove(id, true)}>Store</button>
                   </div>
@@ -14659,7 +15079,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div style={{ ...S.folkCard, opacity: 0.7 }}>Empty. The mart in Mossford stocks nearly everything.</div>}
               {Object.entries(player.inv).filter(([, c]) => c > 0).map(([id, c]) => (
                 <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                  <ItemIcon id={id} size={22} />
                   <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> ×{c}</span>
                   {(ITEMS[id].eat || ITEMS[id].heal || ITEMS[id].cure || ITEMS[id].use) && <button style={S.smallBtn} onClick={() => useItem(id)}>{ITEMS[id].use === "goodie" ? "Open" : "Use"}</button>}
                   {ITEMS[id].dmg && <span style={{ fontSize: fs - 2, opacity: 0.6 }}>dmg {ITEMS[id].dmg[0]}–{ITEMS[id].dmg[1]}{ITEMS[id].lethal ? " ⚠" : ""}{ITEMS[id].range ? ` · range ${ITEMS[id].range}` : ""}</span>}
@@ -14703,7 +15123,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   const n = simRef.current.stock[shopPanel.bId]?.[id] ?? 0;
                   return (
                     <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, opacity: n > 0 ? 1 : 0.45 }}>
-                      <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                      <ItemIcon id={id} size={22} />
                       <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> · {priceOf(simRef.current, shopPanel.bId, id)}c
                         <span style={{ fontSize: fs - 3, opacity: 0.6 }}> · {n > 0 ? `${n} in stock` : "SOLD OUT — delivery pending"}</span>
                       </span>
@@ -14736,7 +15156,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     <div style={{ fontWeight: 700, opacity: 0.7, marginTop: 4 }}>They'll buy:</div>
                     {Object.keys(SELLABLE).filter(id => player.inv[id] > 0).map(id => (
                       <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, background: "#eef6ee" }}>
-                        <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                        <ItemIcon id={id} size={22} />
                         <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> ×{player.inv[id]} · sells {SELLABLE[id]}c</span>
                         <button style={S.smallBtn} onClick={() => sellItem(shopPanel.bId, id)}>Sell one</button>
                       </div>
@@ -14774,7 +15194,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   {Object.entries(player.inv).filter(([, c]) => c > 0).length === 0 && <div style={{ opacity: 0.6 }}>Nothing to give.</div>}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {Object.entries(player.inv).filter(([, c]) => c > 0).map(([id, c]) => (
-                      <button key={id} style={S.smallBtn} onClick={() => giftItem(npc.id, id)}>{ITEMS[id].emoji} {ITEMS[id].name} ×{c}</button>
+                      <button key={id} style={S.smallBtn} onClick={() => giftItem(npc.id, id)}><ItemIcon id={id} size={16} /> {ITEMS[id].name} ×{c}</button>
                     ))}
                   </div>
                 </div>
@@ -14843,7 +15263,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {opts.map(id => (
                 <button key={id} style={{ ...S.diffBtn, ...(partyPanel[kind] === id ? S.diffBtnOn : {}) }}
-                  onClick={() => setPartyPanel(pp => ({ ...pp, [kind]: id }))}>{ITEMS[id].emoji} {ITEMS[id].name}</button>
+                  onClick={() => setPartyPanel(pp => ({ ...pp, [kind]: id }))}><ItemIcon id={id} size={16} /> {ITEMS[id].name}</button>
               ))}
             </div>
           </div>
