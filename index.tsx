@@ -1456,15 +1456,17 @@ const TOWN_DEFS = {
              fountain: { x: 25, y: 11 }, homerow: { x: 11, y: 12 }, townhall: { x: 15, y: 7 },
              graveyard: { x: 4, y: 17 }, bench: { x: 28, y: 12 } },
   },
-  ferndale: {   // the fourth town — a working-class mill town, mostly ordinary folks
-    name: "Ferndale", w: 26, h: 16,
-    roadRows: [2, 8, 13], roadCols: [1, 9, 17, 24],
-    park: { x: 19, y: 14, w: 4, h: 2 },
-    drink: { x: 20, y: 14, label: "fountain" },
+  ferndale: {   // the fourth town — a working-class mill town, mostly ordinary folks.
+    // Stage 20: grown from 26×16. It was the tightest town in the valley — the tailor had
+    // nowhere to stand and the mill row ran wall to wall — so it gets a proper east end.
+    name: "Ferndale", w: 32, h: 18,
+    roadRows: [2, 8, 13], roadCols: [1, 9, 17, 24, 30],
+    park: { x: 19, y: 15, w: 5, h: 2 },
+    drink: { x: 20, y: 15, label: "fountain" },
     busStop: { x: 6, y: 14 },
-    trees: [[2, 14], [15, 14], [25, 7], [8, 7]],
-    spots: { plaza: { x: 12, y: 7 }, park: { x: 20, y: 15 }, fountain: { x: 20, y: 14 },
-             homerow: { x: 13, y: 11 }, townhall: { x: 12, y: 7 }, bench: { x: 21, y: 15 } },
+    trees: [[2, 14], [15, 14], [25, 7], [8, 7], [28, 12], [29, 4], [12, 16]],
+    spots: { plaza: { x: 12, y: 7 }, park: { x: 20, y: 16 }, fountain: { x: 20, y: 15 },
+             homerow: { x: 13, y: 11 }, townhall: { x: 12, y: 7 }, bench: { x: 22, y: 16 } },
   },
   hills: {   // v7 Stage 5 capstone: the hills above Alderbrook. One house. One view. No neighbors.
     name: "The Hills", w: 18, h: 11,
@@ -1561,9 +1563,9 @@ const BUILDINGS = [
   { id: "home_f1",     town: "ferndale",   name: "Hazel's House",    x: 11, y: 9,  w: 2, h: 2, door: { x: 11, y: 11 }, color: "#a08a70", roof: "#6f5e4a", enterable: true },
   { id: "home_f2",     town: "ferndale",   name: "Yusuf's Place",    x: 14, y: 9,  w: 2, h: 2, door: { x: 14, y: 11 }, color: "#7a90a0", roof: "#526470", enterable: true },
   { id: "home_f3",     town: "ferndale",   name: "Sana's Cottage",  x: 19, y: 9,  w: 2, h: 2, door: { x: 19, y: 11 }, color: "#90a07a", roof: "#647052", enterable: true },
-  { id: "home_f4",     town: "ferndale",   name: "The Corner Flat",  x: 22, y: 9,  w: 2, h: 2, door: { x: 22, y: 11 }, color: "#a07a90", roof: "#705264", enterable: true },
+  { id: "home_f4",     town: "ferndale",   name: "The Corner Flat",  x: 23, y: 9,  w: 2, h: 2, door: { x: 23, y: 11 }, color: "#a07a90", roof: "#705264", enterable: true },
   { id: "home_f5",     town: "ferndale",   name: "Mill Row 5",       x: 7,  y: 9,  w: 2, h: 2, door: { x: 7,  y: 11 }, color: "#8a7aa0", roof: "#5e5270", enterable: true },
-  { id: "home_f6",     town: "ferndale",   name: "Mill Row 6",       x: 24, y: 9,  w: 2, h: 2, door: { x: 24, y: 11 }, color: "#a09a6a", roof: "#706b48", enterable: true },
+  { id: "home_f6",     town: "ferndale",   name: "Mill Row 6",       x: 27, y: 9,  w: 2, h: 2, door: { x: 27, y: 11 }, color: "#a09a6a", roof: "#706b48", enterable: true },
   { id: "furn",        town: "mossford",   name: "Hearth & Holt",    x: 20, y: 3,  w: 4, h: 3, door: { x: 21, y: 6 },  color: "#a07a50", roof: "#735536", enterable: true },
   { id: "home_w",      town: "mossford",   name: "Wren's Place",     x: 2,  y: 10, w: 2, h: 2, door: { x: 2,  y: 12 }, color: "#a08ac0", roof: "#6f5c8d", enterable: true },
   { id: "home_g",      town: "mossford",   name: "Gus's Shack",      x: 5,  y: 10, w: 2, h: 2, door: { x: 5,  y: 12 }, color: "#7a8a5b", roof: "#525e3d", enterable: true },
