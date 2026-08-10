@@ -922,6 +922,9 @@ const ITEMS = {
   river_titan:  { name: "River Titan",    emoji: "🐋", price: 48, cat: "ingredient", eat: { hunger: 30 } },   // Stage 12: the EXPERT catch — three stages of fight for one of these
   goodie_crate: { name: "Goodie Crate",   emoji: "🎲", price: 0,  cat: "misc",    use: "goodie" },            // Stage 6: open for 3 random items
   fish_stew:    { name: "Hearty Fish Stew", emoji: "🫕", price: 16, cat: "food",   eat: { hunger: 75, energy: 15 } },   // Stage 6: hard cook from tropical fish
+  /* Stage 22 — not a real item: the placeholder a recipe shows when it'll take ANY cut.
+     Never held in a pack; resolveNeeds() swaps it for the cheapest meat on the shelf. */
+  anymeat:      { name: "Any Meat",       emoji: "🍖", price: 0,  cat: "virtual" },
   /* Stage 16 — what the hedgerows give up */
   berry:        { name: "Wild Berries",   emoji: "🫐", price: 2,  cat: "food", eat: { hunger: 12, thirst: 8 } },
   flower:       { name: "Wildflowers",    emoji: "🌼", price: 2,  cat: "misc" },
@@ -1035,6 +1038,44 @@ const ITEMS = {
    knob must be set to before the timing game — presence of `temp` marks a HARD
    recipe), and `hard: true` (a Cooking-track skill check gates plating). Simple
    recipes omit all three and behave exactly as before. */
+/* =====================================================================
+   STAGE 22 — "ANY MEAT". A recipe slot that will take whatever cut you've
+   got: raw game, or something already off the fire. NOT finished meals —
+   you can't build a pizza out of a game pie. When a recipe asks for it the
+   kitchen reaches for the LEAST valuable meat on the shelf first, so your
+   good skewers don't vanish into a base.
+   ===================================================================== */
+const MEAT_POOL = ["meat", "roast_meat", "meat_skewer"];
+const cheapestMeat = (inv) => MEAT_POOL
+  .filter(id => (inv?.[id] || 0) > 0)
+  .sort((a, b) => (ITEMS[a]?.price || 0) - (ITEMS[b]?.price || 0))[0] || null;
+/* turn a recipe's needs into concrete items this pack can actually pay, or null if it can't.
+   Everything that checks or spends a recipe runs through here, so "anymeat" behaves like a
+   real ingredient everywhere: the cook panel, NPC kitchens and the chef shift alike. */
+function resolveNeeds(inv, needs) {
+  const out = {};
+  for (const [ing, n] of Object.entries(needs || {})) {
+    if (ing !== "anymeat") {
+      if ((inv?.[ing] || 0) < n) return null;
+      out[ing] = (out[ing] || 0) + n;
+      continue;
+    }
+    let left = n;
+    const pool = [...MEAT_POOL].sort((a, b) => (ITEMS[a]?.price || 0) - (ITEMS[b]?.price || 0));
+    for (const id of pool) {                    // spend the cheapest cuts first
+      if (left <= 0) break;
+      const have = (inv?.[id] || 0) - (out[id] || 0);
+      if (have <= 0) continue;
+      const take = Math.min(have, left);
+      out[id] = (out[id] || 0) + take;
+      left -= take;
+    }
+    if (left > 0) return null;
+  }
+  return out;
+}
+const canCookRecipe = (inv, r) => !!resolveNeeds(inv, r.needs);
+
 const RECIPES = {
   /* --- simple: the classic peak-timing game --- */
   grilled_fish: { needs: { fish: 1 },              tier: 0, label: "Grill a fish" },
@@ -1061,6 +1102,9 @@ const RECIPES = {
   sushi:        { needs: { fish: 1, flour: 1, veg: 1 },    temp: 220, hard: true, tier: 2, label: "Roll sushi" },
   croissant:    { needs: { fresh_bread: 1, milk: 1 },      temp: 375, hard: true, tier: 2, label: "Fold croissants" },
   game_pie:     { needs: { meat: 2, dough: 1, herb: 1 },   temp: 400, hard: true, tier: 2, label: "Bake a game pie" },
+  /* Stage 22 — the pizza: two rounds of dough for the base, milk for the cheese, and whatever
+     meat's to hand (the kitchen reaches for the cheapest cut first) */
+  pizza:        { needs: { dough: 2, milk: 1, anymeat: 1 }, temp: 425, hard: true, tier: 2, label: "Build a pizza" },
   /* --- EXPERT (tier 3): gourmet cooking built on wild herbs & foraged greens. `expert` flips
      the knob game to the skill-gated rules: below Professional you must hit the temp EXACTLY in
      3s; Professional gets "close enough" in 3s; Expert/Master cook with no time rush. Below
@@ -1333,7 +1377,8 @@ const EATERY_MEAL = { cafe: "meal", diner: "stew", inn: "stew", cafe_s: "coffee"
 /* five trades; every paid task grants xp in exactly one of them */
 const SKILL_TRACKS = {
   crafting: "Crafting",
-  mechanic: "Mechanic", office: "Clerical", kitchen: "Cooking", service: "Service", stock: "Logistics", fishing: "Fishing", healthcare: "Medicine", foraging: "Foraging" };   // healthcare was missing (Pass 4 toast bug); foraging is v7 Stage 3
+  mechanic: "Mechanic", office: "Clerical", kitchen: "Cooking", service: "Service", stock: "Logistics", fishing: "Fishing", healthcare: "Medicine", foraging: "Foraging",
+  tailoring: "Tailoring" };   // healthcare was missing (Pass 4 toast bug); foraging is v7 Stage 3; tailoring is Stage 23
 /* Stage 3.7c: DOMAINS — specialties WITHIN a track. Raw track XP helps a little everywhere;
    domain EXPERTISE (earned by repetition, or seeded for veterans) is the big near-guarantee,
    and ONLY in that domain. "Good at something" means good AT SOMETHING, not everything. */
@@ -2046,11 +2091,15 @@ const NPC_DEFS = [
     coins: 7, startInv: { bread: 1 }, fame: 2, renown: 4,
     likes: ["first days", "full shifts"], dislikes: ["waiting lists", "no"],
     rel: {}, greets: ["Anyone hiring out east?", "I'm quick, I promise."] },
-  { id: "edgar", name: "Edgar", town: "stonecross", color: "#7a8a9a", home: "home_s2",
-    desc: "a 34-year-old rooming with Posy, between things", personality: "wry, sleeps late, means to fix that",
-    coins: 4, startInv: {}, fame: 2, renown: 3,
-    likes: ["late mornings", "borrowed time"], dislikes: ["rent day", "alarms"],
-    rel: { posy: "likes" }, greets: ["Posy's the ambitious one.", "I'm between things. Long between."] },
+  /* Stage 22: the valley's SECOND hunter. Two of them keeps four towns' kitchens in meat —
+     Rowan works the Ferndale tree lines, Edgar the stone country in the east. */
+  { id: "edgar", name: "Edgar", town: "stonecross", color: "#6a7a5a", home: "home_s2",
+    desc: "the 34-year-old hunter who works the stone country east of town", personality: "wry, sleeps late and hunts later, swears the evening game is worth the lie-in",
+    hunter: true, work: { spot: "graveyard" }, schedule: [11, 20],
+    coins: 8, startInv: { meat: 1 }, fame: 3, renown: 10,
+    likes: ["late mornings", "long light", "borrowed time"], dislikes: ["rent day", "alarms", "dawn starts"],
+    rel: { posy: "likes", rowan: "likes" },
+    greets: ["Rowan takes the mornings. I'll take the dusk.", "Hares are thick in the stone country.", "Posy's the ambitious one. I just feed people."] },
   { id: "tilda", name: "Tilda", town: "stonecross", color: "#8a9a7a", home: "home_s3",
     desc: "a 52-year-old who keeps the commons tidy and everyone's business", personality: "brisk, nosy in a kindly way, misses nothing",
     coins: 16, startInv: { bread: 1 }, fame: 5, renown: 11, cooks: ["stew"],
@@ -2123,11 +2172,15 @@ const NPC_DEFS = [
     coins: 6, startInv: { bread: 1 }, fame: 2, renown: 4,
     likes: ["payday", "new starts"], dislikes: ["idle days", "pity"],
     rel: {}, greets: ["Know anyone hiring?", "I'll take any shift."] },
-  { id: "rowan", name: "Rowan", town: "ferndale", color: "#7a90a0", home: "home_f4",
-    desc: "a 31-year-old odd-jobber rooming with Ivy", personality: "easygoing to a fault, always a week behind on something",
-    coins: 3, startInv: {}, fame: 1, renown: 3,
-    likes: ["long lunches", "luck"], dislikes: ["deadlines", "rent day"],
-    rel: { ivy: "likes" }, greets: ["Work finds me eventually.", "Rent? Already?"] },
+  /* Stage 22: the valley's HUNTER. Rowan works the tree lines instead of a counter, and every
+     cut of meat on an eatery's menu came off his shoulder. */
+  { id: "rowan", name: "Rowan", town: "ferndale", color: "#7a6a4a", home: "home_f4",
+    desc: "the 31-year-old hunter who works the tree lines above Ferndale", personality: "unhurried, reads weather and tracks better than people, talks about the woods like a colleague",
+    hunter: true, work: { spot: "park" }, schedule: [7, 16],
+    coins: 12, startInv: { meat: 2, pelt: 1 }, fame: 4, renown: 14,
+    likes: ["first light", "a clean shot", "quiet company"], dislikes: ["waste", "crowds", "questions about the kill"],
+    rel: { ivy: "likes" },
+    greets: ["Stag moved down the valley last night.", "Butcher's price is fair this week.", "Wind's wrong today. Tomorrow, maybe."] },
   { id: "marcus", name: "Marcus", town: "ferndale", color: "#8a7aa0", home: "home_f5",
     desc: "a 40-year-old ex-mill hand between jobs", personality: "proud, punctual, hates owing anyone anything",
     coins: 9, startInv: { water: 1 }, fame: 3, renown: 8,
@@ -2424,6 +2477,39 @@ const FLORA = {
       poly(ctx, cx, cy, T, [[-0.22, -0.16], [0.00, -0.30], [0.22, -0.14], [0.00, -0.20]], "#dfe8ee");
     },
   },
+  /* --- WILD WHEAT: the volunteer crop along every field edge. Where flour comes from
+         if you'd rather not buy it. --- */
+  wildwheat: {
+    name: "Wild Wheat", emoji: "🌾", towns: null, seasons: ["summer", "autumn"],
+    gives: { flour: 5, fiber: 3, veg: 1 },
+    draw(ctx, cx, cy, T, season) {
+      const stalk = season === "autumn" ? "#c8a94a" : "#a8b054";
+      for (const dx of [-0.18, -0.02, 0.16]) {
+        poly(ctx, cx, cy, T, [[dx - 0.025, 0.26], [dx - 0.012, -0.24], [dx + 0.012, -0.24], [dx + 0.025, 0.26]], stalk);
+        poly(ctx, cx, cy, T, [[dx - 0.055, -0.22], [dx, -0.40], [dx + 0.055, -0.22], [dx, -0.16]], season === "autumn" ? "#e0c25a" : "#c3cb6a");
+      }
+    },
+  },
+  /* --- THE ROOT PATCH: wild carrot and its neighbours, dug rather than picked --- */
+  rootpatch: {
+    name: "Root Patch", emoji: "🥕", towns: null, seasons: ["spring", "summer", "autumn"],
+    gives: { veg: 6, herb: 2, fiber: 1 },
+    draw(ctx, cx, cy, T) {
+      poly(ctx, cx, cy, T, [[-0.26, 0.24], [-0.16, -0.06], [0.00, 0.10], [0.16, -0.06], [0.26, 0.24]], "#4f7f3e");
+      for (const dx of [-0.13, 0.05]) poly(ctx, cx, cy, T, [[dx, 0.12], [dx + 0.09, 0.12], [dx + 0.045, 0.30]], "#d1802c");
+    },
+  },
+  /* --- THE ORCHARD EDGE: windfall fruit, and worth the walk in autumn --- */
+  windfall: {
+    name: "Windfall Bough", emoji: "🍎", towns: ["alderbrook", "ferndale", "hills"], seasons: ["summer", "autumn"],
+    gives: { fruit: 6, stick: 2, herb: 1 },
+    draw(ctx, cx, cy, T, season) {
+      poly(ctx, cx, cy, T, [[-0.05, 0.28], [-0.03, -0.06], [0.03, -0.06], [0.05, 0.28]], "#6b4f36");
+      poly(ctx, cx, cy, T, [[-0.30, -0.04], [-0.16, -0.30], [0.16, -0.30], [0.30, -0.04], [0.12, 0.10], [-0.12, 0.10]], season === "autumn" ? "#a8862c" : "#417f36");
+      for (const [ax, ay] of [[-0.14, -0.06], [0.10, -0.14], [0.02, 0.02]])
+        poly(ctx, cx, cy, T, [[ax - 0.05, ay], [ax, ay - 0.06], [ax + 0.05, ay], [ax, ay + 0.06]], "#c2452f");
+    },
+  },
   /* --- THE OUTLANDS: nothing here wants to be picked --- */
   thornbush: {
     name: "Thornbush", emoji: "🌵", towns: ["outlands"], seasons: ["spring", "summer", "autumn", "winter"],
@@ -2483,6 +2569,24 @@ const TAILOR_MATS = {
 const PATCH_FRACTION = 0.45;   // patching a torn piece costs less than half of making a new one
 /* Stage 19: what a trip to Thimble & Thread costs a resident, and how many make it in a day */
 CFG.TAILOR = { npcSpend: 10, patchFee: 6, maxTrips: 3, openHour: 9, closeHour: 18 };
+/* Stage 22: the hunter's working day — how often he tries, what a stalk yields, and the
+   wholesale he gets when he walks it round to the kitchens. */
+CFG.HUNTER = { everyMin: 55, reach: 6, stalkOdds: 0.34, cuts: [1, 3], carryCap: 8, perDrop: 4, wholesale: 0.7, supplyFrom: 3 };
+/* Stage 23: the tailor's bench is a CRAFT now. Each tier runs its own minigame, with a miss
+   allowance that widens as your Tailoring skill grows. Botch it and the piece is scrapped —
+   you get roughly half the materials back out of the ruin. */
+CFG.SEWING = {
+  scrapBack: 0.5,                       // what you salvage from a ruined piece
+  tiers: {
+    easy:   { game: "stitch", dots: 5, misses: 99, label: "a simple seam" },
+    simple: { game: "stitch", dots: 7, misses: 99, label: "a plain garment" },
+    hard:   { game: "cut",    size: 3, misses: 3,  label: "a cut-and-sewn piece" },
+    expert: { game: "needle", reps: 4, misses: 1,  label: "fine tailoring" },
+  },
+  lenPerLevel: 0.5,                     // every two skill levels buys one more miss
+};
+/* how forgiving this attempt is, given what the tailor actually knows */
+const sewingMisses = (base, lvl) => base >= 99 ? 99 : base + Math.floor(lvl * CFG.SEWING.lenPerLevel);
 
 /* =====================================================================
    STAGE 17 — HOW PEOPLE LOOK. Every soul gets a stable palette and a
@@ -3399,6 +3503,141 @@ Respond ONLY with JSON, no markdown: {"action":"rob|ask","coins":<int>,"items":[
    reset/re-randomized — the oven repair "kept re-initiating"). ===== */
 /* MECHANIC MINIGAME 1 — plumbing: slide each highlighted slider fully left→right, N times
    each; it snaps back to the left when the next rep is up. Overcomplicated Simon says. */
+/* =====================================================================
+   STAGE 23 — THE TAILOR'S MINIGAMES
+   Easy/Simple: STITCH LINE — connect the dots in order. Miss and the needle
+   goes through the wrong place. Hard and Expert allow only so many misses,
+   and the allowance widens as your Tailoring improves.
+   ===================================================================== */
+const StitchGame = ({ dots, misses, onDone, onFail }) => {
+  const [pts] = useState(() => {
+    // a ring of dots with a little jitter — always solvable, never the same twice
+    const n = dots, out = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.35;
+      const r = 0.30 + Math.random() * 0.16;
+      out.push({ x: 50 + Math.cos(a) * r * 100, y: 50 + Math.sin(a) * r * 100 });
+    }
+    return out.sort(() => Math.random() - 0.5);
+  });
+  const [at, setAt] = useState(0);
+  const [miss, setMiss] = useState(0);
+  const [shake, setShake] = useState(-1);
+  const hit = (i) => {
+    if (i === at) {
+      sfx.pop();
+      const nx = at + 1;
+      setAt(nx);
+      if (nx >= pts.length) onDone();
+    } else {
+      const m = miss + 1;
+      setMiss(m); setShake(i); setTimeout(() => setShake(-1), 260);
+      sfx.alert();
+      if (m > misses) onFail();
+    }
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 8, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>
+        Stitch the seam: tap the dots <b>in order</b>. {at}/{pts.length}
+        {misses < 99 && <> · misses {miss}/{misses}</>}
+      </div>
+      <div style={{ position: "relative", width: 280, height: 280, background: "#20242e", borderRadius: 10, border: "1px solid #3a4150" }}>
+        <svg width="280" height="280" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {pts.slice(0, Math.max(0, at)).map((pt, i) => {
+            const nxt = pts[i + 1]; if (!nxt || i + 1 > at - 1) return null;
+            return <line key={i} x1={pt.x * 2.8} y1={pt.y * 2.8} x2={nxt.x * 2.8} y2={nxt.y * 2.8} stroke="#c9a84a" strokeWidth="2.5" strokeDasharray="5 4" />;
+          })}
+        </svg>
+        {pts.map((pt, i) => (
+          <button key={i} onClick={() => hit(i)}
+            style={{
+              position: "absolute", left: pt.x * 2.8 - 15, top: pt.y * 2.8 - 15, width: 30, height: 30,
+              borderRadius: 15, border: "none", cursor: "pointer",
+              background: i < at ? "#5a8a4a" : i === shake ? "#a05252" : "#6b5280",
+              color: "#fff", fontWeight: 700, fontSize: 12,
+              transform: i === shake ? "scale(1.25)" : "scale(1)", transition: "transform .12s",
+            }}>{i + 1}</button>
+        ))}
+      </div>
+    </div>
+  );
+};
+/* HARD — PATTERN MATCH: the cutting table. Reproduce the shown panel layout by toggling
+   squares; every wrong square left set counts as a miss when you commit. */
+const CutGame = ({ size, misses, onDone, onFail }) => {
+  const [target] = useState(() => Array.from({ length: size * size }, () => Math.random() < 0.42));
+  const [grid, setGrid] = useState(() => Array(size * size).fill(false));
+  const [peek, setPeek] = useState(true);
+  const [tries, setTries] = useState(0);
+  useEffect(() => { const t = setTimeout(() => setPeek(false), 2600); return () => clearTimeout(t); }, []);
+  const commit = () => {
+    const wrong = target.reduce((s, v, i) => s + (v !== grid[i] ? 1 : 0), 0);
+    if (wrong === 0) { sfx.pop(); onDone(); return; }
+    const t = tries + 1; setTries(t); sfx.alert();
+    if (t > misses) onFail(); else setPeek(true), setTimeout(() => setPeek(false), 1500);
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 8, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>
+        {peek ? "Study the pattern…" : "Cut it from memory."} · attempts {tries}/{misses}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${size}, 40px)`, gap: 4 }}>
+        {(peek ? target : grid).map((on, i) => (
+          <button key={i} disabled={peek} onClick={() => setGrid(g => g.map((v, j) => j === i ? !v : v))}
+            style={{ width: 40, height: 40, borderRadius: 6, border: "none",
+              background: on ? (peek ? "#c9a84a" : "#6b5280") : "#2a2f3a", cursor: peek ? "default" : "pointer" }} />
+        ))}
+      </div>
+      <button style={{ ...S.binBtn, width: "100%", opacity: peek ? 0.4 : 1 }} disabled={peek} onClick={commit}>✂️ Cut it</button>
+    </div>
+  );
+};
+/* EXPERT — THE NEEDLE: a moving shuttle you must stop inside a narrowing band, N times.
+   One slip and the piece is ruined (unless your skill has bought you a second chance). */
+const NeedleGame = ({ reps, misses, onDone, onFail }) => {
+  const [rep, setRep] = useState(0);
+  const [miss, setMiss] = useState(0);
+  const [pos, setPos] = useState(0);
+  const dir = useRef(1);
+  const band = Math.max(9, 26 - rep * 4);
+  useEffect(() => {
+    let raf, last = performance.now();
+    const step = (t) => {
+      const dt = Math.min(50, t - last); last = t;
+      setPos(v => {
+        let nv = v + dir.current * dt * (0.055 + rep * 0.012);
+        if (nv >= 100) { nv = 100; dir.current = -1; }
+        if (nv <= 0) { nv = 0; dir.current = 1; }
+        return nv;
+      });
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [rep]);
+  const stop = () => {
+    if (Math.abs(pos - 50) <= band / 2) {
+      sfx.pop();
+      const nx = rep + 1; setRep(nx);
+      if (nx >= reps) onDone();
+    } else {
+      const m = miss + 1; setMiss(m); sfx.alert();
+      if (m > misses) onFail();
+    }
+  };
+  return (
+    <div style={{ ...S.chatBody, gap: 10, alignItems: "center" }}>
+      <div style={{ fontSize: 12, opacity: 0.75 }}>Set the needle: stop it in the band. {rep}/{reps} · slips {miss}/{misses}</div>
+      <div style={{ position: "relative", width: 280, height: 34, background: "#20242e", borderRadius: 8, overflow: "hidden", border: "1px solid #3a4150" }}>
+        <div style={{ position: "absolute", left: `${50 - band / 2}%`, width: `${band}%`, top: 0, bottom: 0, background: "#3f6b33" }} />
+        <div style={{ position: "absolute", left: `${pos}%`, top: 0, bottom: 0, width: 3, background: "#e8c84a", transform: "translateX(-1.5px)" }} />
+      </div>
+      <button style={{ ...S.binBtn, width: "100%" }} onClick={stop}>🪡 Set the stitch</button>
+    </div>
+  );
+};
+
 const SliderGame = ({ reps, sliders, onDone }) => {
   const [rep, setRep] = useState(0);            // total completed slides
   const [v, setV] = useState(0);
@@ -5953,7 +6192,7 @@ export default function Alderbrook() {
          cheaper, better, and the reason they bought the oven. This is what pulls them through
          a market for ingredients in the first place. */
       const canCookNow = npc.home && npc.furniture?.includes("oven")
-        && HOME_COOK.some(r => Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m]));
+        && HOME_COOK.some(r => canCookRecipe(npc.inv, r));
       if (canCookNow) {
         goal = { scene: `t:${npc.town}`, ...bld(npc.home).door }; activity = "heading home to cook"; hide = true;
       } else if (npc.minor && npc.home) {                // Stage 3.5: kids don't buy dinner — the family pantry is free
@@ -6088,6 +6327,23 @@ export default function Alderbrook() {
       const hi = world.interiors[npc.home];
       const spot = hi?.stations?.table || hi?.seats?.[1] || bld(npc.home).door;
       goal = { scene: `i:${npc.home}`, x: spot.x, y: spot.y }; activity = "hosting a visitor at home";
+    } else if (npc.hunter && (npc.inv.meat || 0) >= CFG.HUNTER.supplyFrom && hour >= 8 && hour < 18) {
+      /* Stage 22: shoulder's loaded — take it round to a kitchen that's short of meat */
+      if (!npc.supplyRun) {
+        const kitchens = Object.keys(KITCHEN).filter(b => OWNERS[b] && stockOf(sim, b, "meat") < 12);
+        const pick = kitchens.sort((a, b) => stockOf(sim, a, "meat") - stockOf(sim, b, "meat"))[0];
+        if (pick) npc.supplyRun = { bId: pick };
+      }
+      if (npc.supplyRun) {
+        const b9 = npc.supplyRun.bId, stn = world.interiors[b9]?.stations?.[SHOP_STATION[b9]] || bld(b9).door;
+        goal = { scene: `i:${b9}`, x: stn.x, y: stn.y };
+        activity = `taking the day's meat to ${bld(b9).name}`;
+      } else { goal = { scene: `t:${npc.town}`, ...town.spots.plaza }; activity = "looking for a buyer"; }
+    } else if (npc.hunter && hour >= npc.schedule?.[0] && hour < npc.schedule?.[1]) {
+      /* out on the tree line — the edge of town, where the game is */
+      const spot = town.spots.park || town.spots.plaza;
+      goal = { scene: `t:${npc.town}`, x: spot.x, y: spot.y };
+      activity = "working the tree line";
     } else if (npc.tailorTrip && hour >= CFG.TAILOR.openHour && hour < CFG.TAILOR.closeHour) {
       /* Stage 19: the walk to Thimble & Thread. They go in, they get seen to at the counter,
          they walk home in it. Cross-town legs route through Mo's bus like any other trip. */
@@ -6556,6 +6812,8 @@ export default function Alderbrook() {
       }
     }
     if (npc.tailorTrip?.phase === "return" && npc.scene === `t:${npc.town}`) npc.tailorTrip = null;
+    // Stage 22: the hunter reached the kitchen door — the meat goes into the larder here
+    if (npc.supplyRun && npc.scene === `i:${npc.supplyRun.bId}`) hunterSupply(sim, npc);
     if (npc.crimePlan) {
       stealAttempt(sim, world, npc, npc.crimePlan.bId, npc.crimePlan.itemId, now);
       npc.crimePlan = null; npc.goal = null;
@@ -7461,6 +7719,59 @@ export default function Alderbrook() {
       .then(out => { if (out) finish(out.votes || {}, typeof out.mood === "string" ? out.mood : null, true); else localAll(); })
       .catch(localAll)
       .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* =====================================================================
+     STAGE 22 — THE HUNTER'S TRADE. Rowan works the tree lines during his
+     shift, brings game in, and then walks it round to the kitchens. Every
+     cut of meat on an eatery's menu came off his shoulder.
+     ===================================================================== */
+  const hunterTick = (sim, world, npc, now) => {
+    if (!npc.hunter || !npc.alive || npc.incap || npc.dying || npc.jailedUntil) return;
+    const hour = (sim.time / 60) % 24;
+    const onShift = npc.schedule && hour >= npc.schedule[0] && hour < npc.schedule[1];
+    if (!onShift) return;
+    const absMin = sim.day * 1440 + sim.time;
+    if (absMin - (npc.lastHuntAt || -9999) < CFG.HUNTER.everyMin) return;
+    npc.lastHuntAt = absMin;
+    const carrying = npc.inv.meat || 0;
+    if (carrying >= CFG.HUNTER.carryCap) return;          // shoulder's full — time to make the rounds
+    /* a real quarry standing in his scene is taken properly; otherwise it's a quiet stalk that
+       may or may not come to anything. Skill decides how often he comes back with something. */
+    const quarry = beastsIn(sim, npc.scene).find(b => dist(b, npc) < CFG.HUNTER.reach);
+    const lvl = skillLevel(npc, "foraging");
+    if (quarry) {
+      const S9 = BEAST_SPECIES[quarry.sp];
+      killBeast(sim, quarry, npc);
+      npc.bubble = { text: rand(["Clean one.", "That'll do.", "*field-dresses it where it fell*"]), until: now + 5 };
+      sim.dayLog.push(`${npc.name} took a ${S9.name.toLowerCase()} above ${TOWN_DEFS[npc.town]?.name || npc.town}`);
+      npc.skills.foraging = (npc.skills.foraging || 0) + taskXp("foraging", 1);
+    } else if (Math.random() < clamp(CFG.HUNTER.stalkOdds + lvl * 0.04, 0.1, 0.85)) {
+      const cuts = randInt(CFG.HUNTER.cuts);
+      npc.inv.meat = (npc.inv.meat || 0) + cuts;
+      if (Math.random() < 0.5) npc.inv.pelt = (npc.inv.pelt || 0) + 1;
+      npc.skills.foraging = (npc.skills.foraging || 0) + taskXp("foraging", 0);
+    }
+  };
+  /* the rounds: sell what he's carrying into a kitchen's larder, at a fair trade price */
+  const hunterSupply = (sim, npc) => {
+    const bId = npc.supplyRun?.bId; if (!bId) return;
+    const cuts = npc.inv.meat || 0;
+    if (cuts <= 0) { npc.supplyRun = null; return; }
+    const room = Math.max(0, 30 - stockOf(sim, bId, "meat"));
+    const sold = Math.min(cuts, room, CFG.HUNTER.perDrop);
+    if (sold > 0) {
+      npc.inv.meat -= sold; if (npc.inv.meat <= 0) delete npc.inv.meat;
+      addStock(sim, bId, "meat", sold);
+      const owner = OWNERS[bId] ? sim.npcs.find(n => n.id === OWNERS[bId] && n.alive) : null;
+      const price = Math.max(1, Math.round(ITEMS.meat.price * CFG.HUNTER.wholesale)) * sold;
+      if (OWNERS[bId] === "player") { spend(sim.player, price) && (npc.coins += price); }
+      else if (owner && owner.coins >= price) { owner.coins -= price; npc.coins += price; }
+      else npc.coins += Math.ceil(price / 2);              // a lean kitchen still gets fed, at a cut rate
+      npc.bubble = { text: rand([`${sold} cuts, fresh this morning.`, "Same as always?", "Take it while it's cold."]), until: performance.now() / 1000 + 5 };
+      sim.dayLog.push(`${npc.name} supplied ${bld(bId).name} with ${sold} cuts of meat`);
+    }
+    npc.supplyRun = null;
   };
 
   const dailyTick = (sim, world) => {
@@ -8897,6 +9208,7 @@ export default function Alderbrook() {
           } else if (sim.player.scene !== "t:outlands") sim._ambHr = hr9;
         }
         beastTick(sim, world, dt, now);
+        for (const h9 of sim.npcs) if (h9.hunter) hunterTick(sim, world, h9, now);   // Stage 22: the hunters work their shift
         processTrades(sim);
         playDialogues(sim, now);
 
@@ -9188,8 +9500,8 @@ export default function Alderbrook() {
 
   const homeMake = (npc, table) => {          // spend the makings, return the made item id
     for (const r of table) {
-      if (!Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m])) continue;
-      for (const m of Object.keys(r.needs)) { npc.inv[m] -= r.needs[m]; if (npc.inv[m] <= 0) delete npc.inv[m]; }
+      const spend9 = resolveNeeds(npc.inv, r.needs); if (!spend9) continue;
+      for (const [m, q] of Object.entries(spend9)) { npc.inv[m] -= q; if (npc.inv[m] <= 0) delete npc.inv[m]; }
       npc.inv[r.out] = (npc.inv[r.out] || 0) + 1;
       npc.homemade = { ...(npc.homemade || {}), [r.out]: (npc.homemade?.[r.out] || 0) + 1 };   // remembers whose hands made it
       return r.out;
@@ -10137,24 +10449,40 @@ export default function Alderbrook() {
           const spawned = spawnBeastAt(sim, p.scene, fx, fy, Math.random() < 0.12 ? "stag" : "hare");
           if (spawned) { sfx.alert(); showToast(spawned.sp === "stag" ? "🦌 A STAG crashes out of the thicket — and it's seen you." : "🐇 A hare bursts out of the leaves and bolts!"); }
           else give("herb", 1, "🌿 Something rustled off before you could see it — a herb, at least.");
-        } else if (Math.random() >= anything) {
-          showToast(`🍃 Nothing but leaves this time.${tierNote}`);
-        } else if (Math.random() < interest) {           // the notable finds
-          const r2 = Math.random();
-          if (r2 < 0.42) { const c = 1 + Math.floor(Math.random() * (tier === "rich" ? 4 : 3)); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
-          else if (r2 < 0.60) { give("ring", 1, "💍 A tarnished ring — someone lost this…"); sfx.coin(); }
-          else if (r2 < 0.78) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
-          else if (r2 < 0.92) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
-          else { give("goodie_crate", 1, "📦 A weathered crate, half-buried. Somebody's cache…"); sfx.coin(); }
-        } else {                                          // the staples — weighted by what's actually growing here
-          const table = F9?.gives || { fiber: 3, stick: 3, rock: 2, herb: 2 };
-          const total = Object.values(table).reduce((s, v) => s + v, 0);
-          let r3 = Math.random() * total, pick = "fiber";
-          for (const [id, w] of Object.entries(table)) { r3 -= w; if (r3 <= 0) { pick = id; break; } }
-          const bonus = tier === "rich" ? (Math.random() < 0.45 ? 1 : 0) : tier === "fair" ? (Math.random() < 0.2 ? 1 : 0) : 0;
-          const q = 1 + bonus;
-          const IT = ITEMS[pick];
-          give(pick, q, `${IT?.emoji || "🌿"} ${q > 1 ? `${q}× ` : ""}${IT?.name || pick}${F9 ? ` from the ${F9.name.toLowerCase()}` : ""}.${tierNote}`);
+        } else {
+          /* Stage 23: a practised hand comes back with more than one thing. Adept and
+             Professional sometimes gather two at a time; Expert can manage three; a Master
+             never comes back with less than two, and now and then brings four. */
+          let hands = 1;
+          if (lv >= 7)      hands = 2 + (Math.random() < 0.35 ? 1 : 0) + (Math.random() < 0.15 ? 1 : 0);
+          else if (lv === 6) hands = 1 + (Math.random() < 0.55 ? 1 : 0) + (Math.random() < 0.20 ? 1 : 0);
+          else if (lv >= 4)  hands = 1 + (Math.random() < (lv === 5 ? 0.35 : 0.25) ? 1 : 0) + (Math.random() < 0.05 ? 1 : 0);
+          let got = 0;
+          for (let hand = 0; hand < hands; hand++) {
+            if (Math.random() >= anything) continue;       // not every handful finds something
+            got++;
+            if (Math.random() < interest) {                // the notable finds
+              const r2 = Math.random();
+              if (r2 < 0.42) { const c = 1 + Math.floor(Math.random() * (tier === "rich" ? 4 : 3)); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
+              else if (r2 < 0.60) { give("ring", 1, "💍 A tarnished ring — someone lost this…"); sfx.coin(); }
+              else if (r2 < 0.70) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
+              else if (r2 < 0.80) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("veg", q, `🥕 Wild roots${q > 1 ? " — a good double handful" : ""}.`); }
+              else if (r2 < 0.90) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("fruit", q, `🍎 Windfall fruit${q > 1 ? ", and plenty of it" : ""}.`); }
+              else if (r2 < 0.95) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
+              else { give("goodie_crate", 1, "📦 A weathered crate, half-buried. Somebody's cache…"); sfx.coin(); }
+            } else {                                       // the staples — weighted by what's growing here
+              const table = F9?.gives || { fiber: 3, stick: 3, rock: 2, herb: 2 };
+              const total = Object.values(table).reduce((s, v) => s + v, 0);
+              let r3 = Math.random() * total, pick = "fiber";
+              for (const [id, w] of Object.entries(table)) { r3 -= w; if (r3 <= 0) { pick = id; break; } }
+              const bonus = tier === "rich" ? (Math.random() < 0.45 ? 1 : 0) : tier === "fair" ? (Math.random() < 0.2 ? 1 : 0) : 0;
+              const q = 1 + bonus;
+              const IT = ITEMS[pick];
+              give(pick, q, `${IT?.emoji || "🌿"} ${q > 1 ? `${q}× ` : ""}${IT?.name || pick}${F9 ? ` from the ${F9.name.toLowerCase()}` : ""}.${tierNote}`);
+            }
+          }
+          if (!got) showToast(`🍃 Nothing but leaves this time.${tierNote}`);
+          else if (got > 1) showToast(`🧺 ${got} finds in one sweep — that's the eye you've built.`);
         }
         if (skillLevel(p, "foraging") > before) showToast(`📈 ${SKILL_TRACKS.foraging} — now ${skillTierName(p, "foraging")}!`);
         bump(); break;
@@ -11441,8 +11769,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const chefB = resume ? resume.bId : (cookPanelRef.current?.chef || null);   // chef shifts: house supplies the ingredients
     const r = RECIPES[recipeId];
     if (!chefB && !resume) {
-      for (const [ing, n] of Object.entries(r.needs)) if ((p.inv[ing] || 0) < n) return showToast(`Missing ${ITEMS[ing].name}.`);
-      for (const [ing, n] of Object.entries(r.needs)) p.inv[ing] -= n;
+      const spend9 = resolveNeeds(p.inv, r.needs);
+      if (!spend9) return showToast(`Missing ${Object.keys(r.needs).map(i => ITEMS[i]?.name || i).join(", ")}.`);
+      for (const [ing, n] of Object.entries(spend9)) { p.inv[ing] -= n; if (p.inv[ing] <= 0) delete p.inv[ing]; }
     }
     setCookPanel(false);
     /* EXPERT cooking opens on the precision task — the expert stage FIRST, then the oven dial,
@@ -12792,7 +13121,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 if (cookPanel?.drinks) return !!r.drink;    // drink station: only drinks
                 return !r.drink;                            // stove: only food (drinks excluded)
               }).map(([id, r]) => {
-                const can = cookPanel?.chef ? true : Object.entries(r.needs).every(([ing, n]) => (player.inv[ing] || 0) >= n);
+                const can = cookPanel?.chef ? true : canCookRecipe(player.inv, r);
                 return (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10, opacity: can ? 1 : 0.55 }}>
                     <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
@@ -13092,35 +13421,67 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const have = (id) => p2.inv[id] || 0;
         const canMake = (mats) => Object.entries(mats).every(([m, q]) => have(m) >= q);
         const matLine = (mats) => Object.entries(mats).map(([m, q]) => `${ITEMS[m]?.emoji || ""}${q}${have(m) >= q ? "" : `/${have(m)}`}`).join(" ");
-        const lvl = skillLevel(p2, "service");
+        const lvl = skillLevel(p2, "tailoring");
         const makeMat = (id) => {
           const R = TAILOR_MATS[id];
           if (!canMake(R.mats)) { showToast("Not enough to work with."); return; }
           for (const [m, q] of Object.entries(R.mats)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
           p2.inv[id] = (p2.inv[id] || 0) + R.out;
           sim2.time += 20; p2.energy = clamp(p2.energy - 4, 0, 100);
-          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 0);
+          p2.skills.tailoring = (p2.skills.tailoring || 0) + taskXp("tailoring", 0);
           sfx.pop(); showToast(`${R.emoji} ${R.name} ×${R.out} — spun at the bench.`); bump();
         };
-        const makeGarment = (id) => {
+        /* Stage 23: sewing is a craft you PERFORM. The materials go in the moment you start, and
+           the minigame decides whether they come out as a garment or as scrap. */
+        const sewTierFor = (id) => {
           const G = GARMENTS[id];
-          if (G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
-          if (!canMake(G.mats)) { showToast("Not enough materials."); return; }
-          for (const [m, q] of Object.entries(G.mats)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
-          p2.inv[id] = (p2.inv[id] || 0) + 1;
-          sim2.time += 45; p2.energy = clamp(p2.energy - 8, 0, 100);
-          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 1);
-          sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`); bump();
+          if (G.guard) return G.slot === "torso" ? "expert" : "hard";
+          return G.tier === "hard" ? "hard" : G.tier === "medium" ? "simple" : "easy";
         };
-        const patch = (id) => {
+        const beginSew = (id, kind) => {
           const G = GARMENTS[id];
-          const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
-          if (!canMake(cost)) { showToast(`Patching needs ${matLine(cost)}.`); return; }
+          if (kind === "make" && G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
+          const cost = kind === "patch"
+            ? Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]))
+            : G.mats;
+          if (!canMake(cost)) { showToast(kind === "patch" ? `Patching needs ${matLine(cost)}.` : "Not enough materials."); return; }
           for (const [m, q] of Object.entries(cost)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
-          delete p2.wornTorn[id]; p2.wornWear[id] = (GARMENTS[id].dur || 100) * 0.35;   // a patch doesn't make it new
-          sim2.time += 25; p2.energy = clamp(p2.energy - 5, 0, 100);
-          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 0);
-          sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`); bump();
+          sim2.time += kind === "patch" ? 25 : 45;
+          p2.energy = clamp(p2.energy - (kind === "patch" ? 5 : 8), 0, 100);
+          // patching is a gentler job than cutting new — one tier easier, never expert
+          const tierKey = kind === "patch"
+            ? ({ expert: "hard", hard: "simple", simple: "easy", easy: "easy" })[sewTierFor(id)]
+            : sewTierFor(id);
+          const T9 = CFG.SEWING.tiers[tierKey];
+          setTailorPanel({ tab, sewing: { id, kind, tierKey, cfg: T9, spent: cost, misses: sewingMisses(T9.misses, lvl) } });
+        };
+        const sewDone = () => {
+          const S9 = tailorPanel.sewing; if (!S9) return;
+          const G = GARMENTS[S9.id];
+          if (S9.kind === "patch") {
+            delete p2.wornTorn[S9.id]; p2.wornWear[S9.id] = (G.dur || 100) * 0.35;   // a patch doesn't make it new
+            sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`);
+          } else {
+            p2.inv[S9.id] = (p2.inv[S9.id] || 0) + 1;
+            sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`);
+          }
+          const before9 = skillLevel(p2, "tailoring");
+          p2.skills.tailoring = (p2.skills.tailoring || 0) + taskXp("tailoring", S9.tierKey === "expert" ? 3 : S9.tierKey === "hard" ? 2 : 1);
+          if (skillLevel(p2, "tailoring") > before9) showToast(`📈 Tailoring — now ${skillTierName(p2, "tailoring")}!`);
+          setTailorPanel({ tab }); bump();
+        };
+        const sewFail = () => {
+          const S9 = tailorPanel.sewing; if (!S9) return;
+          const G = GARMENTS[S9.id];
+          const back = [];
+          for (const [m, q] of Object.entries(S9.spent)) {          // scrap the ruin for what's salvageable
+            const r = Math.floor(q * CFG.SEWING.scrapBack);
+            if (r > 0) { p2.inv[m] = (p2.inv[m] || 0) + r; back.push(`${ITEMS[m]?.emoji || ""}${r}`); }
+          }
+          p2.skills.tailoring = (p2.skills.tailoring || 0) + taskXp("tailoring", 0);   // you learn from a botch too
+          sfx.alert();
+          showToast(`✂️ The ${G.name.toLowerCase()} is ruined. Scrapped for ${back.join(" ") || "nothing worth keeping"}.`);
+          setTailorPanel({ tab }); bump();
         };
         const wearIt = (id) => {
           const G = GARMENTS[id];
@@ -13145,6 +13506,24 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <span style={{ fontWeight: 700 }}>🧵 Tailor's Bench</span>
                 <button style={S.closeBtn} onClick={() => setTailorPanel(null)}>✕</button>
               </div>
+              {/* Stage 23: the work itself — a minigame per tier, materials already committed */}
+              {tailorPanel.sewing ? (() => {
+                const S9 = tailorPanel.sewing, G = GARMENTS[S9.id], C = S9.cfg;
+                return (
+                  <div style={S.chatBody}>
+                    <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
+                      {S9.kind === "patch" ? "Patching" : "Sewing"} <b>{G.emoji} {G.name}</b> — {C.label}
+                      <br /><span style={{ opacity: 0.7, fontSize: fs - 3 }}>
+                        Tailoring {skillTierName(p2, "tailoring")}{S9.misses < 99 ? ` · you may slip ${S9.misses} time${S9.misses === 1 ? "" : "s"}` : " · take your time"}.
+                        Botch it and the piece is scrapped for about half its materials.
+                      </span>
+                    </div>
+                    {C.game === "stitch" && <StitchGame key={S9.id + S9.kind} dots={C.dots} misses={S9.misses} onDone={sewDone} onFail={sewFail} />}
+                    {C.game === "cut" && <CutGame key={S9.id + S9.kind} size={C.size} misses={S9.misses} onDone={sewDone} onFail={sewFail} />}
+                    {C.game === "needle" && <NeedleGame key={S9.id + S9.kind} reps={C.reps} misses={S9.misses} onDone={sewDone} onFail={sewFail} />}
+                  </div>
+                );
+              })() : (
               <div style={S.chatBody}>
                 <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
                   Wearing: <b>{(p2.worn || []).length ? p2.worn.map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${p2.wornTorn?.[id] ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
@@ -13187,7 +13566,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                               </span>
                             </span>
                             <button style={{ ...S.smallBtn, opacity: canMake(G.mats) && !locked ? 1 : 0.4 }} disabled={!canMake(G.mats) || locked}
-                              onClick={() => makeGarment(id)}>{locked ? "Watch only" : "Sew"}</button>
+                              onClick={() => beginSew(id, "make")}>{locked ? "Watch only" : "Sew"}</button>
                           </div>
                         );
                       })}
@@ -13220,7 +13599,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
 
                 {tab === "mend" && <>
                   <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
-                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Service skill ({skillTierName(p2, "service")}) is the tailor's craft.
+                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Tailoring ({skillTierName(p2, "tailoring")}) decides how forgiving the work is.
                   </div>
                   {(p2.worn || []).filter(id => p2.wornTorn?.[id]).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing you're wearing is torn.</div>}
                   {(p2.worn || []).filter(id => p2.wornTorn?.[id]).map(id => {
@@ -13231,12 +13610,13 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         <span style={{ fontSize: 20 }}>{G.emoji}</span>
                         <span style={{ flex: 1, fontSize: fs - 1 }}><b>{G.name}</b> <span style={{ color: "#a05252" }}>· torn</span>
                           <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>patch with {matLine(cost)}</span></span>
-                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => patch(id)}>Patch</button>
+                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => beginSew(id, "patch")}>Patch</button>
                       </div>
                     );
                   })}
                 </>}
               </div>
+              )}
             </div>
           </div>
         );
