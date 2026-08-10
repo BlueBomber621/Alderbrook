@@ -3997,6 +3997,85 @@ const ICON_ART = {
   day_dress:    k => SH.gDress(k, "#5f7f9c", "#44607a"),
   wool_coat:    k => SH.gCoat(k, "#3f4a3a", "#2c3529", true),
   quilt_vest:   k => SH.gQuilt(k, "#4a3f5f", "#352c45"),
+  /* ---------- the wild: drawn, not borrowed from a font ---------- */
+  beast_hare:   k => { k.rpg([[-0.06, -0.30], [0.02, -0.34], [0.06, -0.16], [-0.02, -0.12]], "#8a7358", 0.03);   // ears, back one first
+                       k.rpg([[0.06, -0.31], [0.14, -0.33], [0.14, -0.14], [0.06, -0.12]], "#a89070", 0.03);
+                       k.rpg([[0.08, -0.29], [0.12, -0.30], [0.12, -0.17], [0.08, -0.16]], "#d8bda0", 0.02);
+                       k.blob(-0.06, 0.06, 0.24, 0.19, "#a89070", 7, 0.09, 0.4);                                 // the crouched body
+                       k.blob(-0.20, 0.10, 0.10, 0.08, "#efe7d2", 5, 0.16, 1.1);                                 // the scut
+                       k.rpg([[0.02, -0.14], [0.18, -0.16], [0.22, 0.02], [0.06, 0.06]], "#b8a084", 0.07);        // head
+                       k.rpg([[0.16, -0.08], [0.24, -0.05], [0.24, 0.02], [0.16, 0.02]], "#c9b498", 0.04);        // muzzle
+                       k.ci(0.14, -0.06, 0.032, "#20262b"); k.ci(0.235, -0.015, 0.018, "#6b4a3a");               // eye, nose
+                       k.rpg([[-0.10, 0.18], [0.06, 0.16], [0.08, 0.26], [-0.10, 0.27]], "#8a7358", 0.05);        // haunch
+                       k.rpg([[0.06, 0.20], [0.20, 0.19], [0.20, 0.26], [0.06, 0.26]], "#a89070", 0.03); },       // forelegs
+  beast_stag:   k => { for (const s of [-1, 1]) {                                                                 // antlers
+                         k.ln(0.02 + s * 0.05, -0.20, 0.02 + s * 0.12, -0.40, 0.032, "#c2a878");
+                         k.ln(0.02 + s * 0.09, -0.30, 0.02 + s * 0.20, -0.34, 0.026, "#c2a878");
+                         k.ln(0.02 + s * 0.11, -0.36, 0.02 + s * 0.19, -0.44, 0.026, "#c2a878");
+                       }
+                       k.rpg([[-0.30, -0.02], [-0.06, -0.10], [0.14, -0.06], [0.16, 0.10], [-0.08, 0.16], [-0.30, 0.10]],
+                             "#6d4a2c", [0.09, 0.09, 0.07, 0.07, 0.09, 0.09]);                                    // body
+                       k.rpg([[-0.24, -0.04], [-0.06, -0.09], [0.06, -0.05], [-0.10, 0.02]], "#83593a", 0.06);    // its lit back
+                       k.ln(0.06, -0.04, 0.04, -0.22, 0.075, "#6d4a2c");                                          // neck
+                       k.rpg([[-0.04, -0.30], [0.10, -0.28], [0.16, -0.14], [0.00, -0.14]], "#7a5330", [0.06, 0.06, 0.05, 0.05]);
+                       k.rpg([[0.10, -0.24], [0.20, -0.20], [0.18, -0.13], [0.09, -0.15]], "#8a6238", 0.04);      // muzzle
+                       k.ci(0.05, -0.23, 0.03, "#20262b"); k.ci(0.185, -0.17, 0.018, "#3a2a20");
+                       for (const [x, sk] of [[-0.22, 0.02], [-0.10, -0.01], [0.04, 0.01], [0.12, -0.02]])        // legs
+                         k.ln(x, 0.10, x + sk, 0.34, 0.036, "#5c3e24");
+                       k.rpg([[-0.30, -0.01], [-0.36, -0.12], [-0.29, 0.06]], "#efe7d2", 0.03); },                // tail
+
+  /* ---------- civic upgrades ---------- */
+  up_lamps:     k => { k.rrc(-0.09, 0.24, 0.18, 0.09, "#4a4a44", 0.02);                                           // base
+                       k.ln(0, 0.26, 0, -0.10, 0.045, "#5f5f56");                                                 // post
+                       k.rpg([[-0.15, -0.10], [0.15, -0.10], [0.10, -0.26], [-0.10, -0.26]], "#e8c46a", [0.03, 0.03, 0.04, 0.04]);
+                       k.rpg([[-0.10, -0.13], [0.10, -0.13], [0.07, -0.23], [-0.07, -0.23]], "#fbe9a8", 0.03);    // the lit glass
+                       k.rrc(-0.13, -0.31, 0.26, 0.06, "#4a4a44", 0.02);                                          // the cap
+                       for (const s of [-1, 1]) k.ln(s * 0.04, -0.34, s * 0.16, -0.30, 0.02, "#e8c46a"); },       // the glow
+  up_roads:     k => { k.rpg([[-0.20, -0.30], [0.20, -0.30], [0.34, 0.30], [-0.34, 0.30]], "#5f5f5a", 0.02);      // the road, in perspective
+                       k.rpg([[-0.19, -0.30], [-0.15, -0.30], [-0.27, 0.30], [-0.33, 0.30]], "#a8a49a", 0.01);    // kerbs
+                       k.rpg([[0.15, -0.30], [0.19, -0.30], [0.33, 0.30], [0.27, 0.30]], "#a8a49a", 0.01);
+                       for (const [y, h, w] of [[-0.24, 0.09, 0.020], [-0.06, 0.12, 0.028], [0.14, 0.15, 0.038]])
+                         k.rrc(-w, y, w * 2, h, "#efe7d2", 0.008); },                                             // centre dashes
+  up_clinic:    k => { k.rpg([[-0.28, -0.06], [0.00, -0.30], [0.28, -0.06], [0.28, 0.28], [-0.28, 0.28]], "#e8e2d4", [0.03, 0.05, 0.03, 0.04, 0.04]);
+                       k.rpg([[-0.28, -0.06], [0.00, -0.30], [0.28, -0.06], [0.00, -0.14]], "#c9c2b2", 0.04);     // the roof
+                       k.rrc(-0.05, -0.02, 0.10, 0.24, "#c04a4a", 0.02);                                          // the cross
+                       k.rrc(-0.12, 0.05, 0.24, 0.10, "#c04a4a", 0.02); },
+
+  /* ---------- campaign promises ---------- */
+  pl_taxcut:    k => { k.rrc(-0.32, -0.30, 0.06, 0.58, "#8a8478", 0.02);                                          // the axes
+                       k.rrc(-0.32, 0.22, 0.62, 0.06, "#8a8478", 0.02);
+                       for (const [i, h] of [0.34, 0.24, 0.15, 0.08].entries())
+                         k.rrc(-0.20 + i * 0.13, 0.22 - h, 0.09, h, "#7fa9c4", 0.015);                            // bars, falling
+                       k.ln(-0.22, -0.16, 0.20, 0.06, 0.038, "#4e8a4e");                                          // the trend line
+                       k.rpg([[0.22, 0.08], [0.10, 0.06], [0.20, -0.04]], "#4e8a4e", 0.02); },                    // its arrowhead
+  pl_build:     k => { k.rrc(-0.30, 0.22, 0.60, 0.08, "#8a8478", 0.02);                                           // ground
+                       k.rrc(-0.26, -0.06, 0.24, 0.28, "#c9a45e", 0.02);                                          // a built storey
+                       k.rrc(-0.22, 0.00, 0.07, 0.08, "#7a6a4a", 0.01); k.rrc(-0.11, 0.00, 0.07, 0.08, "#7a6a4a", 0.01);
+                       k.rrc(-0.26, -0.14, 0.24, 0.08, "#e0bb78", 0.02);                                          // the one going up
+                       k.ln(0.10, 0.22, 0.10, -0.30, 0.04, "#c05a4a");                                            // the crane
+                       k.ln(0.10, -0.28, 0.32, -0.28, 0.04, "#c05a4a");
+                       k.ln(0.30, -0.26, 0.30, -0.12, 0.018, "#5f5f56");
+                       k.rrc(0.24, -0.12, 0.12, 0.10, "#8a6a3f", 0.02); },                                        // the load
+  pl_safety:    k => { k.rpg([[0, -0.32], [0.28, -0.20], [0.26, 0.06], [0, 0.32], [-0.26, 0.06], [-0.28, -0.20]],
+                             "#5f7f9c", [0.04, 0.05, 0.05, 0.05, 0.05, 0.05]);
+                       k.rpg([[0, -0.25], [0.21, -0.16], [0.20, 0.04], [0, 0.24], [-0.20, 0.04], [-0.21, -0.16]],
+                             "#7fa4c4", [0.04, 0.05, 0.05, 0.05, 0.05, 0.05]);
+                       k.ln(-0.11, -0.02, -0.02, 0.10, 0.045, "#efe7d2");                                         // the tick
+                       k.ln(-0.03, 0.10, 0.13, -0.12, 0.045, "#efe7d2"); },
+  pl_charity:   k => { k.rrc(-0.30, -0.10, 0.60, 0.16, "#c05a76", 0.02);                                          // the lid
+                       k.rrc(-0.25, 0.06, 0.50, 0.24, "#d86a8a", 0.02);                                           // the box
+                       k.rrc(-0.06, -0.12, 0.12, 0.42, "#f0dc72", 0.015);                                         // ribbon
+                       k.rrc(-0.31, -0.06, 0.62, 0.06, "#f0dc72", 0.015);
+                       for (const s of [-1, 1])                                                                   // the bow
+                         k.rpg([[0, -0.12], [s * 0.16, -0.24], [s * 0.20, -0.13], [s * 0.05, -0.09]], "#f0dc72", 0.04); },
+  pl_clean:     k => { k.blob(0.02, 0.02, 0.24, 0.17, "#f4f1e8", 7, 0.10, 0.5);                                   // the body
+                       k.rpg([[-0.16, -0.04], [0.10, -0.12], [0.16, 0.02], [-0.10, 0.10]], "#e2ddd0", 0.06);      // the wing
+                       k.rpg([[0.18, -0.06], [0.32, -0.10], [0.34, 0.02], [0.20, 0.06]], "#f8f6ef", 0.05);        // head
+                       k.ci(0.27, -0.04, 0.022, "#3a352c");
+                       k.tri([0.33, -0.02], [0.40, 0.00], [0.33, 0.03], "#d8a93c");                               // beak
+                       k.rpg([[-0.22, 0.00], [-0.34, -0.08], [-0.30, 0.10], [-0.18, 0.08]], "#e2ddd0", 0.05);     // tail
+                       k.rpg([[0.02, 0.14], [0.14, 0.12], [0.10, 0.22]], "#8aa06a", 0.02); },                     // the olive sprig
+
   linen_skirt:  k => SH.gSkirt(k, "#efe7d2", "#cfc3a4"),
   canvas_skirt: k => SH.gSkirt(k, "#7a8a5a", "#5c6b3f"),
   wool_skirt:   k => SH.gSkirt(k, "#5f3f4a", "#452c34"),
@@ -13793,12 +13872,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       const S9 = BEAST_SPECIES[e.sp];
       ctx.fillStyle = "rgba(0,0,0,0.22)";
       ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.3, T * 0.3, T * 0.11, 0, 0, 7); ctx.fill();
-      /* fillStyle alpha MULTIPLIES a colour-emoji glyph — leaving the shadow's 0.22 in place
-         painted every animal at a fifth opacity. They looked like ghosts. Reset to solid first. */
-      ctx.fillStyle = "#000";
-      ctx.font = `${Math.floor(T * 0.85)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(S9.emoji, cx, cy);
-      ctx.textBaseline = "alphabetic";
+      /* the wild is drawn like everything else now, not borrowed from the system font */
+      drawItemIcon(ctx, `beast_${e.sp}`, cx, cy, T * 0.95);
       if (e.ref.health < S9.hp) {   // hurt game shows it — you can tell what's nearly down
         const w = T * 0.62, frac = clamp(e.ref.health / S9.hp, 0, 1);
         ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(cx - w / 2, cy - T * 0.52, w, T * 0.09);
@@ -14667,9 +14742,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   <div style={{ ...S.folkCard }}>
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>📜 Your promises, judged</div>
                     {r.pledgeVerdict.rows.map(row => (
-                      <div key={row.id} style={{ fontSize: fs - 1, display: "flex", gap: 6 }}>
+                      <div key={row.id} style={{ fontSize: fs - 1, display: "flex", gap: 6, alignItems: "center" }}>
                         <span>{row.kept ? "✅" : "❌"}</span>
-                        <span style={{ flex: 1 }}>{row.emoji} {row.blurb} <span style={{ opacity: 0.6 }}>· {row.progress}</span></span>
+                        <ItemIcon id={`pl_${row.id}`} size={18} />
+                        <span style={{ flex: 1 }}>{row.blurb} <span style={{ opacity: 0.6 }}>· {row.progress}</span></span>
                       </div>
                     ))}
                     <div style={{ fontSize: fs - 3, opacity: 0.7, marginTop: 4 }}>
@@ -15026,7 +15102,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   const on = picked.includes(id);
                   return (
                     <div key={id} onClick={() => toggle(id)} style={{ ...S.folkCard, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, outline: on ? "2px solid #5a8a4a" : "none", opacity: on || picked.length < need ? 1 : 0.5 }}>
-                      <span style={{ fontSize: 20 }}>{P.emoji}</span>
+                      <ItemIcon id={`pl_${id}`} size={22} />
                       <span style={{ flex: 1 }}><b>{P.name}</b><br /><span style={{ fontSize: fs - 3, opacity: 0.7 }}>{P.blurb}</span></span>
                       <span style={{ fontSize: 18 }}>{on ? "☑️" : "⬜"}</span>
                     </div>
@@ -15462,7 +15538,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         const owned = !!sim2.townUpgrades?.[t]?.[id];
                         return (
                           <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, opacity: owned ? 0.5 : 1, marginBottom: 4 }}>
-                            <span style={{ flex: 1, fontSize: fs - 1 }}>{u.emoji} <b>{u.name}</b> · {u.cost}c <span style={{ opacity: 0.6 }}>· {u.blurb}</span></span>
+                            <ItemIcon id={`up_${id}`} size={20} />
+                            <span style={{ flex: 1, fontSize: fs - 1 }}><b>{u.name}</b> · {u.cost}c <span style={{ opacity: 0.6 }}>· {u.blurb}</span></span>
                             {owned ? <span style={{ fontSize: fs - 2, opacity: 0.6 }}>done</span>
                               : <button style={{ ...S.smallBtn, opacity: (sim2.treasury[t] || 0) >= u.cost ? 1 : 0.4 }} disabled={(sim2.treasury[t] || 0) < u.cost} onClick={() => fund(id)}>Fund</button>}
                           </div>
