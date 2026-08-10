@@ -338,6 +338,10 @@ const CFG = {
        feel like a story, not a coin flip. */
     priceWeight: 0.45,
     braggableAt: 20,           // a haul worth this much per item earns its own line
+    /* The gilded crate is the same idea, built better: one more item, and a
+       flatter weight curve so the dear end of the pool is genuinely in reach. */
+    shinyDraws: 4,
+    shinyWeight: 0.24,
   },
   REQUISITION: {   // Stage 11: how a contraband commission becomes legal
     /* A wright will not take an order for a crossbow — it's contraband and their licence is
@@ -921,6 +925,7 @@ const ITEMS = {
   tropical_fish:{ name: "Tropical Fish",  emoji: "🐠", price: 12, cat: "ingredient", eat: { hunger: 12 } },   // Stage 6: a rare hard-fishing catch
   river_titan:  { name: "River Titan",    emoji: "🐋", price: 48, cat: "ingredient", eat: { hunger: 30 } },   // Stage 12: the EXPERT catch — three stages of fight for one of these
   goodie_crate: { name: "Goodie Crate",   emoji: "🎲", price: 0,  cat: "misc",    use: "goodie" },            // Stage 6: open for 3 random items
+  shiny_crate:  { name: "Gilded Crate",   emoji: "🎁", price: 0,  cat: "misc",    use: "goodie" },            // the good one: 4 items, weighted kinder
   fish_stew:    { name: "Hearty Fish Stew", emoji: "🫕", price: 16, cat: "food",   eat: { hunger: 75, energy: 15 } },   // Stage 6: hard cook from tropical fish
   /* Stage 22 — not a real item: the placeholder a recipe shows when it'll take ANY cut.
      Never held in a pack; resolveNeeds() swaps it for the cheapest meat on the shelf. */
@@ -930,7 +935,7 @@ const ITEMS = {
   flower:       { name: "Wildflowers",    emoji: "🌼", price: 2,  cat: "misc" },
   cotton:       { name: "Raw Cotton",     emoji: "🤍", price: 3,  cat: "material" },
   pelt:         { name: "Pelt",           emoji: "🟫", price: 7,  cat: "material" },
-  finefiber:    { name: "Fine Fibre",     emoji: "🧵", price: 14, cat: "material" },
+  finefiber:    { name: "Fine Fabric",     emoji: "🧵", price: 14, cat: "material" },
   cloth:        { name: "Bolt of Cloth",  emoji: "🧶", price: 9,  cat: "material" },
   flour:        { name: "Flour",          emoji: "🌾", price: 2,  cat: "ingredient" },
   sugar:        { name: "Sugar",          emoji: "🍬", price: 2,  cat: "ingredient" },   // Stage 3.6: baking staple
@@ -1148,7 +1153,7 @@ const SHOP_STOCK = {
   cafe:     ["meal", "coffee", "bread", "flour"],
   cafe_s:   ["coffee", "tea", "cookies"],
   store_f:  ["bread", "water", "veg", "flour"],
-  tailor_f: ["cloth", "finefiber", "cotton", "work_shirt", "cloth_cap"],   // Stage 17: the tailor sells cloth, fibre and ready-made clothes
+  tailor_f: ["cloth", "finefiber", "cotton", "work_shirt", "cloth_cap"],   // Stage 17: the tailor sells cloth, fabric and ready-made clothes
   grill_f:  ["stew", "bread", "coffee"],
   market_s: ["bread", "veg", "fruit", "water", "milk"],
   workshop_s: ["saw", "hammer", "screwdriver", "wood", "rock", "pipe", "heatcoil", "nozzle"],   // tools, materials, and REPAIR PARTS: the owner's extra sales
@@ -2387,6 +2392,28 @@ const poly = (ctx, cx, cy, T, pts, fill) => {
   pts.forEach(([dx, dy], i) => { const x = cx + dx * T, y = cy + dy * T; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
   ctx.closePath(); ctx.fill();
 };
+/* The same polygon with its corners eased off. `r` is a corner radius in icon
+   units, either one number for the whole shape or an array giving a radius per
+   vertex — 0 keeps that corner sharp, which is how a fish stays pointy at the
+   tail while its body goes soft. Each radius is clamped to half the shorter
+   adjacent edge, since arcTo distorts badly once it can't fit the fillet. */
+const rpoly = (ctx, cx, cy, T, pts, fill, r = 0.06) => {
+  const P = pts.map(([dx, dy]) => [cx + dx * T, cy + dy * T]);
+  const n = P.length;
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const want = (i) => (Array.isArray(r) ? (r[i] ?? 0) : r) * T;
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  const s = mid(P[0], P[1]);
+  ctx.moveTo(s[0], s[1]);
+  for (let i = 1; i <= n; i++) {
+    const v = P[i % n], w = P[(i + 1) % n], u = P[(i - 1 + n) % n];
+    const m = mid(v, w);
+    const lim = Math.min(Math.hypot(v[0] - u[0], v[1] - u[1]), Math.hypot(w[0] - v[0], w[1] - v[1])) / 2;
+    ctx.arcTo(v[0], v[1], m[0], m[1], Math.max(0, Math.min(want(i % n), lim)));
+  }
+  ctx.closePath(); ctx.fill();
+};
 const FLORA = {
   /* --- the common hedgerow: everywhere, most of the year --- */
   bramble: {
@@ -2525,7 +2552,7 @@ const FLORA = {
 /* =====================================================================
    STAGE 17 — THE WARDROBE. Three slots (head / torso / legs), three
    weights of clothing, and armour on top. Everything here is made at a
-   TAILOR BENCH from cotton, pelts and fine fibre.
+   TAILOR BENCH from cotton, pelts and fine fabric.
      warmth  — negative is airy (helps in heat), positive insulates (helps in cold)
      tough   — added toughness: how much punishment you soak before you go down
      endur   — what it costs your maximum energy to carry it around
@@ -2563,7 +2590,7 @@ const garmentsOfBand = (band) => Object.entries(GARMENTS).filter(([, G]) => G.we
 /* the two things the bench makes that aren't clothes: the fibre everything good needs, and
    the bolt of cloth the tailor sells over the counter. */
 const TAILOR_MATS = {
-  finefiber: { name: "Fine Fibre",     emoji: "🧵", mats: { cotton: 2, fiber: 3 }, out: 1 },   // 2 cotton + 3 grass bundles
+  finefiber: { name: "Fine Fabric",     emoji: "🧵", mats: { cotton: 2, fiber: 3 }, out: 1 },   // 2 cotton + 3 grass bundles
   cloth:     { name: "Bolt of Cloth",  emoji: "🧶", mats: { cotton: 3, finefiber: 1 }, out: 1 },
 };
 const PATCH_FRACTION = 0.45;   // patching a torn piece costs less than half of making a new one
@@ -2977,7 +3004,30 @@ function iconKit(ctx, cx, cy, T) {
     pg([[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]], f);
   };
   const tri = (a, b, c, f) => pg([a, b, c], f);
-  return { pg, rc, el, ci, ln, tri };
+  const rpg = (pts, f, r) => rpoly(ctx, cx, cy, T, pts, f, r);
+  const rrc = (x, y, w, h, f, r = 0.05) => rpg([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], f, r);
+  /* an organic lump — a circle pushed in and out around its rim. Dough, cotton
+     bolls and berries all want this instead of a clean ellipse. */
+  const blob = (x, y, rx, ry, f, bumps = 7, wob = 0.16, phase = 0.4) => {
+    const pts = [];
+    for (let i = 0; i < bumps * 2; i++) {
+      const a = (i / (bumps * 2)) * Math.PI * 2 + phase;
+      const g = 1 + (i % 2 ? -wob : wob);
+      pts.push([x + Math.cos(a) * rx * g, y + Math.sin(a) * ry * g]);
+    }
+    rpg(pts, f, Math.min(rx, ry) * 0.55);
+  };
+  /* Lay a tool along a line and place its parts against that line instead of
+     guessing coordinates: `at(t, s)` is a fraction t from butt to tip, offset s
+     across it. This is what keeps a hammer head square to its own handle. */
+  const ax = (x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
+    const at = (t, s = 0) => [x1 + dx * t + nx * s, y1 + dy * t + ny * s];
+    return { at, ux, uy, nx, ny, L,
+      bar: (t0, t1, w, f, r) => rpg([at(t0, -w), at(t1, -w), at(t1, w), at(t0, w)], f, r ?? 0) };
+  };
+  return { pg, rc, el, ci, ln, tri, rpg, rrc, blob, ax };
 }
 
 /* shared assemblies — the reason this stays a family */
@@ -2987,8 +3037,9 @@ const SH = {
     k.el(0, 0.17, 0.34, 0.10, PAL.plate);
     if (food) food(k);
   },
-  bowl: (k, fill) => {
-    k.pg([[-0.32, -0.02], [0.32, -0.02], [0.22, 0.26], [-0.22, 0.26]], PAL.rim);
+  bowl: (k, fill) => {                                 // sharp at the rim, rounded where it sits
+    k.rpg([[-0.32, -0.02], [0.32, -0.02], [0.22, 0.27], [-0.22, 0.27]], PAL.rim, [0.02, 0.02, 0.17, 0.17]);
+    k.rpg([[-0.26, 0.13], [0.26, 0.13], [0.20, 0.27], [-0.20, 0.27]], "#bab08f", [0.03, 0.03, 0.15, 0.15]);   // shadow under the belly
     k.el(0, -0.02, 0.32, 0.09, PAL.plate);
     k.el(0, -0.01, 0.26, 0.07, fill);
   },
@@ -3007,22 +3058,32 @@ const SH = {
     k.pg([[-0.17, -0.16], [0.17, -0.16], [0.13, 0.27], [-0.13, 0.27]], drink);
     if (straw) k.ln(0.06, -0.36, -0.02, -0.12, 0.06, straw);
   },
+  /* rounded along the flanks, still sharp where a fish should be sharp: the
+     snout, and the two points of the tail. */
   fishBody: (k, body, dk) => {
-    k.pg([[-0.34, 0.00], [-0.10, -0.20], [0.16, -0.14], [0.30, 0.00], [0.16, 0.14], [-0.10, 0.20]], body);
-    k.tri([0.30, 0.00], [0.44, -0.14], [0.44, 0.14], dk);       // tail
-    k.tri([-0.04, -0.19], [0.08, -0.32], [0.12, -0.16], dk);    // dorsal
-    k.ci(-0.20, -0.02, 0.045, "#20262b");
+    k.tri([0.26, 0.00], [0.44, -0.15], [0.44, 0.15], dk);       // tail, behind the body
+    k.rpg([[-0.36, 0.00], [-0.12, -0.19], [0.14, -0.15], [0.30, 0.00], [0.14, 0.15], [-0.12, 0.19]],
+          body, [0, 0.10, 0.10, 0.05, 0.10, 0.10]);
+    k.tri([-0.04, -0.18], [0.08, -0.32], [0.14, -0.15], dk);    // dorsal
+    k.tri([-0.02, 0.17], [0.06, 0.28], [0.12, 0.14], dk);       // pelvic
+    k.rpg([[-0.12, -0.13], [0.10, -0.10], [0.06, -0.02], [-0.14, -0.05]], "#ffffff22", 0.05);   // sheen along the back
+    k.ci(-0.21, -0.02, 0.048, "#20262b");
   },
   haft: (k, c = PAL.wood) => k.ln(-0.26, 0.36, 0.10, -0.16, 0.10, c),
+  /* a risen loaf: domed and rounded end to end, dark underneath where it sat on
+     the tray, pale on top where the light falls, with slashes cut across it. */
   loaf: (k, top = PAL.crust, cut = PAL.crumb) => {
-    k.pg([[-0.36, 0.20], [-0.34, -0.02], [-0.22, -0.16], [0.00, -0.20], [0.22, -0.16], [0.34, -0.02], [0.36, 0.20]], top);
-    k.pg([[-0.36, 0.12], [0.36, 0.12], [0.34, 0.20], [-0.34, 0.20]], "#a8703a");
+    k.rpg([[-0.36, 0.21], [-0.34, -0.02], [-0.20, -0.17], [0.00, -0.21], [0.20, -0.17], [0.34, -0.02], [0.36, 0.21]],
+          top, [0.13, 0.10, 0.10, 0.10, 0.10, 0.10, 0.13]);
+    k.rpg([[-0.35, 0.09], [0.35, 0.09], [0.33, 0.21], [-0.33, 0.21]], "#a06a33", [0.03, 0.03, 0.12, 0.12]);
+    k.rpg([[-0.25, -0.09], [0.00, -0.16], [0.25, -0.09], [0.00, -0.01]], "#d8a25c", 0.09);       // the lit crown
     for (const x of [-0.16, 0.00, 0.16]) k.ln(x - 0.05, -0.10, x + 0.05, 0.02, 0.045, cut);
   },
   gem: (k, c, dk) => { k.tri([0, -0.26], [-0.22, 0.02], [0.22, 0.02], c); k.tri([-0.22, 0.02], [0.22, 0.02], [0, 0.28], dk); },
-  sack: (k, c, tie = PAL.twine) => {
-    k.pg([[-0.26, 0.32], [-0.30, -0.06], [-0.12, -0.22], [0.12, -0.22], [0.30, -0.06], [0.26, 0.32]], c);
-    k.rc(-0.14, -0.26, 0.28, 0.07, tie);
+  sack: (k, c, tie = PAL.twine) => {                   // soft everywhere it bulges, creased at the tie
+    k.rpg([[-0.26, 0.32], [-0.30, -0.06], [-0.12, -0.22], [0.12, -0.22], [0.30, -0.06], [0.26, 0.32]],
+          c, [0.12, 0.14, 0.04, 0.04, 0.14, 0.12]);
+    k.rrc(-0.14, -0.26, 0.28, 0.07, tie, 0.025);
   },
   pouchLeaf: (k, c = PAL.leaf) => {
     k.pg([[0.00, -0.30], [0.22, -0.06], [0.00, 0.28], [-0.22, -0.06]], c);
@@ -3035,26 +3096,62 @@ const SH = {
 const ICON_ART = {
   /* ---------- bread, baking, sweets ---------- */
   bread:        k => SH.loaf(k),
-  fresh_bread:  k => { k.pg([[-0.38, 0.14], [-0.30, -0.10], [0.30, -0.16], [0.38, 0.08], [0.30, 0.22], [-0.30, 0.26]], "#d59a4e");
-                       for (const x of [-0.18, -0.02, 0.14]) k.ln(x, -0.10, x + 0.06, 0.16, 0.045, PAL.crumb); },
-  croissant:    k => { k.pg([[-0.36, 0.22], [-0.30, -0.06], [-0.10, -0.20], [0.10, -0.20], [0.30, -0.06], [0.36, 0.22], [0.20, 0.14], [0.00, 0.06], [-0.20, 0.14]], "#dda85a");
-                       for (const x of [-0.16, 0.00, 0.16]) k.ln(x, -0.14, x, 0.10, 0.05, "#c08e42");
-                       k.ci(-0.28, 0.14, 0.07, "#e8c07a"); k.ci(0.28, 0.14, 0.07, "#e8c07a"); },
+  /* a bâtard: round at both ends, near-flat along the top, dark where it sits,
+     with the light catching the ridges between the slashes. */
+  fresh_bread:  k => { k.rpg([[-0.38, 0.06], [-0.30, -0.13], [0.00, -0.17], [0.30, -0.13], [0.38, 0.06], [0.30, 0.24], [0.00, 0.27], [-0.30, 0.24]],
+                             "#d59a4e", [0.15, 0.10, 0.08, 0.10, 0.15, 0.14, 0.10, 0.14]);
+                       k.rpg([[-0.36, 0.11], [0.36, 0.11], [0.30, 0.25], [-0.30, 0.25]], "#a8703a", [0.04, 0.04, 0.14, 0.14]);
+                       k.rpg([[-0.28, -0.08], [0.00, -0.13], [0.28, -0.08], [0.00, 0.02]], "#eab871", 0.10);
+                       for (const x of [-0.17, 0.00, 0.17]) k.ln(x - 0.05, -0.07, x + 0.05, 0.09, 0.05, PAL.crumb); },
+  /* the classic crescent: fat middle, tapered horns, every lobe rounded */
+  croissant:    k => { k.rpg([[-0.37, 0.16], [-0.26, -0.10], [-0.09, -0.21], [0.09, -0.21], [0.26, -0.10], [0.37, 0.16], [0.22, 0.11], [0.00, 0.03], [-0.22, 0.11]],
+                             "#dda85a", [0.06, 0.11, 0.11, 0.11, 0.11, 0.06, 0.09, 0.11, 0.09]);
+                       for (const x of [-0.15, 0.00, 0.15]) k.ln(x, -0.15, x, 0.06, 0.05, "#c08e42");
+                       k.rpg([[-0.20, -0.13], [0.00, -0.18], [0.20, -0.13], [0.00, -0.05]], "#f0cd8e", 0.07);
+                       k.ci(-0.30, 0.11, 0.065, "#e8c07a"); k.ci(0.30, 0.11, 0.065, "#e8c07a"); },
   cookies:      k => { k.ci(0, 0.04, 0.30, "#c9944e"); for (const [x, y] of [[-0.10, -0.06], [0.10, 0.00], [-0.02, 0.14], [0.14, -0.12]]) k.ci(x, y, 0.045, PAL.choc); },
-  cake:         k => { k.rc(-0.30, -0.02, 0.60, 0.14, PAL.cream); k.rc(-0.26, 0.12, 0.52, 0.14, "#e6b07a");
-                       k.pg([[-0.30, -0.02], [0.30, -0.02], [0.24, -0.12], [-0.24, -0.12]], PAL.rose); k.ci(0, -0.18, 0.06, "#c0344f"); },
+  /* an actual layer cake: sponge, cream, sponge, cream, sponge — read from the side */
+  cake:         k => { k.rrc(-0.31, -0.05, 0.62, 0.09, "#e0b077", 0.02);   // top sponge
+                       k.rrc(-0.32, 0.04, 0.64, 0.05, PAL.cream, 0.015);   // filling
+                       k.rrc(-0.30, 0.09, 0.60, 0.09, "#d8a468", 0.02);    // middle sponge
+                       k.rrc(-0.31, 0.18, 0.62, 0.05, PAL.cream, 0.015);   // filling
+                       k.rrc(-0.29, 0.23, 0.58, 0.07, "#c9954f", 0.03);    // base sponge
+                       k.rpg([[-0.31, -0.05], [0.31, -0.05], [0.25, -0.15], [-0.25, -0.15]], PAL.rose, 0.04);   // icing
+                       for (const x of [-0.16, 0.16]) k.ci(x, -0.11, 0.035, "#f2c8d4");
+                       k.ci(0, -0.20, 0.06, "#c0344f"); k.tri([0.03, -0.25], [0.13, -0.30], [0.05, -0.21], PAL.leaf); },
   pie:          k => { k.el(0, 0.10, 0.36, 0.16, "#cf9550"); k.el(0, 0.04, 0.30, 0.13, PAL.berry);
                        k.ln(-0.22, 0.00, 0.22, 0.10, 0.05, "#cf9550"); k.ln(-0.20, 0.12, 0.24, -0.02, 0.05, "#cf9550"); },
   herb_tart:    k => { k.el(0, 0.10, 0.36, 0.16, "#c99a58"); k.el(0, 0.05, 0.29, 0.12, "#6d8c46");
-                       for (const [x, y] of [[-0.12, 0.02], [0.10, 0.08], [0.00, 0.12]]) k.ci(x, y, 0.045, PAL.leaf); },
+                       for (const [x, y] of [[-0.12, 0.02], [0.10, 0.08], [0.00, 0.12]]) k.ci(x, y, 0.045, PAL.leaf);
+                       for (const [x, y] of [[-0.18, 0.08], [-0.04, 0.01], [0.06, 0.13], [0.17, 0.03], [0.00, 0.07], [-0.10, 0.13], [0.13, 0.09]])
+                         k.rpg([[x - 0.026, y], [x, y - 0.020], [x + 0.026, y], [x, y + 0.020]], "#b8c9a2", 0.012); },   // dried flakes scattered over
   game_pie:     k => { k.el(0, 0.10, 0.36, 0.16, "#b5813f"); k.el(0, 0.04, 0.29, 0.12, PAL.meatDk);
                        k.tri([-0.10, -0.02], [0.00, -0.14], [0.10, -0.02], "#d8ab62"); },
-  candy_apple:  k => { k.ln(0, -0.14, 0, 0.36, 0.05, PAL.wood); k.ci(0, -0.10, 0.24, "#c03a4a"); k.ci(-0.08, -0.18, 0.06, "#e88a92"); },
-  chocolate:    k => { k.rc(-0.28, -0.20, 0.56, 0.42, PAL.choc);
-                       for (const x of [-0.28, -0.10, 0.08]) k.rc(x + 0.02, -0.18, 0.14, 0.18, "#63402c"); },
-  sugar:        k => { SH.sack(k, PAL.linen); k.rc(-0.10, -0.02, 0.20, 0.14, "#fff"); },
-  flour:        k => { SH.sack(k, "#e6dcc2"); k.pg([[-0.10, 0.04], [0.00, -0.08], [0.10, 0.04], [0.00, 0.14]], "#c8b98f"); },
-  dough:        k => { SH.bowl(k, PAL.dough); k.ci(0.02, -0.02, 0.13, "#f0e2bd"); },
+  /* toffee still running off the bottom and setting into lumps */
+  candy_apple:  k => { k.ln(0, -0.14, 0, 0.38, 0.05, PAL.wood);
+                       k.ci(0, -0.10, 0.24, "#c03a4a");
+                       k.rpg([[-0.19, 0.04], [0.19, 0.04], [0.15, 0.20], [0.05, 0.15], [-0.03, 0.24], [-0.13, 0.16]], "#a82b3c", [0.06, 0.06, 0.07, 0.06, 0.07, 0.06]);
+                       k.ci(-0.05, 0.25, 0.055, "#a82b3c"); k.ci(0.11, 0.21, 0.042, "#a82b3c");
+                       k.ci(-0.08, -0.18, 0.06, "#e88a92"); k.ci(0.10, -0.20, 0.032, "#e88a92"); },
+  /* half out of its wrapper — the foil peeled back off the top-left corner */
+  chocolate:    k => { k.rpg([[-0.34, -0.26], [0.16, -0.30], [0.20, 0.20], [-0.30, 0.24]], "#3f6ea8", 0.03);   // the blue wrapper behind
+                       k.rpg([[-0.34, -0.26], [-0.06, -0.28], [-0.14, -0.10], [-0.32, -0.06]], "#5b8cc4", 0.03);  // its lit fold
+                       k.rrc(-0.22, -0.18, 0.52, 0.40, PAL.choc, 0.03);                                        // the bar, sliding out
+                       for (const x of [-0.20, -0.03, 0.14]) k.rrc(x + 0.015, -0.16, 0.15, 0.17, "#63402c", 0.02);
+                       for (const x of [-0.20, -0.03, 0.14]) k.rrc(x + 0.015, 0.03, 0.15, 0.17, "#63402c", 0.02);
+                       k.rpg([[0.30, -0.18], [0.36, -0.14], [0.36, 0.18], [0.30, 0.22]], "#2f1d14", 0.02); },   // the cut edge, in shadow
+  sugar:        k => { SH.sack(k, PAL.linen); k.rrc(-0.10, -0.02, 0.20, 0.14, "#fff", 0.035);
+                       for (const [x, y] of [[-0.03, 0.02], [0.05, 0.08]]) k.rrc(x, y, 0.05, 0.05, "#e8e4d8", 0.015); },
+  flour:        k => { SH.sack(k, "#e6dcc2"); k.rpg([[-0.10, 0.04], [0.00, -0.08], [0.10, 0.04], [0.00, 0.14]], "#c8b98f", 0.035);
+                       k.ci(-0.16, 0.16, 0.03, "#f4eee0"); k.ci(0.15, 0.12, 0.025, "#f4eee0"); },
+  /* a clump of dough slumped onto the board: lumpy on top, spread and flattened
+     where it meets the surface, with the board's shadow keeping it grounded. */
+  dough:        k => { k.el(0.00, 0.24, 0.34, 0.07, "#d8c9a4");                       // the spread foot
+                       k.blob(0.00, 0.22, 0.30, 0.10, "#e8d7b0", 6, 0.10, 0.9);
+                       k.blob(-0.01, 0.05, 0.27, 0.22, "#e8d7b0", 7, 0.13, 0.35);      // the body of the clump
+                       k.blob(-0.08, -0.04, 0.15, 0.12, "#f4e6c6", 6, 0.14, 1.7);      // the lit shoulder
+                       k.rpg([[-0.28, 0.14], [0.28, 0.14], [0.24, 0.24], [-0.24, 0.24]], "#d5c096", 0.09);   // shading where it sags
+                       k.ci(0.13, 0.09, 0.05, "#dccaa0"); k.ci(-0.19, 0.10, 0.04, "#dccaa0"); },
 
   /* ---------- meals in a bowl or on a plate ---------- */
   meal:         k => SH.bowl(k, "#c07a3a"),
@@ -3073,39 +3170,105 @@ const ICON_ART = {
                        k.rc(-0.24, -0.06, 0.07, 0.28, "#2f3a33");                        // its nori band
                        k.rc(0.06, -0.06, 0.28, 0.28, "#2f3a33");                          // maki roll
                        k.el(0.20, 0.08, 0.11, 0.11, PAL.linen); k.ci(0.20, 0.08, 0.05, "#c0463c"); },
-  taco:         k => { k.pg([[-0.34, 0.20], [-0.20, -0.16], [0.20, -0.16], [0.34, 0.20]], "#e0b155");
-                       k.pg([[-0.22, 0.02], [0.22, 0.02], [0.16, -0.10], [-0.16, -0.10]], PAL.meatDk);
-                       k.ln(-0.20, -0.02, 0.20, -0.04, 0.05, PAL.leaf); },
-  pizza:        k => { k.tri([0, -0.34], [-0.30, 0.28], [0.30, 0.28], "#e2b45e");
-                       k.tri([0, -0.24], [-0.24, 0.24], [0.24, 0.24], "#d9603c");
-                       for (const [x, y] of [[-0.10, 0.10], [0.10, 0.06], [0.00, -0.06]]) k.ci(x, y, 0.05, "#9c2f2f"); },
-  combo:        k => { k.pg([[-0.32, -0.10], [0.32, -0.10], [0.24, -0.26], [-0.24, -0.26]], "#daa55e");
-                       k.rc(-0.32, -0.08, 0.64, 0.08, PAL.leaf); k.rc(-0.32, 0.00, 0.64, 0.10, PAL.meatDk);
-                       k.pg([[-0.32, 0.10], [0.32, 0.10], [0.26, 0.28], [-0.26, 0.28]], "#daa55e"); },
-  gourmet_platter: k => { SH.plate(k); k.pg([[-0.22, 0.10], [-0.06, -0.06], [0.10, 0.10]], PAL.meatDk);
-                       k.ci(0.14, 0.06, 0.06, PAL.leaf); k.ci(-0.02, 0.12, 0.05, PAL.gold); },
+  /* the far wall of the shell sits in the filling's shadow; the near one catches light */
+  taco:         k => { k.rpg([[-0.32, 0.18], [-0.19, -0.17], [0.19, -0.17], [0.32, 0.18]], "#b8873c", [0.10, 0.09, 0.09, 0.10]);   // back of the shell
+                       k.rpg([[-0.24, -0.04], [0.24, -0.04], [0.19, -0.13], [-0.19, -0.13]], PAL.meatDk, 0.04);
+                       k.ln(-0.20, -0.06, 0.20, -0.08, 0.05, PAL.leaf);
+                       for (const [x, y] of [[-0.12, -0.02], [0.09, -0.04]]) k.ci(x, y, 0.035, "#c94a3c");
+                       k.rpg([[-0.32, 0.20], [-0.17, -0.06], [0.17, -0.06], [0.32, 0.20], [0.20, 0.25], [-0.20, 0.25]],
+                             "#e0b155", [0.10, 0.08, 0.08, 0.10, 0.09, 0.09]); },                                                 // front of the shell
+  /* a slice with a proper raised crust at the back and cheese short of the edge */
+  pizza:        k => { k.rpg([[0, -0.35], [-0.31, 0.26], [0.31, 0.26]], "#e2b45e", [0.05, 0.13, 0.13]);
+                       k.rpg([[0, -0.31], [-0.25, 0.17], [0.25, 0.17]], "#f0c877", [0.04, 0.09, 0.09]);   // the lit crust face
+                       k.rpg([[0, -0.25], [-0.22, 0.15], [0.22, 0.15]], "#d9603c", [0.04, 0.08, 0.08]);   // sauce, inset from the rim
+                       k.rpg([[0, -0.20], [-0.18, 0.12], [0.18, 0.12]], "#e8c163", [0.04, 0.08, 0.08]);   // cheese
+                       for (const [x, y] of [[-0.09, 0.04], [0.09, 0.02], [0.00, -0.09]]) k.ci(x, y, 0.048, "#9c2f2f"); },
+  /* burger and a soda — the combo is both halves of the meal */
+  combo:        k => { k.rpg([[-0.36, -0.06], [-0.02, -0.06], [-0.06, -0.24], [-0.32, -0.24]], "#daa55e", [0.05, 0.05, 0.09, 0.09]);
+                       k.rrc(-0.37, -0.05, 0.36, 0.06, PAL.leaf, 0.02);
+                       k.rrc(-0.37, 0.01, 0.36, 0.08, PAL.meatDk, 0.025);
+                       k.rpg([[-0.37, 0.09], [-0.01, 0.09], [-0.04, 0.24], [-0.34, 0.24]], "#daa55e", [0.04, 0.04, 0.08, 0.08]);
+                       for (const [x, y] of [[-0.28, -0.17], [-0.18, -0.21], [-0.09, -0.16]]) k.ci(x, y, 0.022, "#f0e2c0");   // seeds
+                       k.ln(0.26, -0.34, 0.19, -0.14, 0.045, "#d8536a");                                        // straw
+                       k.rpg([[0.06, -0.16], [0.36, -0.16], [0.31, 0.27], [0.11, 0.27]], "#c9553f", [0.02, 0.02, 0.05, 0.05]);
+                       k.rrc(0.05, -0.18, 0.32, 0.05, "#e0e0e0", 0.02);                                          // lid
+                       k.rrc(0.09, 0.00, 0.24, 0.08, "#efe7d2", 0.02); },                                        // the band
+  /* three plated components in a row, all sitting within the rim of the dish
+     rather than drifting off the edge of it */
+  gourmet_platter: k => { SH.plate(k);
+                       k.rpg([[-0.25, 0.14], [-0.22, 0.03], [-0.11, -0.01], [-0.04, 0.08], [-0.08, 0.18], [-0.20, 0.19]],
+                             PAL.meatDk, 0.05);                                                                   // the cut of meat
+                       k.rpg([[-0.22, 0.07], [-0.13, 0.02], [-0.07, 0.08], [-0.15, 0.13]], "#a8443f", 0.04);
+                       k.rpg([[-0.02, 0.10], [0.06, 0.03], [0.15, 0.09], [0.07, 0.17]], "#e0b155", 0.05);          // a roast potato
+                       k.rpg([[0.00, 0.11], [0.05, 0.07], [0.10, 0.10], [0.05, 0.14]], "#f0c87e", 0.03);
+                       k.ci(0.20, 0.10, 0.055, PAL.leaf); k.ci(0.25, 0.15, 0.040, "#6b9c4e");                      // the greens
+                       k.ci(0.16, 0.15, 0.036, "#5f8a3f");
+                       k.ln(-0.14, 0.19, 0.14, 0.18, 0.018, "#c9a24e");                                           // a drizzle across the plate
+                       k.tri([-0.10, 0.00], [-0.04, -0.09], [-0.02, 0.01], PAL.leaf); },                          // one sprig, over the meat
   burnt:        k => { SH.plate(k); k.pg([[-0.20, 0.12], [-0.10, -0.06], [0.06, 0.02], [0.18, 0.12]], "#2f2a26");
                        k.ln(-0.06, -0.16, -0.02, -0.30, 0.05, "#6b6660"); },
   sludge:       k => { SH.bowl(k, "#5e6b4a"); k.ci(0.04, -0.03, 0.05, "#7c8b58"); k.ci(-0.08, 0.00, 0.035, "#48553a"); },
 
   /* ---------- meat and fish ---------- */
-  meat:         k => { k.pg([[-0.30, 0.06], [-0.18, -0.20], [0.14, -0.24], [0.32, -0.02], [0.20, 0.22], [-0.16, 0.24]], PAL.meat);
-                       k.pg([[-0.06, -0.10], [0.10, -0.14], [0.16, 0.02], [0.00, 0.08]], PAL.fat); },
-  roast_meat:   k => { k.pg([[-0.14, -0.24], [0.16, -0.18], [0.30, 0.06], [0.10, 0.26], [-0.16, 0.18]], "#9c5334");
-                       k.ln(-0.14, -0.22, -0.34, 0.24, 0.09, "#e8ddc6"); },
+  /* Cut like a T-bone: a fat round of meat on one side of the bone and a
+     narrower strip on the other, which runs out further than the big side does. */
+  meat:         k => { k.rpg([[-0.30, 0.02], [-0.20, -0.20], [0.02, -0.26], [0.16, -0.14], [0.14, 0.14], [-0.04, 0.26], [-0.24, 0.20]],
+                             PAL.meat, [0.12, 0.12, 0.12, 0.06, 0.06, 0.12, 0.12]);                                   // the big eye
+                       k.rpg([[0.14, -0.15], [0.36, -0.09], [0.38, 0.02], [0.14, 0.11]], PAL.meat, [0.03, 0.09, 0.09, 0.03]);   // the thin strip, reaching further
+                       k.rpg([[0.10, -0.17], [0.19, -0.14], [0.19, 0.11], [0.10, 0.13]], PAL.fat, [0.04, 0.05, 0.05, 0.04]);    // the bone between them
+                       k.rpg([[-0.20, -0.06], [-0.06, -0.13], [0.00, -0.02], [-0.14, 0.05]], "#8e3833", 0.05);                  // grain
+                       k.rpg([[-0.26, 0.06], [-0.16, 0.02], [-0.12, 0.14], [-0.22, 0.17]], PAL.fat, 0.04); },                   // marbling
+  /* the same cut, tilted onto the grill. The char marks are laid on the cut's own
+     axis and kept short, so they sit ON the meat instead of running off it. */
+  roast_meat:   k => { const a = k.ax(-0.26, 0.16, 0.20, -0.20);
+                       k.rpg([[-0.30, -0.02], [-0.16, -0.22], [0.06, -0.26], [0.20, -0.12], [0.16, 0.12], [-0.02, 0.26], [-0.24, 0.16]],
+                             "#8e4a2e", [0.12, 0.12, 0.12, 0.07, 0.07, 0.12, 0.12]);
+                       k.rpg([[0.17, -0.13], [0.34, -0.05], [0.34, 0.04], [0.15, 0.11]], "#8e4a2e", [0.03, 0.09, 0.09, 0.03]);   // the thin side
+                       k.rpg([[0.12, -0.15], [0.21, -0.11], [0.19, 0.12], [0.10, 0.13]], "#c9ae8e", [0.04, 0.05, 0.05, 0.04]);   // the bone
+                       k.rpg([[-0.22, -0.08], [-0.08, -0.17], [-0.01, -0.07], [-0.16, 0.02]], "#a85c38", 0.05);                  // the lit face
+                       for (const s of [-0.13, 0.00, 0.13])                                                    // bars of char, inside the cut
+                         k.ln(...a.at(0.16, s), ...a.at(0.74, s), 0.032, "#3f2a1c"); },
   meat_skewer:  k => { k.ln(-0.34, 0.30, 0.34, -0.30, 0.045, PAL.woodDk);
                        for (const [x, y] of [[-0.16, 0.12], [0.02, -0.02], [0.18, -0.16]]) k.pg([[x - 0.10, y], [x, y - 0.10], [x + 0.10, y], [x, y + 0.10]], PAL.meatDk); },
-  herb_roast:   k => { k.pg([[-0.16, -0.22], [0.18, -0.16], [0.30, 0.08], [0.08, 0.26], [-0.18, 0.16]], "#8e4a30");
-                       for (const [x, y] of [[-0.04, -0.10], [0.10, 0.02], [-0.06, 0.10]]) k.ci(x, y, 0.04, PAL.leaf); },
-  anymeat:      k => { k.pg([[-0.28, 0.04], [-0.16, -0.20], [0.14, -0.22], [0.30, 0.00], [0.18, 0.22], [-0.14, 0.22]], PAL.meat);
-                       k.ln(-0.06, -0.14, -0.06, 0.10, 0.05, PAL.fat); k.ci(0.10, 0.06, 0.05, PAL.fat);
-                       k.ln(0.20, -0.26, 0.20, -0.12, 0.05, PAL.gold); k.ci(0.20, -0.04, 0.035, PAL.gold); },   // the wildcard's question mark
+  /* served, not raw: a herbed joint resting on the plate with its own juices */
+  herb_roast:   k => { SH.plate(k);
+                       k.rpg([[-0.26, 0.10], [-0.20, -0.06], [-0.02, -0.16], [0.18, -0.10], [0.26, 0.04], [0.16, 0.17], [-0.10, 0.19]],
+                             "#8e4a30", [0.10, 0.10, 0.11, 0.11, 0.10, 0.11, 0.11]);
+                       k.rpg([[-0.19, -0.01], [-0.04, -0.11], [0.10, -0.07], [-0.04, 0.03]], "#a85c38", 0.07);       // the lit face
+                       k.rpg([[-0.22, 0.09], [0.20, 0.06], [0.14, 0.16], [-0.10, 0.18]], "#6f3722", 0.07);           // underside, in shadow
+                       for (const [x, y] of [[-0.10, -0.02], [0.06, 0.04], [-0.02, 0.11], [0.13, -0.03]]) k.ci(x, y, 0.036, PAL.leaf);
+                       for (const [x, y] of [[-0.16, 0.05], [0.02, -0.06], [0.10, 0.11]]) k.ci(x, y, 0.02, "#3f5c2a"); },
+  /* the wildcard slot: one cut in front and two ghosted behind it — "whichever
+     you've got" — with a small gold mark in the corner to say it's a stand-in. */
+  anymeat:      k => { k.rpg([[-0.14, -0.24], [0.06, -0.28], [0.20, -0.16], [0.18, 0.06], [0.02, 0.16], [-0.14, 0.06]], "#7d3a36", 0.10);
+                       k.rpg([[-0.22, -0.18], [-0.02, -0.22], [0.10, -0.10], [0.08, 0.12], [-0.08, 0.22], [-0.22, 0.12]], "#8e3b37", 0.10);
+                       k.rpg([[-0.30, -0.10], [-0.12, -0.16], [0.02, -0.04], [0.00, 0.16], [-0.14, 0.26], [-0.30, 0.16]], PAL.meat, 0.10);
+                       k.rpg([[-0.24, -0.02], [-0.12, -0.07], [-0.06, 0.04], [-0.18, 0.10]], PAL.fat, 0.05);
+                       k.rpg([[0.00, -0.06], [0.06, -0.09], [0.04, 0.14], [-0.02, 0.16]], PAL.fat, 0.03);              // the bone edge
+                       for (const [x1, y1, x2, y2] of [                                                        // the hook of a "?", segment by segment
+                         [0.13, -0.31, 0.25, -0.33], [0.25, -0.33, 0.31, -0.25],
+                         [0.31, -0.25, 0.24, -0.18], [0.24, -0.18, 0.22, -0.11]])
+                         k.ln(x1, y1, x2, y2, 0.045, PAL.gold);
+                       k.ci(0.21, -0.03, 0.038, PAL.gold); },
   fish:         k => SH.fishBody(k, PAL.fish, PAL.fishDk),
   tropical_fish:k => { SH.fishBody(k, "#e8a33c", "#c05a2e"); k.ln(-0.16, -0.14, -0.10, 0.16, 0.05, "#f4d47a"); },
   river_titan:  k => { SH.fishBody(k, "#63798c", "#3f5568"); k.ci(0.04, -0.22, 0.05, "#a8c4d8"); k.ci(0.12, -0.28, 0.035, "#a8c4d8"); },
-  grilled_fish: k => { SH.plate(k); k.pg([[-0.26, 0.08], [-0.06, -0.06], [0.18, 0.02], [0.26, 0.10], [0.02, 0.16], [-0.20, 0.16]], "#c08a54");
-                       k.ln(-0.14, 0.04, 0.12, 0.08, 0.03, "#8a5c34"); },
-  fish_sticks:  k => { SH.plate(k); for (const x of [-0.18, -0.02, 0.14]) k.rc(x, -0.06, 0.11, 0.22, "#d9a455"); },
+  /* pale, flaking flesh on top; the dark seared line stays across the back of it */
+  grilled_fish: k => { SH.plate(k);
+                       k.rpg([[-0.28, 0.07], [-0.06, -0.07], [0.16, -0.02], [0.28, 0.09], [0.04, 0.17], [-0.20, 0.16]],
+                             "#e0bc86", [0.05, 0.09, 0.09, 0.05, 0.09, 0.09]);
+                       k.rpg([[-0.22, 0.04], [-0.05, -0.04], [0.12, 0.00], [-0.02, 0.08]], "#f0d8ad", 0.06);   // the lightest flakes
+                       k.ln(-0.15, 0.03, 0.13, 0.07, 0.03, "#7a4f2a");                                        // the dark line along the spine
+                       for (const [x, y] of [[-0.10, 0.09], [0.04, 0.11]]) k.ln(x, y, x + 0.07, y + 0.01, 0.016, "#c9a068");
+                       k.tri([0.20, 0.10], [0.30, 0.16], [0.20, 0.16], PAL.leaf); },
+  /* four goujons squared up to the plate, breaded and sitting in its dish */
+  fish_sticks:  k => { SH.plate(k);
+                       for (const [i, x] of [-0.21, -0.08, 0.05, 0.18].entries()) {
+                         k.rpg([[x, 0.16 - i * 0.005], [x + 0.11, 0.15 - i * 0.005], [x + 0.10, -0.02], [x + 0.01, -0.01]], "#c98d3e", 0.03);
+                         k.rpg([[x + 0.01, 0.08], [x + 0.10, 0.075], [x + 0.10, -0.015], [x + 0.015, -0.005]], "#e0aa5c", 0.025);
+                         for (const [dx, dy] of [[0.03, 0.02], [0.07, 0.07], [0.04, 0.11]]) k.ci(x + dx, dy, 0.014, "#f2cd8e");
+                       }
+                       k.ci(0.00, 0.19, 0.045, "#d8bb5c"); },                                                  // a dab of sauce
 
   /* ---------- fruit, veg, forage ---------- */
   fruit:        k => { k.ci(0, 0.06, 0.26, "#c2402f"); k.ci(-0.09, -0.02, 0.07, "#e0806e");
@@ -3114,23 +3277,57 @@ const ICON_ART = {
                        k.ln(-0.08, -0.06, 0.00, -0.30, 0.035, PAL.leaf); k.ln(0.12, -0.10, 0.02, -0.30, 0.035, PAL.leaf); },
   berry:        k => { for (const [x, y, r] of [[-0.14, 0.08, 0.13], [0.10, 0.12, 0.12], [0.00, -0.06, 0.13]]) k.ci(x, y, r, PAL.berry);
                        k.ci(-0.16, 0.03, 0.04, "#8a6aa2"); },
-  veg:          k => { k.pg([[0.02, 0.34], [-0.14, -0.08], [0.14, -0.08]], "#e07a2c");
-                       k.tri([-0.10, -0.10], [0.00, -0.34], [0.10, -0.10], PAL.leaf); },
-  herb:         k => { k.ln(0, 0.32, 0, -0.16, 0.045, "#4a6b34");
-                       for (const s of [-1, 1]) { k.tri([0, -0.02], [s * 0.24, -0.14], [0, -0.20], PAL.leaf); k.tri([0, 0.14], [s * 0.20, 0.04], [0, -0.02], PAL.leaf); } },
+  /* a handful pulled from the row: a carrot, a turnip and a green tucked behind */
+  veg:          k => { k.rpg([[-0.34, -0.10], [-0.22, -0.20], [-0.10, -0.06], [-0.18, 0.06]], PAL.leaf, 0.05);      // greens behind
+                       k.rpg([[-0.28, 0.02], [-0.14, -0.04], [-0.06, 0.14], [-0.18, 0.26], [-0.30, 0.16]], "#e8e0c4", [0.10, 0.08, 0.09, 0.10, 0.10]);
+                       k.rpg([[-0.26, 0.06], [-0.16, 0.02], [-0.12, 0.13], [-0.22, 0.18]], "#f4efdc", 0.06);         // the turnip's lit side
+                       k.rpg([[-0.24, 0.03], [-0.08, 0.09], [-0.14, 0.15]], "#b090b8", 0.04);                        // its purple shoulder
+                       for (const [i, dx] of [-0.02, 0.06, 0.14].entries())                                          // carrot tops
+                         k.ln(0.10 + dx * 0.3, -0.10, dx + 0.02, -0.34 + i * 0.03, 0.035, "#4f7f3e");
+                       k.rpg([[0.04, -0.12], [0.24, -0.10], [0.20, 0.10], [0.12, 0.28], [0.04, 0.08]], "#e07a2c", [0.07, 0.07, 0.05, 0.03, 0.05]);
+                       k.rpg([[0.09, -0.08], [0.19, -0.07], [0.15, 0.08], [0.10, 0.02]], "#f09a4c", 0.05);
+                       for (const y of [-0.02, 0.06, 0.13]) k.ln(0.07 + y * 0.2, y, 0.20 - y * 0.4, y + 0.01, 0.014, "#c2632220"); },
+  /* a sprig: one stem, leaves paired off it in opposing sets, tip still soft */
+  herb:         k => { k.ln(0.02, 0.34, -0.02, -0.20, 0.04, "#4a6b34");
+                       for (const [i, y] of [0.16, 0.02, -0.12].entries()) {
+                         const w = 0.24 - i * 0.05;
+                         for (const s of [-1, 1])
+                           k.rpg([[0, y], [s * w * 0.55, y - 0.10], [s * w, y - 0.13], [s * w * 0.6, y - 0.02]],
+                                 i % 2 ? PAL.leaf : "#5f9349", [0.02, 0.05, 0.04, 0.05]);
+                       }
+                       k.rpg([[-0.01, -0.14], [-0.09, -0.24], [-0.02, -0.34], [0.05, -0.23]], "#6ba351", [0.03, 0.05, 0.03, 0.05]); },
   flower:       k => { k.ln(0, 0.34, 0, -0.04, 0.04, "#4a6b34");
                        for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; k.ci(Math.cos(a) * 0.16, -0.10 + Math.sin(a) * 0.16, 0.09, "#f0e08a"); }
                        k.ci(0, -0.10, 0.08, PAL.amber); },
-  flowers:      k => { for (const [x, c] of [[-0.16, "#d86a8a"], [0.00, "#f0e08a"], [0.16, "#8a7ac0"]]) {
-                         k.ln(x, 0.34, x * 0.5, -0.06, 0.04, "#4a6b34");
-                         k.ci(x * 0.5, -0.12, 0.11, c); k.ci(x * 0.5, -0.12, 0.045, PAL.amber); } },
-  fiber:        k => { for (const [tp, bt] of [[-0.26, -0.06], [-0.12, -0.03], [0.02, 0.00], [0.16, 0.03], [0.28, 0.06]])
-                         k.ln(bt, 0.34, tp, -0.32, 0.055, "#b8aa5c");
-                       k.rc(-0.20, 0.02, 0.40, 0.10, "#8a7434"); },
-  cotton:       k => { k.ln(0.00, 0.36, 0.00, 0.02, 0.05, "#6b7546");
-                       for (const [x, y] of [[-0.16, 0.06], [0.15, 0.02], [-0.01, -0.16]]) {
-                         k.pg([[x - 0.16, y], [x, y - 0.18], [x + 0.16, y], [x, y + 0.16]], "#7f8a52");   // the boll case
-                         k.pg([[x - 0.11, y], [x, y - 0.13], [x + 0.11, y], [x, y + 0.11]], "#fbfaf4"); } },
+  /* a gathered posy: the stems cross low in the hand, the heads fan out clear of
+     each other. Bloom heights are staggered so no two flowers collide. */
+  flowers:      k => { for (const [x, hy] of [[-0.19, -0.06], [0.02, -0.20], [0.20, -0.02]])
+                         k.ln(0.01, 0.36, x, hy + 0.06, 0.035, "#4a6b34");                 // stems, all rising from one point
+                       k.rpg([[-0.06, 0.14], [0.10, 0.12], [0.06, 0.26], [-0.08, 0.26]], "#7f6a42", 0.03);   // the twine binding them
+                       for (const [x, hy, c] of [[-0.19, -0.06, "#d86a8a"], [0.20, -0.02, "#8a7ac0"], [0.02, -0.20, "#f0e08a"]]) {
+                         for (let i = 0; i < 5; i++) {
+                           const a = (i / 5) * Math.PI * 2 + 0.6;
+                           k.el(x + Math.cos(a) * 0.075, hy + Math.sin(a) * 0.075, 0.062, 0.052, c);
+                         }
+                         k.ci(x, hy, 0.045, PAL.amber);
+                       } },
+  /* cut grass tied in the middle — greener stems, dry seed heads at the tips */
+  fiber:        k => { for (const [tp, bt] of [[-0.26, -0.06], [-0.12, -0.03], [0.02, 0.00], [0.16, 0.03], [0.28, 0.06]]) {
+                         k.ln(bt, 0.34, tp, -0.32, 0.055, "#7f9c4a");
+                         k.ln(bt * 0.6, 0.16, tp * 0.85, -0.24, 0.022, "#9cb85e");        // the lit edge of each stem
+                         k.el(tp, -0.29, 0.035, 0.055, "#c2b46a");                        // the seed head
+                       }
+                       k.rpg([[-0.20, 0.02], [0.20, 0.02], [0.20, 0.12], [-0.20, 0.12]], "#8a7434", 0.03); },
+  /* the boll: a dull green case, asymmetric, with an unruly white puff bursting
+     out of it — deliberately not a circle. */
+  cotton:       k => { k.ln(0.02, 0.37, -0.01, 0.06, 0.05, "#6b7546");
+                       for (const [x, y, s, ph] of [[-0.17, 0.09, 0.92, 0.7], [0.16, 0.03, 0.86, 2.1], [-0.02, -0.17, 1.0, 1.4]]) {
+                         k.rpg([[x - 0.17 * s, y + 0.02], [x - 0.08 * s, y - 0.16 * s], [x + 0.06 * s, y - 0.17 * s],
+                                [x + 0.17 * s, y - 0.01], [x + 0.09 * s, y + 0.16 * s], [x - 0.09 * s, y + 0.15 * s]],
+                               "#79864e", [0.05, 0.04, 0.04, 0.05, 0.06, 0.06]);          // the case, lopsided
+                         k.blob(x, y - 0.01, 0.125 * s, 0.115 * s, "#fbfaf4", 5, 0.24, ph);
+                         k.blob(x - 0.035 * s, y - 0.05 * s, 0.055 * s, 0.05 * s, "#ffffff", 4, 0.2, ph + 1);
+                       } },
 
   /* ---------- drinks ---------- */
   milk:         k => SH.glassCup(k, PAL.milk),
@@ -3138,7 +3335,8 @@ const ICON_ART = {
   water:        k => SH.bottle(k, "#a8d4e8"),
   nutrient:     k => SH.bottle(k, "#8ac06a", "#c05a76"),
   lemonade:     k => SH.glassCup(k, "#f0dc72", "#d86a8a"),
-  milkshake:    k => { SH.glassCup(k, "#f2d8c4", "#d86a8a"); k.ci(0.00, -0.24, 0.10, PAL.cream); },
+  milkshake:    k => { SH.glassCup(k, "#f2d8c4", "#d86a8a"); k.ci(0.00, -0.19, 0.105, PAL.cream);   // the scoop, mostly sunk into the shake
+                       k.ci(0.05, -0.22, 0.035, "#fdf6ea"); k.ci(-0.09, -0.15, 0.03, "#c03a4a"); },
   trop_shake:   k => { SH.glassCup(k, "#f0a45c", "#5f8a3f"); k.tri([0.18, -0.26], [0.34, -0.34], [0.26, -0.18], PAL.leaf); },
   coffee:       k => SH.mug(k, PAL.cocoa),
   mocha:        k => { SH.mug(k, "#4a3226"); k.el(-0.02, -0.21, 0.13, 0.04, PAL.cream); },
@@ -3149,34 +3347,99 @@ const ICON_ART = {
                        k.pg([[0.22, -0.10], [0.34, -0.06], [0.34, 0.12], [0.22, 0.16]], "#d8d2c2"); },
 
   /* ---------- tools ---------- */
-  hammer:       k => { SH.haft(k); k.pg([[0.00, -0.30], [0.26, -0.22], [0.22, -0.06], [-0.04, -0.14]], PAL.steel);
-                       k.pg([[0.00, -0.30], [0.06, -0.32], [0.02, -0.10], [-0.04, -0.14]], PAL.steelDk); },
-  saw:          k => { k.pg([[-0.34, 0.18], [-0.20, 0.06], [0.30, -0.18], [0.34, -0.08], [-0.16, 0.18]], PAL.steel);
-                       for (let i = 0; i < 7; i++) k.tri([-0.14 + i * 0.07, 0.18], [-0.10 + i * 0.07, 0.26], [-0.06 + i * 0.07, 0.18], PAL.steelDk);
-                       k.rc(-0.40, 0.06, 0.14, 0.16, PAL.wood); },
-  screwdriver:  k => { k.ln(0.06, -0.06, 0.30, -0.32, 0.06, PAL.steel); k.ln(-0.24, 0.30, 0.06, -0.02, 0.13, "#b8483c");
-                       k.pg([[0.28, -0.30], [0.36, -0.36], [0.32, -0.24]], PAL.steelDk); },
-  hatchet:      k => { SH.haft(k); k.pg([[0.02, -0.28], [0.28, -0.34], [0.34, -0.12], [0.08, -0.08]], PAL.steel);
-                       k.pg([[0.28, -0.34], [0.34, -0.12], [0.24, -0.14], [0.22, -0.30]], PAL.steelDk); },
-  broom:        k => { k.ln(-0.16, -0.36, 0.06, 0.06, 0.06, PAL.wood);
-                       k.pg([[-0.06, 0.02], [0.20, 0.10], [0.28, 0.34], [-0.02, 0.30]], PAL.twine);
-                       for (const t of [0.02, 0.10, 0.18]) k.ln(t - 0.02, 0.12, t + 0.02, 0.32, 0.025, "#9c8450"); },
+  /* Every tool below is laid on an explicit axis with `k.ax`, and its parts are
+     placed against that axis rather than by eye — which is what stops heads,
+     teeth and ferrules from sitting at a slightly different angle to the handle. */
+  hammer:       k => { const a = k.ax(-0.26, 0.36, 0.10, -0.20);
+                       a.bar(0.00, 0.94, 0.05, PAL.wood, 0.035);
+                       a.bar(0.60, 0.74, 0.055, "#5f4326", 0.02);                       // the grip wrap
+                       k.rpg([a.at(0.98, -0.20), a.at(1.14, -0.17), a.at(1.14, 0.09), a.at(0.98, 0.12)], PAL.steel, 0.035);   // the face
+                       k.rpg([a.at(0.98, 0.12), a.at(1.10, 0.10), a.at(1.16, 0.26), a.at(1.02, 0.24)], PAL.steelDk, 0.03);    // the claw/peen tail
+                       k.rpg([a.at(0.90, -0.13), a.at(1.02, -0.13), a.at(1.02, 0.09), a.at(0.90, 0.09)], "#98a1aa", 0.02); }, // the eye it sits on
+  /* blade on one axis, teeth stepped along that same axis so they run with it */
+  saw:          k => { const a = k.ax(-0.20, 0.20, 0.34, -0.16);
+                       k.rpg([a.at(-0.30, -0.12), a.at(-0.06, -0.12), a.at(-0.06, 0.10), a.at(-0.30, 0.10)], PAL.wood, 0.05);   // handle
+                       k.rpg([a.at(-0.24, -0.07), a.at(-0.10, -0.07), a.at(-0.10, 0.05), a.at(-0.24, 0.05)], "#5f4326", 0.03);
+                       k.rpg([a.at(-0.04, -0.11), a.at(1.00, -0.05), a.at(1.00, 0.05), a.at(-0.04, 0.09)], PAL.steel, 0.02);    // blade, tapering
+                       for (let i = 0; i < 9; i++) {                                   // teeth, along the blade's own edge
+                         const t = 0.02 + i * 0.108, w = 0.05 + t * 0.04;
+                         k.tri(a.at(t, w), a.at(t + 0.055, w), a.at(t + 0.03, w + 0.055), PAL.steelDk);
+                       }
+                       k.rpg([a.at(-0.02, -0.09), a.at(0.30, -0.07), a.at(0.30, 0.00), a.at(-0.02, 0.02)], "#d8dee4", 0.015); },  // a highlight down the spine
+  screwdriver:  k => { const a = k.ax(-0.26, 0.32, 0.32, -0.32);
+                       a.bar(0.00, 0.44, 0.075, "#b8483c", 0.06);                       // handle
+                       for (const t of [0.10, 0.22, 0.34]) a.bar(t, t + 0.055, 0.078, "#9c3a30", 0.02);   // its grip flutes
+                       a.bar(0.44, 0.52, 0.045, PAL.steelDk, 0.01);                     // ferrule
+                       a.bar(0.50, 0.92, 0.026, PAL.steel, 0.005);                      // shank
+                       k.rpg([a.at(0.92, -0.055), a.at(1.00, -0.035), a.at(1.00, 0.035), a.at(0.92, 0.055)], PAL.steelDk, 0.01); },  // the flat tip
+  /* a proper axe head: bit flared and curved, poll squared off behind the eye */
+  hatchet:      k => { const a = k.ax(-0.26, 0.36, 0.08, -0.18);
+                       a.bar(0.00, 1.00, 0.05, PAL.wood, 0.035);
+                       a.bar(0.12, 0.30, 0.056, "#4f3520", 0.02);                       // the dark grip patch
+                       k.rpg([a.at(0.94, -0.05), a.at(1.06, -0.05), a.at(1.06, 0.14), a.at(0.94, 0.14)], PAL.steelDk, 0.02);   // poll
+                       k.rpg([a.at(0.86, -0.06), a.at(1.02, -0.26), a.at(1.16, -0.20), a.at(1.10, 0.02), a.at(0.90, 0.08)],
+                             PAL.steel, [0.02, 0.05, 0.07, 0.07, 0.02]);                // the bit, swept forward
+                       k.rpg([a.at(1.02, -0.25), a.at(1.15, -0.19), a.at(1.09, 0.01)], "#e0e6ec", 0.04); },                    // the sharpened edge
+  broom:        k => { const a = k.ax(0.10, 0.34, -0.14, -0.36);
+                       a.bar(0.16, 1.00, 0.038, PAL.wood, 0.02);
+                       a.bar(0.10, 0.22, 0.075, "#9c8450", 0.02);                       // the binding
+                       k.rpg([a.at(0.16, -0.10), a.at(0.16, 0.10), a.at(-0.14, 0.19), a.at(-0.14, -0.19)], PAL.twine, 0.03);   // the head, flaring out
+                       for (let i = 0; i < 6; i++) {                                    // bristles, splayed along the head
+                         const s = -0.15 + i * 0.06;
+                         k.ln(...a.at(0.12, s * 0.75), ...a.at(-0.18, s * 1.25), 0.022, i % 2 ? "#9c8450" : "#b8a06a");
+                       } },
   bedroll:      k => { k.rc(-0.30, -0.20, 0.60, 0.40, "#5f7a8c");
                        k.el(-0.30, 0.00, 0.11, 0.20, "#7f9aac"); k.el(-0.30, 0.00, 0.055, 0.10, "#455c6b");
                        k.el(0.30, 0.00, 0.11, 0.20, "#4f6a7c");
                        k.rc(-0.02, -0.21, 0.10, 0.42, "#c2a86a"); },
-  sharprock:    k => { k.pg([[-0.24, 0.22], [-0.10, -0.26], [0.18, -0.10], [0.26, 0.22]], PAL.stone);
-                       k.pg([[-0.10, -0.26], [0.18, -0.10], [-0.02, 0.00]], "#c2bbb0"); },
-  stoneawl:     k => { k.ln(-0.20, 0.32, 0.14, -0.20, 0.07, PAL.wood); k.tri([0.10, -0.16], [0.20, -0.36], [0.22, -0.12], PAL.stone); },
-  stonemaul:    k => { SH.haft(k); k.pg([[-0.06, -0.30], [0.24, -0.26], [0.26, -0.04], [-0.04, -0.08]], PAL.stone);
-                       k.rc(-0.02, -0.26, 0.06, 0.18, PAL.stoneDk); },
-  stoneaxe:     k => { SH.haft(k); k.pg([[0.00, -0.26], [0.22, -0.34], [0.30, -0.14], [0.08, -0.06]], PAL.stone);
-                       k.ln(0.02, -0.28, 0.06, -0.06, 0.03, PAL.twine); },
+  /* a struck flake, tilted onto its long axis: thick heel, feathered cutting edge */
+  sharprock:    k => { const a = k.ax(-0.30, 0.24, 0.30, -0.24);
+                       k.rpg([a.at(0.00, 0.02), a.at(0.22, -0.17), a.at(0.62, -0.19), a.at(1.00, -0.02), a.at(0.66, 0.15), a.at(0.24, 0.18)],
+                             PAL.stone, [0.03, 0.05, 0.05, 0.01, 0.05, 0.05]);
+                       k.rpg([a.at(0.18, -0.13), a.at(0.60, -0.15), a.at(0.94, -0.02), a.at(0.55, 0.02)], "#c2bbb0", [0.03, 0.03, 0.01, 0.03]);
+                       for (const t of [0.30, 0.50, 0.70])                                   // the flake scars along the edge
+                         k.ln(...a.at(t, -0.10), ...a.at(t + 0.06, 0.06), 0.016, PAL.stoneDk); },
+  stoneawl:     k => { const a = k.ax(-0.24, 0.34, 0.18, -0.22);
+                       a.bar(0.00, 0.78, 0.045, PAL.wood, 0.03);
+                       a.bar(0.62, 0.80, 0.055, PAL.twine, 0.02);                             // lashing
+                       k.rpg([a.at(0.74, -0.06), a.at(0.90, -0.05), a.at(1.16, 0.00), a.at(0.88, 0.06), a.at(0.74, 0.06)],
+                             PAL.stone, [0.03, 0.03, 0.005, 0.03, 0.03]);
+                       k.rpg([a.at(0.78, -0.04), a.at(1.12, 0.00), a.at(0.84, 0.02)], "#c2bbb0", 0.02); },
+  stonemaul:    k => { const a = k.ax(-0.26, 0.36, 0.08, -0.16);
+                       a.bar(0.00, 0.96, 0.05, PAL.wood, 0.035);
+                       k.rpg([a.at(0.82, -0.20), a.at(1.10, -0.17), a.at(1.12, 0.16), a.at(0.84, 0.19)], PAL.stone, 0.06);   // the head, square to the haft
+                       k.rpg([a.at(0.86, -0.14), a.at(1.04, -0.12), a.at(1.05, 0.04), a.at(0.87, 0.06)], "#b0a89d", 0.04);
+                       a.bar(0.78, 0.90, 0.10, PAL.twine, 0.02);                              // the binding under it
+                       k.rpg([a.at(1.00, -0.16), a.at(1.10, -0.14), a.at(1.11, 0.14), a.at(1.01, 0.16)], PAL.stoneDk, 0.04); },
+  /* an axe, not a maul: the head is narrow where it's bound to the haft and
+     flares into a wide curved bit, hung off ONE side of the shaft. */
+  stoneaxe:     k => { const a = k.ax(-0.26, 0.36, 0.08, -0.18);
+                       a.bar(0.00, 1.00, 0.048, PAL.wood, 0.035);
+                       k.rpg([a.at(0.74, 0.05), a.at(1.00, 0.03), a.at(1.10, -0.10), a.at(1.06, -0.31),
+                              a.at(0.86, -0.37), a.at(0.68, -0.26), a.at(0.70, -0.05)],
+                             PAL.stone, [0.03, 0.03, 0.04, 0.09, 0.10, 0.09, 0.04]);          // narrow at the haft, fanning to a broad bit
+                       k.rpg([a.at(1.04, -0.28), a.at(0.86, -0.34), a.at(0.72, -0.24), a.at(0.80, -0.19), a.at(0.92, -0.24), a.at(1.00, -0.20)],
+                             "#c8c2b8", [0.08, 0.09, 0.08, 0.05, 0.04, 0.05]);                 // the ground cutting edge
+                       k.rpg([a.at(0.78, -0.02), a.at(0.94, -0.04), a.at(0.90, -0.16), a.at(0.76, -0.12)], "#8f8880", 0.04);   // shadow behind the eye
+                       for (const t of [0.76, 0.90]) a.bar(t, t + 0.05, 0.085, PAL.twine, 0.015); },   // lashed on at two turns
 
   /* ---------- weapons ---------- */
   club:         k => { k.ln(-0.26, 0.32, 0.16, -0.24, 0.09, PAL.wood); k.ci(0.20, -0.28, 0.13, PAL.woodDk); },
-  bat:          k => { k.ln(-0.24, 0.32, 0.10, -0.14, 0.08, PAL.wood); k.pg([[0.04, -0.10], [0.24, -0.34], [0.34, -0.22], [0.14, 0.00]], "#a8763f"); },
-  baton:        k => { k.ln(-0.22, 0.30, 0.20, -0.26, 0.08, "#2f3540"); k.rc(-0.26, 0.16, 0.14, 0.16, "#4a5566"); },
+  /* one taper from knob to barrel, all on a single axis */
+  bat:          k => { const a = k.ax(-0.28, 0.34, 0.28, -0.32);
+                       k.rpg([a.at(0.00, -0.055), a.at(0.10, -0.035), a.at(0.55, -0.075), a.at(1.00, -0.105),
+                              a.at(1.00, 0.105), a.at(0.55, 0.075), a.at(0.10, 0.035), a.at(0.00, 0.055)],
+                             PAL.wood, [0.03, 0.02, 0.02, 0.05, 0.05, 0.02, 0.02, 0.03]);
+                       a.bar(-0.04, 0.06, 0.075, "#6f4a24", 0.03);                     // the knob
+                       a.bar(0.06, 0.26, 0.05, "#5f4326", 0.02);                       // taped grip
+                       k.rpg([a.at(0.35, -0.055), a.at(0.98, -0.085), a.at(0.98, -0.02), a.at(0.35, -0.01)], "#a8763f", 0.03); },
+  baton:        k => { const a = k.ax(-0.26, 0.32, 0.26, -0.30);
+                       a.bar(0.04, 1.00, 0.052, "#2f3540", 0.035);
+                       a.bar(0.00, 0.10, 0.075, "#4a5566", 0.03);                      // pommel
+                       a.bar(0.10, 0.34, 0.062, "#3d4653", 0.025);                     // the grip
+                       for (const t of [0.14, 0.22, 0.30]) a.bar(t, t + 0.035, 0.066, "#59637333", 0.01);
+                       k.rpg([a.at(0.20, -0.10), a.at(0.30, -0.16), a.at(0.34, -0.10), a.at(0.24, -0.05)], "#4a5566", 0.03);   // the side handle
+                       k.rpg([a.at(0.42, -0.03), a.at(0.98, -0.02), a.at(0.98, 0.02), a.at(0.42, 0.02)], "#4e586633", 0.01); },
   knife:        k => { k.pg([[-0.06, 0.06], [0.06, -0.02], [0.32, -0.32], [0.34, -0.22], [0.06, 0.12]], PAL.steel);
                        k.ln(-0.24, 0.28, -0.04, 0.08, 0.10, PAL.woodDk); },
   slingshot:    k => { k.ln(0, 0.34, 0, -0.02, 0.07, PAL.wood);
@@ -3184,42 +3447,113 @@ const ICON_ART = {
                        k.ln(-0.20, -0.28, 0.20, -0.28, 0.03, "#8a5a4a"); },
   sling:        k => { k.ln(-0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine); k.ln(0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine);
                        k.pg([[-0.12, 0.10], [0.12, 0.10], [0.08, 0.28], [-0.08, 0.28]], "#8a6a4a"); k.ci(0, 0.19, 0.05, PAL.stone); },
-  bow:          k => { k.pg([[0.06, -0.34], [0.20, -0.10], [0.20, 0.10], [0.06, 0.34], [0.12, 0.30], [0.26, 0.06], [0.26, -0.06], [0.12, -0.30]], PAL.wood);
-                       k.ln(0.06, -0.34, 0.06, 0.34, 0.025, PAL.twine); k.ln(-0.24, 0.00, 0.12, 0.00, 0.03, "#a89060"); },
+  /* a recurve: limbs bellying forward, tips flicking back, grip and arrow rest
+     at the centre, string running tip to tip and nocked at the arrow. */
+  bow:          k => { k.rpg([[0.10, -0.35], [0.22, -0.24], [0.27, -0.08], [0.27, 0.08], [0.22, 0.24], [0.10, 0.35],
+                              [0.16, 0.33], [0.32, 0.14], [0.34, 0.00], [0.32, -0.14], [0.16, -0.33]],
+                             PAL.wood, 0.05);
+                       k.rpg([[0.24, -0.20], [0.30, -0.07], [0.30, 0.07], [0.24, 0.20], [0.27, 0.16], [0.32, 0.00], [0.27, -0.16]], "#a8763f", 0.03);
+                       k.rpg([[0.22, -0.09], [0.34, -0.09], [0.34, 0.09], [0.22, 0.09]], "#5f4326", 0.03);   // the grip
+                       k.rpg([[0.20, -0.03], [0.30, -0.03], [0.30, 0.01], [0.20, 0.01]], "#8a6a3f", 0.01);   // the arrow rest
+                       k.ln(0.10, -0.35, 0.06, 0.00, 0.022, PAL.twine);                                      // string, drawn to the nock
+                       k.ln(0.06, 0.00, 0.10, 0.35, 0.022, PAL.twine);
+                       k.ln(-0.26, 0.00, 0.24, 0.00, 0.028, "#a89060");                                      // the arrow on it
+                       k.tri([-0.26, 0.00], [-0.17, -0.06], [-0.17, 0.06], PAL.linen); },
   crudebow:     k => { k.pg([[0.02, -0.32], [0.18, -0.06], [0.16, 0.12], [0.04, 0.32], [0.10, 0.28], [0.24, 0.08], [0.24, -0.06], [0.10, -0.28]], "#7f6136");
                        k.ln(0.02, -0.32, 0.04, 0.32, 0.022, PAL.twine); },
-  crossbow:     k => { k.pg([[-0.34, 0.10], [0.26, -0.06], [0.30, 0.04], [-0.26, 0.24]], PAL.wood);      // stock, angled
-                       k.pg([[0.06, -0.30], [0.14, -0.28], [0.20, 0.00], [0.14, 0.28], [0.06, 0.26], [0.12, 0.00]], PAL.woodDk);
-                       k.ln(0.10, -0.29, 0.10, 0.27, 0.022, PAL.twine);
-                       k.ln(0.10, -0.02, -0.20, 0.10, 0.03, "#a89060");                                   // the loaded bolt
-                       k.pg([[-0.34, 0.10], [-0.22, 0.06], [-0.20, 0.30], [-0.32, 0.32]], PAL.woodDk); },
-  stonespear:   k => { k.ln(-0.26, 0.34, 0.12, -0.14, 0.055, PAL.wood);
-                       k.tri([0.08, -0.10], [0.20, -0.36], [0.26, -0.10], PAL.stone); k.ln(0.06, -0.08, 0.20, -0.10, 0.03, PAL.twine); },
-  arrow:        k => { k.ln(-0.28, 0.30, 0.20, -0.24, 0.035, PAL.wood); k.tri([0.16, -0.20], [0.30, -0.34], [0.28, -0.16], PAL.steel);
-                       k.tri([-0.28, 0.30], [-0.18, 0.30], [-0.24, 0.16], PAL.linen); },
-  bolt:         k => { k.ln(-0.20, 0.24, 0.14, -0.18, 0.055, PAL.iron); k.tri([0.10, -0.14], [0.24, -0.30], [0.22, -0.10], PAL.steel); },
+  /* stock along one axis, prod square across it, bolt lying in the groove */
+  crossbow:     k => { const a = k.ax(-0.34, 0.20, 0.32, -0.10);
+                       a.bar(0.00, 1.00, 0.055, PAL.wood, 0.03);                              // the stock
+                       k.rpg([a.at(0.00, -0.05), a.at(0.16, -0.05), a.at(0.10, 0.20), a.at(-0.02, 0.20)], PAL.woodDk, 0.03);  // the butt
+                       a.bar(0.30, 0.42, 0.085, PAL.woodDk, 0.02);                            // the lock housing
+                       k.rpg([a.at(0.36, 0.06), a.at(0.44, 0.06), a.at(0.42, 0.20), a.at(0.34, 0.19)], PAL.steelDk, 0.02);    // the trigger
+                       k.rpg([a.at(0.74, -0.30), a.at(0.86, -0.28), a.at(0.90, 0.00), a.at(0.86, 0.28), a.at(0.74, 0.30), a.at(0.80, 0.00)],
+                             PAL.woodDk, 0.03);                                               // the prod, square across the stock
+                       k.ln(...a.at(0.80, -0.29), ...a.at(0.38, 0.00), 0.02, PAL.twine);      // string, drawn back to the lock
+                       k.ln(...a.at(0.38, 0.00), ...a.at(0.80, 0.29), 0.02, PAL.twine);
+                       k.ln(...a.at(0.36, 0.00), ...a.at(1.02, 0.00), 0.028, "#a89060");      // the bolt in the groove
+                       k.tri(a.at(1.02, 0.00), a.at(0.90, -0.05), a.at(0.90, 0.05), PAL.steel); },
+  stonespear:   k => { const a = k.ax(-0.28, 0.36, 0.22, -0.30);
+                       a.bar(0.00, 0.82, 0.042, PAL.wood, 0.025);
+                       for (const t of [0.68, 0.78]) a.bar(t, t + 0.045, 0.07, PAL.twine, 0.015);
+                       k.rpg([a.at(0.76, -0.09), a.at(0.90, -0.11), a.at(1.06, 0.00), a.at(0.90, 0.11), a.at(0.76, 0.09)],
+                             PAL.stone, [0.03, 0.04, 0.005, 0.04, 0.03]);
+                       k.rpg([a.at(0.82, -0.06), a.at(1.02, 0.00), a.at(0.82, 0.03)], "#c2bbb0", 0.02); },
+  arrow:        k => { const a = k.ax(-0.30, 0.32, 0.30, -0.32);
+                       a.bar(0.02, 0.88, 0.026, PAL.wood, 0.01);
+                       k.rpg([a.at(0.86, -0.05), a.at(1.00, 0.00), a.at(0.86, 0.05), a.at(0.90, 0.00)], PAL.steel, [0.01, 0.005, 0.01, 0.01]);
+                       for (const s of [-1, 1])                                               // fletching, both sides of the shaft
+                         k.rpg([a.at(0.02, s * 0.02), a.at(0.06, s * 0.10), a.at(0.20, s * 0.09), a.at(0.22, s * 0.02)], PAL.linen, 0.02);
+                       a.bar(0.00, 0.04, 0.035, "#c2a86a", 0.01); },                          // the nock
+  bolt:         k => { const a = k.ax(-0.26, 0.28, 0.26, -0.26);
+                       a.bar(0.06, 0.84, 0.04, PAL.wood, 0.015);
+                       k.rpg([a.at(0.82, -0.07), a.at(1.02, 0.00), a.at(0.82, 0.07), a.at(0.88, 0.00)], PAL.steel, [0.01, 0.005, 0.01, 0.01]);
+                       for (const s of [-1, 1])
+                         k.rpg([a.at(0.06, s * 0.03), a.at(0.08, s * 0.11), a.at(0.20, s * 0.10), a.at(0.22, s * 0.03)], PAL.iron, 0.02); },
 
   /* ---------- materials, parts, oddments ---------- */
-  wood:         k => { k.rc(-0.34, -0.10, 0.68, 0.22, PAL.wood); k.el(-0.34, 0.01, 0.09, 0.11, "#a8763f");
-                       k.el(-0.34, 0.01, 0.045, 0.055, PAL.woodDk); },
-  stick:        k => { for (const [a, b, c2] of [[-0.30, -0.20, 0.34], [-0.10, 0.30, 0.24], [0.10, -0.06, 0.30]])
-                         k.ln(a, c2, b, -0.30, 0.045, "#8a6a3f"); },
+  /* a split billet lying at an angle, thick enough to read as a log, with the
+     grain darkening along its length and the sawn end turned toward you. */
+  wood:         k => { const a = k.ax(-0.32, 0.20, 0.34, -0.14);
+                       a.bar(0.06, 1.00, 0.155, PAL.wood, 0.045);
+                       for (const [s, c] of [[-0.09, "#9c7040"], [0.02, "#7a5429"], [0.10, "#63431f"]])   // grain, running with the log
+                         k.ln(...a.at(0.10, s), ...a.at(0.97, s), 0.028, c);
+                       k.el(...a.at(0.06), 0.105, 0.155, "#a8763f");                       // the sawn end
+                       k.el(...a.at(0.06), 0.065, 0.098, "#8a6134");
+                       k.el(...a.at(0.06), 0.028, 0.042, PAL.woodDk); },
+  /* a bundle of gathered sticks, each with a stub of a side branch and a broken end */
+  stick:        k => { for (const [x1, y1, x2, y2, c] of [
+                         [-0.30, 0.32, -0.16, -0.30, "#8a6a3f"], [-0.06, 0.34, 0.14, -0.26, "#7a5c34"],
+                         [0.12, 0.30, 0.30, -0.32, "#96764a"]]) {
+                         const a = k.ax(x1, y1, x2, y2);
+                         a.bar(0.00, 1.00, 0.036, c, 0.02);
+                         k.ln(...a.at(0.42, 0.00), ...a.at(0.58, 0.13), 0.022, c);           // a stub of side branch
+                         k.rpg([a.at(0.97, -0.045), a.at(1.03, -0.02), a.at(1.00, 0.045), a.at(0.95, 0.02)], "#c9ab7c", 0.01);   // the broken end
+                       } },
   rope:         k => { for (const [y, c] of [[0.18, "#a8905a"], [0.06, PAL.rope], [-0.06, "#a8905a"], [-0.18, PAL.rope]]) {
                          k.el(0, y, 0.30, 0.09, c);
                          k.el(0, y, 0.13, 0.045, "#7f6a42"); }
                        k.ln(0.26, -0.22, 0.36, -0.34, 0.045, PAL.rope); },
-  ore:          k => { for (const [x, y, r] of [[-0.14, 0.10, 0.13], [0.12, 0.12, 0.11], [0.00, -0.08, 0.15]])
-                         k.pg([[x - r, y], [x, y - r], [x + r, y], [x, y + r]], PAL.iron);
-                       k.ci(0.00, -0.10, 0.045, "#9aa0a6"); },
+  /* offcuts from the forge: angular scrap, plus one rolled ball among them */
+  ore:          k => { k.rpg([[-0.28, 0.14], [-0.20, 0.00], [-0.04, 0.06], [-0.06, 0.20], [-0.20, 0.24]], PAL.iron, 0.025);
+                       k.rpg([[0.04, 0.08], [0.16, 0.02], [0.26, 0.12], [0.18, 0.23], [0.06, 0.20]], "#7d8288", 0.025);
+                       k.rpg([[-0.10, -0.20], [0.06, -0.24], [0.14, -0.10], [0.02, -0.02], [-0.12, -0.06]], PAL.iron, 0.025);
+                       k.rpg([[-0.08, -0.17], [0.02, -0.20], [0.06, -0.12], [-0.06, -0.09]], "#9aa0a6", 0.02);
+                       k.ci(0.21, -0.13, 0.105, "#8a9096");                                 // the one round piece
+                       k.ci(0.18, -0.17, 0.042, "#b4bac0");
+                       k.ci(-0.24, -0.02, 0.05, "#5f646a"); },
   hardware:     k => { k.ci(-0.14, -0.06, 0.13, PAL.steelDk); k.ci(-0.14, -0.06, 0.05, "#4a5058");
                        k.rc(0.02, 0.04, 0.28, 0.08, PAL.steel); k.ci(0.06, 0.08, 0.06, PAL.iron); },
-  pipe:         k => { k.rc(-0.32, -0.08, 0.52, 0.18, PAL.steelDk); k.rc(-0.36, -0.14, 0.10, 0.30, PAL.steel);
-                       k.rc(0.16, -0.14, 0.10, 0.30, PAL.steel); },
+  /* a length of pipe with flanged collars at both ends and a bolted joint */
+  pipe:         k => { k.rrc(-0.30, -0.09, 0.60, 0.19, PAL.steelDk, 0.03);
+                       k.rrc(-0.30, -0.07, 0.60, 0.06, "#a3abb3", 0.02);                    // the highlight along the top
+                       k.rrc(-0.30, 0.04, 0.60, 0.04, "#5f666d", 0.015);                    // and the shadow below
+                       for (const x of [-0.36, 0.26]) {
+                         k.rrc(x, -0.16, 0.11, 0.33, PAL.steel, 0.025);                     // the flanges
+                         k.rrc(x + 0.015, -0.13, 0.08, 0.10, "#d2d8de", 0.02);
+                       }
+                       k.rrc(-0.05, -0.13, 0.10, 0.27, PAL.steel, 0.02);                    // the joint collar
+                       for (const y of [-0.09, 0.06]) k.ci(0.00, y, 0.028, "#5f666d");      // its bolts
+                       k.el(-0.30, 0.00, 0.035, 0.095, "#727980"); },                       // the bore, seen end-on
   nozzle:       k => { k.pg([[-0.28, -0.06], [0.06, -0.16], [0.06, 0.16], [-0.28, 0.06]], PAL.steelDk);
                        k.rc(0.06, -0.09, 0.20, 0.18, PAL.steel);
                        for (const y of [-0.05, 0.03]) k.ln(0.26, y, 0.36, y, 0.03, "#a8d4e8"); },
-  heatcoil:     k => { k.rc(-0.30, 0.18, 0.60, 0.10, PAL.steelDk);
-                       for (let i = 0; i < 4; i++) k.ln(-0.24 + i * 0.16, 0.18, -0.18 + i * 0.16, -0.24, 0.05, "#c0503c"); },
+  /* a heating element: one wire switching back on itself in a flat serpentine,
+     glowing hottest at the middle of the run, screwed to a mounting plate. */
+  heatcoil:     k => { k.rrc(-0.34, 0.20, 0.68, 0.13, PAL.steelDk, 0.03);                    // the base plate
+                       for (const x of [-0.28, 0.24]) k.ci(x, 0.265, 0.032, "#9aa3ac");      // its screws
+                       /* one wire, traced as a single connected run so the bends actually
+                          join the verticals instead of floating over them */
+                       const top = -0.26, bot = 0.17, xs = [-0.24, -0.08, 0.08, 0.24];
+                       const path = [[xs[0], bot], [xs[0], top], [xs[1], top], [xs[1], bot],
+                                     [xs[2], bot], [xs[2], top], [xs[3], top], [xs[3], bot]];
+                       for (const [w, cols] of [[0.062, null], [0.030, ["#e2683c", "#f0a04c", "#f4c26a"]]])
+                         for (let i = 0; i < path.length - 1; i++) {
+                           const [x1, y1] = path[i], [x2, y2] = path[i + 1];
+                           k.ln(x1, y1, x2, y2, w, cols ? cols[Math.min(i, 6) % 3] : "#8e3a2c");
+                         }
+                       for (const [x, y] of path) k.ci(x, y, 0.031, "#8e3a2c");                 // round the corners off
+                       k.ci(-0.08, -0.05, 0.036, "#f7d68e"); k.ci(0.08, 0.00, 0.030, "#f7d68e"); },   // where it glows hardest
   frame:        k => { k.rc(-0.30, -0.28, 0.60, 0.56, PAL.wood); k.rc(-0.22, -0.20, 0.44, 0.40, "#cfe0ea");
                        k.tri([-0.22, 0.20], [-0.02, -0.08], [0.14, 0.20], PAL.green); },
   stamp:        k => { k.rc(-0.28, -0.24, 0.56, 0.48, PAL.paper);
@@ -3234,9 +3568,19 @@ const ICON_ART = {
                        k.pg([[-0.34, -0.12], [-0.22, -0.09], [-0.22, 0.09], [-0.34, 0.12]], "#8a6a34");   // mouthpiece
                        k.pg([[0.22, -0.09], [0.34, -0.16], [0.34, 0.16], [0.22, 0.09]], "#a8853f");        // flared bell
                        for (const x of [-0.10, 0.02, 0.13]) k.ci(x, 0.00, 0.038, "#5f4520"); },
-  drum:         k => { k.el(0, -0.12, 0.30, 0.11, PAL.linen); k.rc(-0.30, -0.12, 0.60, 0.26, "#c05a4a");
-                       k.el(0, 0.14, 0.30, 0.11, "#9c4438");
-                       for (const x of [-0.18, 0.00, 0.18]) k.ln(x, -0.12, x - 0.06, 0.14, 0.025, PAL.linen); },
+  /* Drawn back to front: the far rim, then the shell, the tension cords, the near
+     rim, and only then the drum head — which was previously buried under the shell. */
+  drum:         k => { k.el(0, 0.14, 0.30, 0.11, "#8a3c32");                                 // the bottom rim, behind everything
+                       k.rc(-0.30, -0.12, 0.60, 0.26, "#c05a4a");                            // the shell
+                       k.rpg([[0.12, -0.14], [0.30, -0.14], [0.30, 0.16], [0.12, 0.16]], "#a34738", 0.02);   // its shaded side
+                       for (const x of [-0.20, -0.04, 0.12])                                 // the tensioning cords, in a zigzag
+                         { k.ln(x, -0.10, x + 0.09, 0.12, 0.022, PAL.linen); k.ln(x + 0.09, 0.12, x + 0.17, -0.10, 0.022, PAL.linen); }
+                       k.el(0, 0.14, 0.30, 0.10, "#9c4438");                                 // the near bottom hoop
+                       k.el(0, -0.12, 0.30, 0.11, "#a34738");                                // the top hoop
+                       k.el(0, -0.13, 0.27, 0.095, PAL.linen);                               // the head, on top where it belongs
+                       k.el(-0.08, -0.15, 0.10, 0.035, "#fdfaf2");
+                       for (const s of [-1, 1]) k.ln(s * 0.16, -0.30, s * 0.05, -0.15, 0.028, PAL.wood);   // the beaters
+                       for (const s of [-1, 1]) k.ci(s * 0.17, -0.31, 0.045, PAL.woodDk); },
   toy:          k => { k.ci(0, -0.16, 0.13, "#c9a45e"); k.rc(-0.14, -0.04, 0.28, 0.22, "#a8763f");
                        k.ci(-0.10, 0.24, 0.06, PAL.woodDk); k.ci(0.10, 0.24, 0.06, PAL.woodDk); },
   birdhouse:    k => { k.tri([0, -0.34], [-0.30, -0.04], [0.30, -0.04], "#a8563c");
@@ -3249,26 +3593,67 @@ const ICON_ART = {
   ring:         k => { k.ci(0, 0.10, 0.21, "#8a7440"); k.ci(0, 0.10, 0.13, "#2f2a22");
                        k.tri([0, -0.32], [-0.14, -0.12], [0.14, -0.12], "#a8d0e2");
                        k.tri([-0.14, -0.12], [0.14, -0.12], [0, 0.02], "#6f9cb4"); },
-  rock:         k => { k.pg([[-0.26, 0.20], [-0.22, -0.08], [-0.02, -0.24], [0.20, -0.12], [0.26, 0.14], [0.06, 0.26]], PAL.stone);
-                       k.pg([[-0.14, -0.04], [0.00, -0.16], [0.10, -0.04], [-0.02, 0.04]], "#b4aca1"); },
-  goodie_crate: k => { k.rc(-0.32, -0.20, 0.64, 0.46, PAL.wood);
-                       k.rc(-0.32, -0.06, 0.64, 0.08, PAL.woodDk); k.rc(-0.06, -0.20, 0.12, 0.46, PAL.woodDk);
-                       k.tri([-0.32, -0.20], [0.00, -0.34], [0.32, -0.20], "#a8763f"); },
-  pelt:         k => { k.pg([[-0.30, -0.10], [-0.12, -0.28], [0.12, -0.28], [0.30, -0.10], [0.20, 0.24], [-0.20, 0.24]], "#8a6238");
-                       k.pg([[-0.14, -0.06], [0.14, -0.06], [0.10, 0.16], [-0.10, 0.16]], "#c2a077");
-                       k.tri([-0.30, -0.10], [-0.36, -0.28], [-0.16, -0.22], "#8a6238");
-                       k.tri([0.30, -0.10], [0.36, -0.28], [0.16, -0.22], "#8a6238"); },
-  finefiber:    k => { k.rc(-0.24, -0.30, 0.48, 0.07, "#a8996f"); k.rc(-0.24, 0.23, 0.48, 0.07, "#a8996f");
-                       k.rc(-0.17, -0.24, 0.34, 0.47, "#efe7d2");
-                       for (const y of [-0.18, -0.08, 0.02, 0.12]) k.ln(-0.17, y, 0.17, y + 0.05, 0.035, "#d8ccae");
-                       k.ln(0.17, -0.02, 0.34, -0.16, 0.028, "#efe7d2"); },
+  /* a rounded river cobble — worn, not chipped */
+  rock:         k => { k.blob(0.00, 0.02, 0.27, 0.24, PAL.stone, 6, 0.07, 0.5);
+                       k.blob(-0.06, -0.05, 0.15, 0.12, "#b4aca1", 5, 0.10, 1.2);            // where the light sits
+                       k.blob(0.05, 0.14, 0.16, 0.09, PAL.stoneDk, 5, 0.09, 2.4);            // and where it doesn't
+                       k.ci(0.12, -0.08, 0.028, "#b8b0a5"); },
+  /* a box seen from the corner: front face, side face in shadow, lid on top,
+     which is what gives it its depth. */
+  goodie_crate: k => { k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.10, 0.24], [-0.30, 0.30]], PAL.wood, 0.02);        // front
+                       k.rpg([[0.10, -0.16], [0.32, -0.06], [0.32, 0.26], [0.10, 0.24]], "#6f4d29", 0.02);          // side, turned away
+                       k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.32, -0.06], [-0.08, 0.02]], "#a8763f", 0.02);       // lid
+                       k.rpg([[-0.29, 0.04], [0.09, -0.03], [0.09, 0.07], [-0.29, 0.14]], PAL.woodDk, 0.015);       // banding
+                       k.rpg([[0.11, -0.03], [0.31, 0.06], [0.31, 0.15], [0.11, 0.07]], "#54381e", 0.015);
+                       k.rpg([[-0.13, -0.11], [-0.05, -0.13], [-0.05, 0.27], [-0.13, 0.29]], PAL.woodDk, 0.01); },  // the upright slat
+  /* the same box, but built well: tighter boards, gold banding and a clasp */
+  shiny_crate:  k => { k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.10, 0.24], [-0.30, 0.30]], "#a8783e", 0.02);
+                       k.rpg([[0.10, -0.16], [0.32, -0.06], [0.32, 0.26], [0.10, 0.24]], "#835a2b", 0.02);
+                       k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.32, -0.06], [-0.08, 0.02]], "#c99a54", 0.02);
+                       k.rpg([[-0.28, -0.06], [0.08, -0.13], [0.08, -0.07], [-0.28, 0.00]], "#e0b878", 0.01);       // a polished grain line
+                       k.rpg([[-0.29, 0.04], [0.09, -0.03], [0.09, 0.08], [-0.29, 0.15]], PAL.gold, 0.015);         // gilt banding
+                       k.rpg([[0.11, -0.03], [0.31, 0.06], [0.31, 0.16], [0.11, 0.08]], "#b8912e", 0.015);
+                       k.rpg([[-0.29, -0.08], [-0.21, -0.10], [-0.21, 0.29], [-0.29, 0.30]], PAL.gold, 0.01);       // corner straps
+                       k.rpg([[0.02, -0.10], [0.10, -0.12], [0.10, 0.25], [0.02, 0.26]], PAL.gold, 0.01);
+                       k.rrc(-0.14, 0.02, 0.11, 0.11, "#f0d488", 0.02); k.ci(-0.085, 0.075, 0.028, "#8a6a1e"); },   // the clasp
+  /* A hide pegged out flat to cure — read from above, not head-on. The four leg
+     flaps go to the four corners where they belong, the pale underside runs the
+     length of it rather than sitting in the middle like a face, and the tail is
+     offset. Symmetry down the middle is what made the old one look like a bear. */
+  pelt:         k => { for (const [x, y, w, h] of [[-0.30, -0.20, 0.13, 0.10], [0.30, -0.20, 0.13, 0.10],           // the four legs
+                                                  [-0.27, 0.19, 0.12, 0.11], [0.28, 0.17, 0.12, 0.11]])
+                         k.rpg([[x - w, y - h], [x + w, y - h * 0.4], [x + w * 0.8, y + h], [x - w * 0.9, y + h * 0.7]], "#7a5530", 0.05);
+                       k.rpg([[-0.26, -0.14], [-0.06, -0.28], [0.16, -0.24], [0.29, -0.06], [0.26, 0.13],
+                              [0.08, 0.27], [-0.14, 0.24], [-0.28, 0.08]],
+                             "#8a6238", [0.13, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13]);
+                       k.rpg([[-0.19, -0.10], [0.02, -0.19], [0.19, -0.13], [0.16, 0.06], [0.00, 0.17], [-0.19, 0.09]],
+                             "#c2a077", 0.11);                                                                      // the pale underside, run off-centre
+                       k.rpg([[-0.13, -0.06], [0.05, -0.13], [0.12, -0.05], [0.02, 0.08], [-0.12, 0.03]], "#d8bc94", 0.09);
+                       k.rpg([[0.24, 0.14], [0.36, 0.24], [0.30, 0.31], [0.20, 0.22]], "#7a5530", 0.05); },          // the tail, off to one side
+  /* a bolt of finished cloth hanging in a wave, not a flat board */
+  finefiber:    k => { k.rpg([[-0.30, -0.28], [0.30, -0.28], [0.30, -0.18], [-0.30, -0.18]], "#a8996f", 0.02);       // the rail
+                       k.rpg([[-0.26, -0.22], [-0.08, -0.24], [0.10, -0.20], [0.28, -0.23],
+                              [0.26, 0.24], [0.08, 0.29], [-0.10, 0.24], [-0.28, 0.28]],
+                             "#efe7d2", [0.04, 0.06, 0.06, 0.04, 0.06, 0.10, 0.10, 0.06]);                          // the sheet, waving
+                       for (const [x, c] of [[-0.17, "#dcd0b2"], [0.01, "#f6f0e0"], [0.19, "#dcd0b2"]])             // folds running down it
+                         k.rpg([[x - 0.05, -0.22], [x + 0.05, -0.21], [x + 0.06, 0.26], [x - 0.04, 0.27]], c, 0.03);
+                       k.rpg([[-0.28, 0.14], [-0.09, 0.10], [0.09, 0.15], [0.28, 0.11], [0.27, 0.19], [0.08, 0.23], [-0.10, 0.18], [-0.28, 0.22]],
+                             "#d8ccae", 0.04); },                                                                    // the shadow in the trough of the wave
   cloth:        k => { k.pg([[-0.34, 0.06], [-0.34, -0.16], [0.24, -0.30], [0.24, -0.08]], "#6f8fae");
                        k.pg([[-0.34, 0.06], [0.24, -0.08], [0.24, 0.16], [-0.34, 0.30]], "#5f7d9c");
                        k.pg([[0.24, -0.30], [0.34, -0.24], [0.34, 0.10], [0.24, 0.16]], "#4f6b88"); },
 
   /* ---------- medicine ---------- */
-  medicine:     k => { k.el(0, 0, 0.20, 0.13, "#d8d2c8"); k.pg([[-0.20, -0.04], [0.20, -0.10], [0.20, 0.02], [-0.20, 0.08]], "#c04a4a");
-                       k.el(-0.13, 0.02, 0.08, 0.11, "#e8e2d8"); },
+  /* a stoppered bottle of tonic with a labelled cross, and a dose beside it */
+  medicine:     k => { k.rrc(-0.09, -0.36, 0.18, 0.08, "#8a6a4a", 0.02);                    // the cork
+                       k.rpg([[-0.06, -0.29], [0.06, -0.29], [0.06, -0.21], [0.16, -0.11], [0.16, 0.30], [-0.16, 0.30], [-0.16, -0.11], [-0.06, -0.21]],
+                             "#cfe0d4", [0.02, 0.02, 0.02, 0.05, 0.06, 0.06, 0.05, 0.02]);  // the glass
+                       k.rpg([[-0.13, 0.00], [0.13, 0.00], [0.13, 0.27], [-0.13, 0.27]], "#b8404a", [0.02, 0.02, 0.05, 0.05]);   // the tonic in it
+                       k.rrc(-0.13, 0.05, 0.26, 0.15, "#efe7d2", 0.02);                     // the label
+                       k.rrc(-0.025, 0.075, 0.05, 0.11, "#b8404a", 0.008);                  // its cross
+                       k.rrc(-0.075, 0.105, 0.15, 0.05, "#b8404a", 0.008);
+                       k.rpg([[-0.12, -0.16], [-0.04, -0.19], [-0.03, -0.05], [-0.11, -0.02]], "#eaf2ec", 0.02);   // a glint on the shoulder
+                       k.ci(0.25, 0.19, 0.09, "#e8dcc0"); k.ci(0.25, 0.19, 0.045, "#b8404a"); },                   // one pill alongside
   bandage:      k => { k.pg([[-0.36, 0.16], [-0.20, -0.12], [0.20, -0.24], [0.36, -0.02], [0.20, 0.26], [-0.20, 0.32]], "#efe0c4");
                        k.pg([[-0.16, -0.10], [0.14, -0.19], [0.19, 0.00], [-0.11, 0.11]], "#dcc79a");      // the pad
                        for (const [x, y] of [[-0.06, -0.09], [0.04, -0.12], [-0.03, 0.00], [0.07, -0.03]]) k.ci(x, y, 0.024, "#b89a68");
@@ -3281,8 +3666,17 @@ const ICON_ART = {
                        k.rc(-0.18, 0.02, 0.36, 0.06, "#c2a05a"); },
   cloth_cap:    k => { k.pg([[-0.26, 0.04], [-0.18, -0.20], [0.14, -0.24], [0.26, 0.04]], "#6f7f8c");
                        k.pg([[0.10, 0.02], [0.36, 0.06], [0.34, 0.14], [0.08, 0.10]], "#5f6d78"); },
-  wool_hood:    k => { k.pg([[-0.28, 0.22], [-0.24, -0.14], [0.00, -0.30], [0.24, -0.14], [0.28, 0.22], [0.12, 0.14], [-0.12, 0.14]], "#a86a5a");
-                       k.el(0, 0.00, 0.14, 0.16, "#d8c0a8"); },
+  /* knitted, so nothing on it is straight: a soft dome with a rolled brim and the
+     face opening cut round out of it. */
+  wool_hood:    k => { k.rpg([[-0.29, 0.24], [-0.26, -0.12], [-0.14, -0.27], [0.00, -0.31], [0.14, -0.27], [0.26, -0.12], [0.29, 0.24], [0.13, 0.15], [-0.13, 0.15]],
+                             "#a86a5a", [0.13, 0.14, 0.13, 0.13, 0.13, 0.14, 0.13, 0.12, 0.12]);
+                       k.rpg([[-0.25, -0.10], [-0.13, -0.24], [0.00, -0.28], [0.13, -0.24], [0.25, -0.10], [0.20, -0.02], [0.00, -0.08], [-0.20, -0.02]],
+                             "#bd7f6c", 0.11);                                              // the lit crown
+                       k.el(0, 0.01, 0.145, 0.16, "#d8c0a8");                                // the face opening
+                       k.el(0, 0.01, 0.115, 0.13, "#c2a68d");
+                       for (const s of [-1, 1])                                              // the rolled brim, either side
+                         k.rpg([[s * 0.13, 0.11], [s * 0.29, 0.19], [s * 0.28, 0.26], [s * 0.12, 0.18]], "#8f5548", 0.06);
+                       for (const y of [-0.16, -0.05]) k.ln(-0.20, y, 0.20, y - 0.01, 0.018, "#96594c"); },   // two courses of knitting
   hunter_hat:   k => { k.el(0, 0.14, 0.36, 0.11, "#5f4a34"); k.pg([[-0.18, 0.14], [-0.14, -0.24], [0.14, -0.24], [0.18, 0.14]], "#6f5a3e");
                        k.rc(-0.19, 0.02, 0.38, 0.07, "#3f3324"); k.tri([0.10, -0.02], [0.28, -0.16], [0.14, -0.14], "#c2a05a"); },
   guard_helm:   k => { k.pg([[-0.26, 0.16], [-0.22, -0.14], [0.00, -0.30], [0.22, -0.14], [0.26, 0.16]], PAL.steel);
@@ -11364,26 +11758,29 @@ export default function Alderbrook() {
   };
   const useItem = (itemId) => {
     const p = simRef.current.player, it = ITEMS[itemId];
-    if (itemId === "goodie_crate") {   // Stage 6: open for 3 random items
-      if (!(p.inv.goodie_crate > 0)) return;
-      p.inv.goodie_crate -= 1; if (p.inv.goodie_crate <= 0) delete p.inv.goodie_crate;
+    if (itemId === "goodie_crate" || itemId === "shiny_crate") {   // Stage 6: open for random items
+      const shiny = itemId === "shiny_crate";
+      if (!(p.inv[itemId] > 0)) return;
+      p.inv[itemId] -= 1; if (p.inv[itemId] <= 0) delete p.inv[itemId];
       const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && !ITEMS[id].contraband && id !== "sludge" && id !== "burnt");
-      /* price-weighted, gently: cheap tat stays common, and something dear is a story. */
-      const wOf = (id) => 1 / Math.pow(ITEMS[id].price, CFG.CRATE.priceWeight);
+      /* price-weighted, gently: cheap tat stays common, and something dear is a story.
+         The gilded crate flattens that curve and draws one extra. */
+      const exp = shiny ? CFG.CRATE.shinyWeight : CFG.CRATE.priceWeight;
+      const wOf = (id) => 1 / Math.pow(ITEMS[id].price, exp);
       const total = pool.reduce((sum, id) => sum + wOf(id), 0);
       const drawOne = () => { let r = Math.random() * total; for (const id of pool) { if ((r -= wOf(id)) <= 0) return id; } return pool[pool.length - 1]; };
       const got = [];
       let best = null;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < (shiny ? CFG.CRATE.shinyDraws : 3); i++) {
         const g = drawOne();
         p.inv[g] = (p.inv[g] || 0) + 1; got.push(ITEMS[g].emoji);
         if (!best || ITEMS[g].price > ITEMS[best].price) best = g;
       }
-      sfx.chime(); showToast(`🎲 Crate opened: ${got.join(" ")}!`);
+      sfx.chime(); showToast(`${shiny ? "🎁 Gilded crate" : "🎲 Crate"} opened: ${got.join(" ")}!`);
       if (ITEMS[best].price >= CFG.CRATE.braggableAt) {   // the pull worth telling someone about
         sfx.coin();
         showToast(`✨ ${ITEMS[best].emoji} ${ITEMS[best].name} — worth ${ITEMS[best].price}c. That's a FIND.`);
-        sim.dayLog = [...sim.dayLog, `${playerLabel()} pulled ${ITEMS[best].name} out of a goodie crate`].slice(-12);
+        sim.dayLog = [...sim.dayLog, `${playerLabel()} pulled ${ITEMS[best].name} out of a ${shiny ? "gilded" : "goodie"} crate`].slice(-12);
       }
       bump(); return;
     }
