@@ -219,7 +219,7 @@ const CFG = {
   BILLS: {                                       // business upkeep, drawn from the OWNER's pocket (debt allowed)
     cycle: 3,                                    // charged every N days (fires on day % cycle === 0)
     kind: { office: 6, eatery: 5, retail: 3 },   // per-cycle rates: electricity bleeds offices, utilities bleed kitchens
-    kindOf: { office: "office", cafe: "eatery", fastfood: "eatery", diner: "eatery", inn: "eatery", store_f: "retail", grill_f: "eatery", blackmarket_o: "retail", grill_o: "eatery", market_s: "retail", store_m: "retail", workshop_s: "retail",
+    kindOf: { office: "office", cafe: "eatery", fastfood: "eatery", diner: "eatery", inn: "eatery", store_f: "retail", tailor_f: "retail", grill_f: "eatery", blackmarket_o: "retail", grill_o: "eatery", market_s: "retail", store_m: "retail", workshop_s: "retail",
               market: "retail", store: "retail", mart: "retail", furn: "retail" },
     // medical buildings pay nothing (civic) — Stage 6 hands the mayor a law that can flip this
   },
@@ -641,7 +641,7 @@ const CFG = {
     expertRenown: 6, masterRenown: 20,       // how much renown the milestone confers
   },
   JOBS: {                           // the contract every employer offers
-    employers: ["office", "cafe", "fastfood", "diner", "mart", "inn", "post", "store_f", "grill_f", "market_s", "store_m", "workshop_s"],   // post: Pete can hire delivery couriers; the new quarters hire too
+    employers: ["office", "cafe", "fastfood", "diner", "mart", "inn", "post", "store_f", "tailor_f", "grill_f", "market_s", "store_m", "workshop_s"],   // post: Pete can hire delivery couriers; the new quarters hire too
     days: [1, 2, 3, 4, 5],          // day-of-week (day % 7) — 6 and 0 are the weekend
     shift: [9, 17],
     interviewHour: 10, interviewWindow: 2,               // show up 10:00-12:00 on opening day
@@ -1104,6 +1104,7 @@ const SHOP_STOCK = {
   cafe:     ["meal", "coffee", "bread", "flour"],
   cafe_s:   ["coffee", "tea", "cookies"],
   store_f:  ["bread", "water", "veg", "flour"],
+  tailor_f: ["cloth", "finefiber", "cotton", "work_shirt", "cloth_cap"],   // Stage 17: the tailor sells cloth, fibre and ready-made clothes
   grill_f:  ["stew", "bread", "coffee"],
   market_s: ["bread", "veg", "fruit", "water", "milk"],
   workshop_s: ["saw", "hammer", "screwdriver", "wood", "rock", "pipe", "heatcoil", "nozzle"],   // tools, materials, and REPAIR PARTS: the owner's extra sales
@@ -1118,7 +1119,7 @@ const SHOP_STOCK = {
   store:    ["snack", "water", "candle", "flowers", "tea", "veg", "fruit", "milk"],
   mart:     ["bread", "snack", "water", "coffee", "tea", "chocolate", "flowers", "rock", "tie", "paint", "stamp", "candle", "broom", "flour", "veg", "sugar", "fruit", "milk", "club", "medicine", "bandage", "knife", "slingshot", "arrow", "bow"],   // Stage 3.6: cake/pie now come from eateries, not the mart shelf
 };
-const SHOP_STATION = { cafe: "counter", market: "shop", fastfood: "counter", diner: "counter", store: "shop", mart: "shop", inn: "inn", furn: "shop", cafe_s: "counter", store_f: "shop", grill_f: "counter", blackmarket_o: "shop", grill_o: "counter", market_s: "shop", store_m: "shop", workshop_s: "shop" };
+const SHOP_STATION = { cafe: "counter", market: "shop", fastfood: "counter", diner: "counter", store: "shop", mart: "shop", inn: "inn", furn: "shop", cafe_s: "counter", store_f: "shop", tailor_f: "shop", grill_f: "counter", blackmarket_o: "shop", grill_o: "counter", market_s: "shop", store_m: "shop", workshop_s: "shop" };
 /* where the sick go: local walk-in clinics, or Mercy itself in Stonecross */
 const TOWN_CLINIC = { alderbrook: "clinic_a", mossford: "clinic_m", stonecross: "hospital", ferndale: "clinic_f", outlands: "hospital", hills: "clinic_a" };   // the Outlands wounded ride to Mercy — if anyone hauls them
 /* Stage 3: civic medicine — the practicing doctor of each facility. Care fees
@@ -1292,6 +1293,7 @@ const SHOP_CANDIDATES = {
   furn:     ["piggy", "safe", "bedup", "fridge", "fountain", "chest", "oven", "drinkbar", "table", "candle", "broom", "paint", "bedroll"],   // Stage 4: furniture (fixed-price) + small homewares (menu)
   cafe_s:   ["coffee", "tea", "milk", "choco_milk", "hot_choc", "milkshake", "lemonade", "mocha", "trop_shake", "nutrient", "cookies", "bread", "fresh_bread", "croissant"],   // Stage 3.8
   store_f:  ["bread", "water", "veg", "flour", "milk", "chocolate", "candle"],
+  tailor_f: ["cloth", "finefiber", "cotton", "work_shirt", "work_trous", "cloth_cap", "summer_tunic", "winter_jacket"],
   grill_f:  ["stew", "bread", "coffee", "tea", "grilled_fish", "meal"],
   market_s: ["bread", "veg", "fruit", "water", "milk", "flour", "sugar", "chocolate"],
   workshop_s: ["saw", "hammer", "screwdriver", "wood", "rock", "club", "bat", "toy", "pipe", "heatcoil", "nozzle"],
@@ -1311,7 +1313,7 @@ const OWNERS = { cafe: "marge", market: "theo", office: "bruno", fastfood: "rosa
                  diner: "wren", store: "nadia", mart: "opal", hospital: null /* Stage 3: civic — doctors bill for care instead */, inn: "hollis", hq: null,
                  furn: "juniper",                              // Hearth & Holt — full furniture catalog lands in Stage 4
                  cafe_s: "juno",                               // Stage 3.8: The Grindstone
-                 store_f: "hazel", grill_f: "yusuf", clinic_f: null, townhall_f: null,   // Ferndale
+                 store_f: "hazel", tailor_f: "sana", grill_f: "yusuf", clinic_f: null, townhall_f: null,   // Ferndale
                  blackmarket_o: "mara", grill_o: "howl", shack_o1: null, shack_o2: null,   // the Outlands
                  market_s: "delia", store_m: "briggs", workshop_s: "garrick",   // the new quarters
                  townhall_a: null, townhall_m: null, townhall_s: null,
@@ -1376,7 +1378,7 @@ const JOB_CATEGORY = {
   diner: "kitchen", store: "stock", mart: "stock", inn: "service",
   hospital: "civic", hq: "civic", post: "trade", furn: "trade", cafe_s: "service",
   clinic_a: "civic", clinic_m: "civic", watchpost_a: "civic", watchpost_m: "civic",   // Stage 2.3
-  store_f: "trade", grill_f: "service", clinic_f: "civic", townhall_f: "civic",   // Ferndale
+  store_f: "trade", tailor_f: "trade", grill_f: "service", clinic_f: "civic", townhall_f: "civic",   // Ferndale
   blackmarket_o: "trade", grill_o: "service",   // the Outlands
   market_s: "trade", store_m: "trade", workshop_s: "trade",   // the new quarters
   townhall_a: "civic", townhall_m: "civic", townhall_s: "civic",
@@ -1388,7 +1390,7 @@ const JOB_TRACK = {
   diner: "kitchen", store: "stock", mart: "stock", inn: "service",
   hospital: "service", hq: "service", post: "stock", furn: "stock", cafe_s: "service",
   clinic_a: "service", clinic_m: "service", watchpost_a: "service", watchpost_m: "service",   // Stage 2.3
-  store_f: "stock", grill_f: "service", clinic_f: "service", townhall_f: "service",   // Ferndale
+  store_f: "stock", tailor_f: "service", grill_f: "service", clinic_f: "service", townhall_f: "service",   // Ferndale
   blackmarket_o: "stock", grill_o: "service",   // the Outlands
   market_s: "stock", store_m: "stock", workshop_s: "stock",   // the new quarters
   townhall_a: "office", townhall_m: "office", townhall_s: "office",
@@ -1551,6 +1553,7 @@ const BUILDINGS = [
   { id: "clinic_f",    town: "ferndale",   name: "Ferndale Clinic",  x: 19, y: 3,  w: 4, h: 3, door: { x: 20, y: 6 },  color: "#a8c0b8", roof: "#70908a", enterable: true },
   { id: "store_f",     town: "ferndale",   name: "Mill Supply Co.",  x: 3,  y: 3,  w: 3, h: 3, door: { x: 4,  y: 6 },  color: "#8a9a5a", roof: "#5e6b3a", enterable: true },
   { id: "grill_f",     town: "ferndale",   name: "The Millstone",    x: 3,  y: 9,  w: 4, h: 3, door: { x: 4,  y: 12 }, color: "#b07a4a", roof: "#7d5530", enterable: true },
+  { id: "tailor_f",    town: "ferndale",   name: "Thimble & Thread", x: 26, y: 3,  w: 4, h: 3, door: { x: 27, y: 6 },  color: "#9a7ab0", roof: "#6b5280", enterable: true },   // Stage 17: the valley's tailor
   { id: "home_f1",     town: "ferndale",   name: "Hazel's House",    x: 11, y: 9,  w: 2, h: 2, door: { x: 11, y: 11 }, color: "#a08a70", roof: "#6f5e4a", enterable: true },
   { id: "home_f2",     town: "ferndale",   name: "Yusuf's Place",    x: 14, y: 9,  w: 2, h: 2, door: { x: 14, y: 11 }, color: "#7a90a0", roof: "#526470", enterable: true },
   { id: "home_f3",     town: "ferndale",   name: "Sana's Cottage",  x: 19, y: 9,  w: 2, h: 2, door: { x: 19, y: 11 }, color: "#90a07a", roof: "#647052", enterable: true },
@@ -1582,6 +1585,15 @@ const BUILDINGS = [
    home_p gained a stove + bathroom; eateries gained washrooms + stoves;
    Stonecross adds hospital (ward beds), HQ (cells), inn (rentable beds). */
 const INTERIOR_DEFS = {
+  /* Stage 17 — Thimble & Thread: the valley's tailor. A counter for cloth and fibre, and the
+     BENCH where cotton, grass and hide become something you can wear. */
+  tailor_f: {
+    rows: ["##########", "#G.....W.#", "#.BB...KK#", "#........#", "#.TT..TT.#", "#........#", "####D#####"],
+    stations: { tailor: { x: 2, y: 2, label: "Tailor's bench" }, shop: { x: 4, y: 3, label: "Counter" },
+      wash: { x: 7, y: 1, label: "Washroom" }, staff: { x: 1, y: 1 }, couch: { x: 7, y: 5, label: "Staff couch" } },
+    seats: [{ x: 1, y: 4 }, { x: 2, y: 4 }, { x: 6, y: 4 }, { x: 7, y: 4 }],
+    floor: "#e9dced", wall: "#6b5280",
+  },
   cafe: {
     rows: ["##########", "#G......W#", "#.KK.KKK.#", "#........#", "#.TT..TT.#", "#........#", "####D#####"],
     stations: { stove: { x: 1, y: 3, label: "Stove" }, wash: { x: 8, y: 3, label: "Washroom" }, staff: { x: 4, y: 1 }, counter: { x: 4, y: 3, label: "Café counter" }, couch: { x: 7, y: 5, label: "Staff couch" } },
@@ -2217,7 +2229,7 @@ const keeperOf = (sim, bId) => sim.npcs.find(n => n.alive && n.work?.bId === bId
 /* v7 Stage 5: the endgame ladder — every private business has a price. Civic buildings and
    Pete's post are NOT for sale. Ownership overrides persist and reapply on load. */
 const BUSINESS_PRICE = { cafe: 180, market: 200, fastfood: 160, diner: 190, mart: 240, inn: 260,
-  store: 170, furn: 200, cafe_s: 150, store_f: 150, grill_f: 160, grill_o: 120, blackmarket_o: 350,
+  store: 170, furn: 200, cafe_s: 150, store_f: 150, tailor_f: 165, grill_f: 160, grill_o: 120, blackmarket_o: 350,
   market_s: 175, store_m: 165, workshop_s: 300 };
 
 /* v7 Stage 3: bushes grow beside every tree — derived, not authored, so all towns have them */
@@ -2450,6 +2462,79 @@ const GARMENTS = {
   guard_greaves:{ name: "Watch Greaves",   emoji: "🥾", slot: "legs",  warmth: 4,  tough: 9,  endur: -5, tier: "hard",   mats: { ore: 6, pelt: 1, finefiber: 1 }, dur: 280, wear: "medium", guard: true },
 };
 const GARMENT_SLOTS = ["head", "torso", "legs"];
+/* the three weights, and what each one is FOR — used by the tailor menus and the AI */
+const WEAR_BANDS = { summer: "light and airy, for heat", medium: "everyday wear", winter: "heavy and insulating, for cold" };
+const garmentsOfBand = (band) => Object.entries(GARMENTS).filter(([, G]) => G.wear === band && !G.guard).map(([id]) => id);
+/* the two things the bench makes that aren't clothes: the fibre everything good needs, and
+   the bolt of cloth the tailor sells over the counter. */
+const TAILOR_MATS = {
+  finefiber: { name: "Fine Fibre",     emoji: "🧵", mats: { cotton: 2, fiber: 3 }, out: 1 },   // 2 cotton + 3 grass bundles
+  cloth:     { name: "Bolt of Cloth",  emoji: "🧶", mats: { cotton: 3, finefiber: 1 }, out: 1 },
+};
+const PATCH_FRACTION = 0.45;   // patching a torn piece costs less than half of making a new one
+
+/* =====================================================================
+   STAGE 17 — HOW PEOPLE LOOK. Every soul gets a stable palette and a
+   simple pattern, so the valley reads as individuals rather than dots.
+   Deterministic from the id: the same person looks the same forever.
+   ===================================================================== */
+const SKIN_TONES = ["#f2d3b0", "#e8bd94", "#d9a173", "#b87f52", "#8d5c3a", "#6b432a"];
+const HAIR_TONES = ["#2b2119", "#4a3526", "#6d4a2c", "#8c6239", "#b08040", "#d8c08a", "#9a9a96", "#e3e0da"];
+const CLOTH_TONES = ["#8a4a4a", "#4a6a8a", "#4a7a5a", "#7a6a4a", "#6a4a7a", "#8a6a3a", "#3f5a6b", "#7a5a5a", "#5a5a7a", "#6b7a4a"];
+const PATTERNS = ["plain", "plain", "plain", "stripe", "band", "patch"];   // plain is common; the rest are seasoning
+const hash32 = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return Math.abs(h); };
+/* age band drives proportions: children are smaller with bigger heads, elders stoop and grey */
+const ageOf = (ent) => {
+  if (ent.minor) return 10;
+  const m = /(\d+)-year-old/.exec(ent.desc || "");
+  return m ? +m[1] : 34;
+};
+const ageBand = (ent) => { const a = ageOf(ent); return a < 16 ? "child" : a >= 62 ? "elder" : "adult"; };
+/* a stable look for anyone — the player included */
+function lookOf(ent) {
+  const key = ent.id || "player";
+  const h = hash32(key);
+  const band = ageBand(ent);
+  const grey = band === "elder";
+  return {
+    band,
+    skin: SKIN_TONES[h % SKIN_TONES.length],
+    hair: grey ? HAIR_TONES[6 + (h % 2)] : HAIR_TONES[(h >> 3) % 6],
+    shirt: ent.color || CLOTH_TONES[(h >> 6) % CLOTH_TONES.length],
+    trous: CLOTH_TONES[(h >> 11) % CLOTH_TONES.length],
+    accent: CLOTH_TONES[(h >> 16) % CLOTH_TONES.length],
+    pattern: PATTERNS[(h >> 21) % PATTERNS.length],
+    scale: band === "child" ? 0.76 : band === "elder" ? 0.94 : 1,
+    headMul: band === "child" ? 1.22 : band === "elder" ? 1.02 : 1,
+    stoop: band === "elder" ? 0.035 : 0,
+  };
+}
+/* what someone is actually wearing, by slot — worn garments beat their default clothes */
+const wornInSlot = (ent, slot) => (ent.worn || []).find(id => GARMENTS[id]?.slot === slot) || null;
+/* dress someone sensibly for the weather from what their character would own. Watch officers
+   draw their issued plate; hunters and outlaws favour leathers; everyone else wears the band
+   that fits the season. Deterministic, so a given soul's wardrobe is stable. */
+function dressForSeason(ent, season, temp) {
+  const band = temp <= 6 ? "winter" : temp >= 24 ? "summer" : "medium";
+  const h = hash32((ent.id || "player") + season);
+  const out = [];
+  if (ent.enforcer) out.push("guard_helm", "guard_mail", "guard_greaves");
+  else if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") out.push("hunter_hat", "leather_coat", "leather_legs");
+  else {
+    const pool = garmentsOfBand(band);
+    for (const slot of GARMENT_SLOTS) {
+      const opts = pool.filter(id => GARMENTS[id].slot === slot);
+      if (!opts.length) continue;
+      if (slot === "head" && h % 3 === 0) continue;          // not everybody wears a hat
+      out.push(opts[h % opts.length]);
+    }
+  }
+  return out;
+}
+/* the two numbers armour trades against each other */
+const toughnessOf = (ent) => (ent.worn || []).reduce((s, id) => s + (ent.wornTorn?.[id] ? 0 : (GARMENTS[id]?.tough || 0)), 0);
+const enduranceOf = (ent) => (ent.worn || []).reduce((s, id) => s + (GARMENTS[id]?.endur || 0), 0);   // torn or not, you still carry it
+const maxEnergyOf = (ent) => clamp(100 + enduranceOf(ent), 40, 100);
 /* the Watch's kit is Watch issue — unless the valley thinks well enough of you to look away */
 const GUARD_KIT_FAME = 25;
 const mayWearGuardKit = (ent) => !!ent.enforcer || (ent.fame || 0) >= GUARD_KIT_FAME;
@@ -3433,6 +3518,7 @@ export default function Alderbrook() {
   const [debate, setDebate] = useState(null);           // Stage 15: the eve-of-vote debate { question, answers, options, picked, verdict }
   const [pressPanel, setPressPanel] = useState(null);   // Stage 15: a Herald front page about YOU — bribe, refute, or wear it
   const [pledgePick, setPledgePick] = useState(null);   // Stage 15: choosing the promises you run on
+  const [tailorPanel, setTailorPanel] = useState(null); // Stage 17: the tailor's bench — make, mend, wear
   const [giftDemand, setGiftDemand] = useState(null);   // a friendly NPC asks for a gift instead of robbing: { robberId, coins, items, retaliate, line }
   const [combat, setCombat] = useState(null);           // { foeId, log, over, won }
   const [deathScreen, setDeathScreen] = useState(null); // hardcore epitaph
@@ -3452,7 +3538,7 @@ export default function Alderbrook() {
   const giftDemandRef = useRef(null); giftDemandRef.current = giftDemand;
   const ballotRef = useRef(null); ballotRef.current = ballot;
   const modalRef = useRef(false);
-  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || ballot || counting || electionResult || rally || debate || pressPanel || pledgePick || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
+  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || ballot || counting || electionResult || rally || debate || pressPanel || pledgePick || tailorPanel || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
   const jailRef = useRef(false);
   jailRef.current = !!jailScreen;                        // Stage 3.5: jail time is REAL — the cell must not pause the sim
   const apiBusyRef = useRef(false);
@@ -3473,6 +3559,7 @@ export default function Alderbrook() {
       y: def.home ? bld(def.home).door.y : world.towns[def.town].spots.bench.y,
       hunger: 60 + (i * 4) % 30, thirst: 60 + (i * 7) % 30, energy: 80,
       hygiene: 65 + (i * 5) % 30, health: 100, alive: true, wanted: 0,
+      worn: [], wornTorn: {}, wornWear: {},   // Stage 17: the wardrobe — pieces on, which are torn, and how used each is
       legs: [], path: [], goal: null, activity: "starting the day", hidden: false,
       bubble: null, lastGreet: -999, mood: "neutral",
       evicted: false, vagrantWarned: false,             // Stage 3: rent debt + the officer's one free pass
@@ -3517,6 +3604,7 @@ export default function Alderbrook() {
       player: { scene: "t:alderbrook", x: bld("home_p").door.x, y: bld("home_p").door.y, home: "home_p",   // home was never set — furniture stations checked p.home and always failed
         hunger: 85, thirst: 85, energy: 95, hygiene: 90, health: 100, alive: true,
         coins: CFG.START_COINS, inv: { bread: 1, water: 1 }, fame: 0, renown: 0,
+        worn: ["work_shirt", "work_trous"], wornTorn: {}, wornWear: {},   // Stage 17: you start in everyday clothes
         wanted: 0, bedrest: false, incap: null, dying: null, sick: null, hospitalBill: 0,
         evicted: false, vagrantWarned: false,           // Stage 3
         name: "",                                       // Stage 10: what you call yourself — blank until you say
@@ -3599,6 +3687,7 @@ export default function Alderbrook() {
         hygiene: n.hygiene, health: n.health, alive: n.alive, wanted: n.wanted,
         coins: n.coins, inv: n.inv, fame: n.fame, renown: n.renown, sick: n.sick, skills: n.skills,
         expertise: n.expertise, domainXp: n.domainXp,
+        worn: n.worn, wornTorn: n.wornTorn, wornWear: n.wornWear,   // Stage 17: the wardrobe travels with the save
         furniture: n.furniture, stored: n.stored, chest: n.chest,
         occupation: n.occupation, work: n.work,
         home: n.home, evicted: !!n.evicted, vagrantWarned: !!n.vagrantWarned,
@@ -3649,6 +3738,8 @@ export default function Alderbrook() {
     sim.foragedAt = data.foragedAt || {};
     sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
     sim.weather = data.weather || { kind: "clear", day: sim.day };
+    // Stage 17: pre-wardrobe saves get dressed on the way in
+    for (const n of sim.npcs) { n.worn = n.worn || dressForSeason(n, sim.season, outdoorTemp(sim)); n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {}; }
     // the wild reloads as it was standing: position and wounds, no memory of who it was chasing
     sim.beasts = (data.beasts || []).filter(b => BEAST_SPECIES[b.sp])
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
@@ -4720,7 +4811,28 @@ export default function Alderbrook() {
   /* =====================================================================
      HEALTH / HOSPITAL / DEATH
      ===================================================================== */
-  const damage = (ent, amount) => { ent.health = clamp(ent.health - amount, 0, 100); return ent.health <= 0; };
+  /* Stage 17: TOUGHNESS. Armour and heavy clothing soak a share of every blow before it reaches
+     you — a Watch hauberk turns a beating into a bad afternoon. Torn pieces soak nothing.
+     A hit always lands for at least 1, so nobody becomes literally invulnerable. */
+  const damage = (ent, amount) => {
+    const tough = toughnessOf(ent);
+    const soaked = tough > 0 ? Math.max(1, Math.round(amount * (100 / (100 + tough * 3.2)))) : amount;
+    ent.health = clamp(ent.health - soaked, 0, 100);
+    // taking hits is hard on what you're wearing — that's how good kit ends up torn
+    if (tough > 0 && Math.random() < 0.34) {
+      const hit = (ent.worn || []).filter(id => !ent.wornTorn?.[id] && (GARMENTS[id]?.tough || 0) > 0);
+      if (hit.length) {
+        const id = rand(hit);
+        ent.wornWear = ent.wornWear || {};
+        ent.wornWear[id] = (ent.wornWear[id] || 0) + amount * 1.6;
+        if (ent.wornWear[id] >= (GARMENTS[id]?.dur || 100)) {
+          (ent.wornTorn = ent.wornTorn || {})[id] = true;
+          if (!ent.id) showToast(`🧵 Your ${GARMENTS[id].name} is torn apart by the blow.`);
+        }
+      }
+    }
+    return ent.health <= 0;
+  };
 
   /* incapacitation: lie where you fell; rescue clock starts (loop scans) */
   const incapacitate = (sim, ent) => {
@@ -7158,6 +7270,18 @@ export default function Alderbrook() {
       sim.season = seasonOf(sim.day);
       sim.weather = rollWeather(sim);
       const S = SEASONS[sim.season], W = CFG.WEATHER.kinds[sim.weather.kind];
+      /* Stage 17: the valley dresses for the day. Everyone re-reads the sky each dawn and puts
+         on what suits it — the player's wardrobe is their own business. */
+      {
+        const t9 = outdoorTemp(sim);
+        for (const n of sim.npcs) {
+          if (!n.alive) continue;
+          n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
+          const want = dressForSeason(n, sim.season, t9);
+          // keep anything they already own that still suits; otherwise change into the day's kit
+          if (want.join() !== n.worn.join()) { n.worn = want; }
+        }
+      }
       if (wasSeason !== sim.season) {
         sim.dayLog.push(`${S.name} came to the valley`);
         sim.buzz = { text: `${S.emoji} ${S.name} is here — day ${seasonDayOf(sim.day)} of it, and year ${yearOf(sim.day)}.`, day: sim.day };
@@ -8096,6 +8220,22 @@ export default function Alderbrook() {
         p.thirst = clamp(p.thirst - CFG.DECAY.thirst * dtHours * stress.thirst, 0, 100);
         p.energy = clamp(p.energy - CFG.DECAY.energy * dtHours * (dx || dy ? 1.4 : 1) * stress.energy, 0, 100);
         p.hygiene = clamp(p.hygiene - CFG.HYGIENE.decay * dtHours, 0, 100);
+        // Stage 17: clothes wear. Walking, working and weather all rub at them; when a piece is
+        // used up it TEARS — it keeps you no warmer than a rag and gives no protection at all.
+        {
+          const wet = (CFG.WEATHER.kinds[sim.weather?.kind] || {}).wet || 0;
+          const rub = dtHours * (1 + (dx || dy ? 0.7 : 0) + wet * 0.8);
+          p.wornWear = p.wornWear || {}; p.wornTorn = p.wornTorn || {};
+          for (const id of (p.worn || [])) {
+            if (p.wornTorn[id]) continue;
+            p.wornWear[id] = (p.wornWear[id] || 0) + rub;
+            if (p.wornWear[id] >= (GARMENTS[id]?.dur || 100)) {
+              p.wornTorn[id] = true;
+              sfx.alert(); showToast(`🧵 Your ${GARMENTS[id].name} has torn through — a tailor could patch it.`);
+            }
+          }
+          p.energy = Math.min(p.energy, maxEnergyOf(p));   // armour you're carrying caps what you've got in you
+        }
         if (p.bedrest) {
           const docIn = sim.npcs.some(n => n.alive && n.doctor && n.scene === "i:hospital");
           p.health = clamp(p.health + (docIn ? CFG.HOSPITAL.bedRegenDoc : CFG.HOSPITAL.bedRegen) * dtHours, 0, 100);
@@ -9229,6 +9369,7 @@ export default function Alderbrook() {
       const at = (name, r = 1.4) => inter.stations[name] && near(inter.stations[name], r);
       const shopStn = SHOP_STATION[bId];
 
+      if (inter.stations.tailor && at("tailor")) out.push({ id: "tailorbench", label: "🧵 Tailor's bench — make & mend" });   // Stage 17
       if (SHOP_STOCK[bId] && at(shopStn)) out.push({ id: "browse", label: `🛒 Browse ${bld(bId).name}`, browse: bId });
       // Stage 5: at your OWN counter → manage the business (registers + upgrades)
       if (at(shopStn) && OWNERS[bId] === "player") out.push({ id: "manage", label: "⚙️ Manage business", manage: bId });
@@ -9821,6 +9962,7 @@ export default function Alderbrook() {
         break;
       }
       case "rally": { holdRally(); break; }   // Stage 15: the stump speech
+      case "tailorbench": { setTailorPanel({ tab: "make" }); break; }   // Stage 17: make, mend, and get dressed
       case "takeorder": {
         const items = Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => rand(["🍔", "🍟", "🌭", "🥤"]));
         sim.foodOrder = { items, cooked: 0, stage: "cook" };
@@ -11462,7 +11604,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       ...sim.npcs.filter(n => n.alive && n.scene === scene && !n.hidden).map(n => ({ ...n, kind: "npc", ref: n })),
       // Stage 9: the wild draws in the same depth-sorted pass as everyone else
       ...beastsIn(sim, scene).map(b => ({ ...b, kind: "beast", name: BEAST_SPECIES[b.sp].name, color: BEAST_SPECIES[b.sp].color, ref: b })),
-      { ...sim.player, kind: "player", name: playerDisplay(), color: "#2e6fe0", ref: sim.player },
+      { ...sim.player, kind: "player", name: playerDisplay(), color: "#2e6fe0", ref: sim.player,
+        moving: !!(keysRef.current.up || keysRef.current.down || keysRef.current.left || keysRef.current.right) },
     ].sort((a, b) => a.y - b.y);
     for (const e of ents) drawEntity(ctx, e, T, px, py);
     // Stage 3.5: transient FX — crime pulses expand red, arrests flash gold with a rising ⚖️
@@ -11676,6 +11819,86 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
   };
 
   /* one painter for everyone; the incapacitated lie flat where they fell */
+  /* =====================================================================
+     STAGE 17 — THE FIGURE. Head, torso, two arms, two legs, drawn as flat
+     vertex art in the wearer's own palette, with whatever they've actually
+     got on layered over the top. Children are small and big-headed, elders
+     stoop and have gone grey. Legs and arms swing when they're walking.
+     ===================================================================== */
+  const drawFigure = (ctx, e, cx, cy, T) => {
+    const ref = e.ref, L = lookOf(ref);
+    const s = T * L.scale;
+    const R = (dx, dy, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(cx + dx * s, cy + dy * s, w * s, h * s); };
+    // walking? NPCs have a path; the player is judged by whether they actually moved this frame
+    const moving = ref.id ? (ref.path?.length > 0 || ref.legs?.length > 0) : !!e.moving;
+    const phase = moving ? Math.sin(performance.now() / 115 + hash32(ref.id || "p") % 10) : 0;
+    const swing = phase * 0.085;
+    const stoop = L.stoop;
+
+    const head = wornInSlot(ref, "head"), torso = wornInSlot(ref, "torso"), legs = wornInSlot(ref, "legs");
+    const torn = (id) => id && ref.wornTorn?.[id];
+    const shirtC = torso ? garmentColor(torso, L) : L.shirt;
+    const trousC = legs ? garmentColor(legs, L) : L.trous;
+
+    /* ---- legs (back to front: they sit under the torso) ---- */
+    R(-0.155, 0.10 + stoop, 0.13, 0.30 + swing, trousC);
+    R(0.025, 0.10 + stoop, 0.13, 0.30 - swing, trousC);
+    R(-0.165, 0.385 + stoop, 0.15, 0.055, "#3a3128");           // boots
+    R(0.015, 0.385 + stoop, 0.15, 0.055, "#3a3128");
+    /* ---- arms, swung opposite the legs ---- */
+    const armC = torso ? shirtC : L.skin;
+    R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, 0.30, armC);
+    R(0.155, -0.11 + stoop + swing * 0.5, 0.10, 0.30, armC);
+    R(-0.255, 0.17 + stoop - swing * 0.5, 0.10, 0.055, L.skin);  // hands
+    R(0.155, 0.17 + stoop + swing * 0.5, 0.10, 0.055, L.skin);
+    /* ---- torso ---- */
+    R(-0.175, -0.14 + stoop, 0.35, 0.27, shirtC);
+    /* the simple patterns: a stripe, a waistband, or an honest patch */
+    if (L.pattern === "stripe") { R(-0.175, -0.055 + stoop, 0.35, 0.045, L.accent); R(-0.175, 0.035 + stoop, 0.35, 0.045, L.accent); }
+    else if (L.pattern === "band") R(-0.175, 0.075 + stoop, 0.35, 0.055, L.accent);
+    else if (L.pattern === "patch") R(0.055, -0.10 + stoop, 0.075, 0.075, L.accent);
+    /* torn clothing SHOWS — a ragged notch of skin through the weave */
+    if (torn(torso)) { R(0.035, -0.02 + stoop, 0.06, 0.10, L.skin); R(-0.12, 0.05 + stoop, 0.05, 0.07, L.skin); }
+    if (torn(legs)) R(-0.11, 0.24 + stoop, 0.05, 0.08, L.skin);
+    /* armour reads as plate over the shirt, not instead of it */
+    if (torso && GARMENTS[torso]?.guard && !torn(torso)) {
+      R(-0.175, -0.14 + stoop, 0.35, 0.06, "#8f97a3");
+      R(-0.06, -0.14 + stoop, 0.12, 0.27, "#a4acb8");
+    } else if (torso === "leather_coat" && !torn(torso)) {
+      R(-0.02, -0.14 + stoop, 0.04, 0.27, "#3b2a1c");           // the coat's front seam
+    }
+    /* ---- head ---- */
+    const hy = -0.30 + stoop, hr = 0.145 * L.headMul;
+    R(-hr, hy - hr * 0.5, hr * 2, hr * 1.9, L.skin);
+    /* hair: a cap over the crown, thinner on elders */
+    const hairH = L.band === "elder" ? 0.055 : 0.085;
+    R(-hr, hy - hr * 0.5, hr * 2, hairH, L.hair);
+    if (L.band !== "elder") { R(-hr, hy - hr * 0.5, hr * 0.45, 0.13, L.hair); R(hr - hr * 0.45, hy - hr * 0.5, hr * 0.45, 0.13, L.hair); }
+    /* eyes — two dark pixels, and that's the whole face */
+    R(-hr * 0.52, hy + hr * 0.45, 0.045, 0.05, "#2a2620");
+    R(hr * 0.14, hy + hr * 0.45, 0.045, 0.05, "#2a2620");
+    /* ---- headwear over the lot ---- */
+    if (head && !torn(head)) {
+      const G = GARMENTS[head], hc = garmentColor(head, L);
+      if (G.guard) { R(-hr - 0.02, hy - hr * 0.75, hr * 2 + 0.04, 0.11, "#a4acb8"); R(-0.02, hy - hr * 0.4, 0.04, 0.12, "#8f97a3"); }
+      else if (head === "sun_hat") { R(-0.26, hy - hr * 0.28, 0.52, 0.045, hc); R(-hr * 0.8, hy - hr * 0.85, hr * 1.6, 0.09, hc); }
+      else if (head === "hunter_hat") { R(-0.22, hy - hr * 0.3, 0.44, 0.05, hc); R(-hr * 0.75, hy - hr * 0.95, hr * 1.5, 0.10, hc); R(hr * 0.4, hy - hr * 0.95, 0.05, 0.16, L.accent); }
+      else if (head === "wool_hood") { R(-hr - 0.025, hy - hr * 0.8, hr * 2 + 0.05, 0.14, hc); R(-hr - 0.03, hy + hr * 0.5, hr * 2 + 0.06, 0.06, hc); }
+      else { R(-hr - 0.015, hy - hr * 0.72, hr * 2 + 0.03, 0.10, hc); R(-hr - 0.06, hy - hr * 0.05, hr * 0.9, 0.035, hc); }   // cloth cap + peak
+    }
+    /* the player keeps their blue band so you can always find yourself */
+    if (e.kind === "player" && !head) R(-hr, hy - hr * 0.62, hr * 2, 0.05, "#2e6fe0");
+  };
+  /* a garment's colour: its own if it has one, otherwise the wearer's palette */
+  const garmentColor = (id, L) => {
+    const G = GARMENTS[id]; if (!G) return L.shirt;
+    if (G.guard) return "#7f8794";
+    if (id.startsWith("leather") || id === "hunter_hat") return "#6b4a2e";
+    if (G.wear === "winter") return L.accent;
+    if (G.wear === "summer") return "#e8e0cc";
+    return L.shirt;
+  };
+
   const drawEntity = (ctx, e, T, px, py) => {
     const cx = px(e.x) + T / 2, cy = py(e.y) + T / 2;
     if (e.kind === "beast") {   // Stage 9: an animal, drawn as one — emoji, shadow, and a wound bar when it's bleeding
@@ -11708,16 +11931,12 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     }
     ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.32, T * 0.3, T * 0.12, 0, 0, 7); ctx.fill();
-    ctx.fillStyle = e.color;
-    ctx.beginPath(); ctx.arc(cx, cy, T * (e.kind === "player" ? 0.36 : 0.34), 0, 7); ctx.fill();
+    drawFigure(ctx, e, cx, cy, T);
     // v7 Stage 1: steel SHOWS — the player's drawn weapon, or an NPC mid-confrontation
     const steel = e.kind === "player" ? (e.ref.unsheathed && bestWeapon(e.ref))
       : (e.ref.steelUntil > performance.now() / 1000 && (bestWeapon(e.ref) || "knife"));
-    if (steel) { ctx.font = `${Math.floor(T * 0.5)}px sans-serif`; ctx.fillText(ITEMS[steel]?.emoji || "🗡", cx + T * 0.28, cy - T * 0.05); }
-    ctx.fillStyle = "#f5deb8";
-    ctx.beginPath(); ctx.arc(cx, cy - T * 0.12, T * 0.16, 0, 7); ctx.fill();
-    if (e.kind === "player") { ctx.fillStyle = "#173a78"; ctx.fillRect(cx - T * 0.2, cy - T * 0.34, T * 0.4, T * 0.12); }
-    if (e.ref.wanted > 0) { ctx.fillStyle = "#e0a832"; ctx.font = `700 ${T * 0.3}px system-ui`; ctx.textAlign = "center"; ctx.fillText("★".repeat(Math.min(5, e.ref.wanted)), cx, cy - T * 0.42); }
+    if (steel) { ctx.textAlign = "center"; ctx.font = `${Math.floor(T * 0.42)}px sans-serif`; ctx.fillText(ITEMS[steel]?.emoji || "🗡", cx + T * 0.34, cy + T * 0.02); }
+    if (e.ref.wanted > 0) { ctx.fillStyle = "#e0a832"; ctx.font = `700 ${T * 0.3}px system-ui`; ctx.textAlign = "center"; ctx.fillText("★".repeat(Math.min(5, e.ref.wanted)), cx, cy - T * 0.58); }
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = `${e.kind === "player" ? 700 : 600} ${Math.max(8, T * 0.28)}px system-ui`;
     ctx.textAlign = "center";
@@ -12655,6 +12874,163 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           </div>
         </div>
       )}
+
+      {/* 🧵 the tailor's bench — make, mend, and get dressed */}
+      {tailorPanel && player && (() => {
+        const sim2 = simRef.current, p2 = sim2.player;
+        const tab = tailorPanel.tab || "make";
+        const have = (id) => p2.inv[id] || 0;
+        const canMake = (mats) => Object.entries(mats).every(([m, q]) => have(m) >= q);
+        const matLine = (mats) => Object.entries(mats).map(([m, q]) => `${ITEMS[m]?.emoji || ""}${q}${have(m) >= q ? "" : `/${have(m)}`}`).join(" ");
+        const lvl = skillLevel(p2, "service");
+        const makeMat = (id) => {
+          const R = TAILOR_MATS[id];
+          if (!canMake(R.mats)) { showToast("Not enough to work with."); return; }
+          for (const [m, q] of Object.entries(R.mats)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
+          p2.inv[id] = (p2.inv[id] || 0) + R.out;
+          sim2.time += 20; p2.energy = clamp(p2.energy - 4, 0, 100);
+          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 0);
+          sfx.pop(); showToast(`${R.emoji} ${R.name} ×${R.out} — spun at the bench.`); bump();
+        };
+        const makeGarment = (id) => {
+          const G = GARMENTS[id];
+          if (G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
+          if (!canMake(G.mats)) { showToast("Not enough materials."); return; }
+          for (const [m, q] of Object.entries(G.mats)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
+          p2.inv[id] = (p2.inv[id] || 0) + 1;
+          sim2.time += 45; p2.energy = clamp(p2.energy - 8, 0, 100);
+          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 1);
+          sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`); bump();
+        };
+        const patch = (id) => {
+          const G = GARMENTS[id];
+          const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
+          if (!canMake(cost)) { showToast(`Patching needs ${matLine(cost)}.`); return; }
+          for (const [m, q] of Object.entries(cost)) { p2.inv[m] -= q; if (p2.inv[m] <= 0) delete p2.inv[m]; }
+          delete p2.wornTorn[id]; p2.wornWear[id] = (GARMENTS[id].dur || 100) * 0.35;   // a patch doesn't make it new
+          sim2.time += 25; p2.energy = clamp(p2.energy - 5, 0, 100);
+          p2.skills.service = (p2.skills.service || 0) + taskXp("service", 0);
+          sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`); bump();
+        };
+        const wearIt = (id) => {
+          const G = GARMENTS[id];
+          if (G.guard && !mayWearGuardKit(p2)) { showToast("That's Watch issue. They'd want a word."); return; }
+          if (!(have(id) > 0)) return;
+          const cur = wornInSlot(p2, G.slot);
+          if (cur) { p2.inv[cur] = (p2.inv[cur] || 0) + 1; p2.worn = p2.worn.filter(x => x !== cur); }   // back in the pack
+          p2.inv[id]--; if (p2.inv[id] <= 0) delete p2.inv[id];
+          p2.worn = [...p2.worn, id];
+          sfx.pop(); showToast(`${G.emoji} ${G.name} on.`); bump();
+        };
+        const takeOff = (id) => {
+          p2.worn = p2.worn.filter(x => x !== id);
+          p2.inv[id] = (p2.inv[id] || 0) + 1;
+          bump();
+        };
+        const felt = feltTemp(sim2, p2), st = tempStress(felt);
+        return (
+          <div style={S.chatOverlay} onClick={() => setTailorPanel(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 470, height: "84%" }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#6b5280" }}>
+                <span style={{ fontWeight: 700 }}>🧵 Tailor's Bench</span>
+                <button style={S.closeBtn} onClick={() => setTailorPanel(null)}>✕</button>
+              </div>
+              <div style={S.chatBody}>
+                <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
+                  Wearing: <b>{(p2.worn || []).length ? p2.worn.map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${p2.wornTorn?.[id] ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
+                  Toughness <b>+{toughnessOf(p2)}</b> · Endurance <b>{enduranceOf(p2)}</b> (max energy {maxEnergyOf(p2)})<br />
+                  <span style={{ color: st.cold ? "#7fb4e0" : st.hot ? "#e08a52" : "#8aa87a" }}>
+                    You feel {felt}° — {tempWord(felt)}{st.cold ? " · you're burning food to stay warm" : st.hot ? " · you're losing water fast" : " · comfortable"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[["make", "✂️ Make"], ["wear", "👕 Wear"], ["mend", "🪡 Mend"]].map(([k, lbl]) => (
+                    <button key={k} style={{ ...S.smallBtn, flex: 1, background: tab === k ? "#6b5280" : undefined }}
+                      onClick={() => setTailorPanel({ tab: k })}>{lbl}</button>
+                  ))}
+                </div>
+
+                {tab === "make" && <>
+                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>🧶 Materials</div>
+                  {Object.entries(TAILOR_MATS).map(([id, R]) => (
+                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 20 }}>{R.emoji}</span>
+                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{R.name}</b> ×{R.out}<br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>{matLine(R.mats)}</span></span>
+                      <button style={{ ...S.smallBtn, opacity: canMake(R.mats) ? 1 : 0.4 }} disabled={!canMake(R.mats)} onClick={() => makeMat(id)}>Spin</button>
+                    </div>
+                  ))}
+                  {["summer", "medium", "winter"].map(band => (
+                    <div key={band}>
+                      <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 8 }}>
+                        {band === "summer" ? "🌻" : band === "winter" ? "❄️" : "🍃"} {band[0].toUpperCase() + band.slice(1)} wear
+                        <span style={{ fontWeight: 400, opacity: 0.6, fontSize: fs - 3 }}> — {WEAR_BANDS[band]}</span>
+                      </div>
+                      {Object.entries(GARMENTS).filter(([, G]) => G.wear === band).map(([id, G]) => {
+                        const locked = G.guard && !mayWearGuardKit(p2);
+                        return (
+                          <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, opacity: locked ? 0.5 : 1 }}>
+                            <span style={{ fontSize: 20 }}>{G.emoji}</span>
+                            <span style={{ flex: 1, fontSize: fs - 1 }}>
+                              <b>{G.name}</b>{G.guard && " 🛡️"}<br />
+                              <span style={{ opacity: 0.65, fontSize: fs - 3 }}>
+                                warmth {G.warmth > 0 ? `+${G.warmth}` : G.warmth} · tough +{G.tough} · endur {G.endur} · {matLine(G.mats)}
+                              </span>
+                            </span>
+                            <button style={{ ...S.smallBtn, opacity: canMake(G.mats) && !locked ? 1 : 0.4 }} disabled={!canMake(G.mats) || locked}
+                              onClick={() => makeGarment(id)}>{locked ? "Watch only" : "Sew"}</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </>}
+
+                {tab === "wear" && <>
+                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>On you</div>
+                  {(p2.worn || []).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing but what you stand up in.</div>}
+                  {(p2.worn || []).map(id => (
+                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 20 }}>{GARMENTS[id].emoji}</span>
+                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b>{p2.wornTorn?.[id] && <span style={{ color: "#a05252" }}> · torn</span>}
+                        <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>{GARMENTS[id].slot} · {Math.round(100 - Math.min(100, (p2.wornWear?.[id] || 0) / (GARMENTS[id].dur || 100) * 100))}% condition</span></span>
+                      <button style={S.smallBtn} onClick={() => takeOff(id)}>Take off</button>
+                    </div>
+                  ))}
+                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 8 }}>In your pack</div>
+                  {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>No spare clothes.</div>}
+                  {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).map(id => (
+                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 20 }}>{GARMENTS[id].emoji}</span>
+                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b> ×{p2.inv[id]}
+                        <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>warmth {GARMENTS[id].warmth > 0 ? `+${GARMENTS[id].warmth}` : GARMENTS[id].warmth} · tough +{GARMENTS[id].tough} · endur {GARMENTS[id].endur}</span></span>
+                      <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => wearIt(id)}>Wear</button>
+                    </div>
+                  ))}
+                </>}
+
+                {tab === "mend" && <>
+                  <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
+                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Service skill ({skillTierName(p2, "service")}) is the tailor's craft.
+                  </div>
+                  {(p2.worn || []).filter(id => p2.wornTorn?.[id]).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing you're wearing is torn.</div>}
+                  {(p2.worn || []).filter(id => p2.wornTorn?.[id]).map(id => {
+                    const G = GARMENTS[id];
+                    const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
+                    return (
+                      <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 20 }}>{G.emoji}</span>
+                        <span style={{ flex: 1, fontSize: fs - 1 }}><b>{G.name}</b> <span style={{ color: "#a05252" }}>· torn</span>
+                          <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>patch with {matLine(cost)}</span></span>
+                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => patch(id)}>Patch</button>
+                      </div>
+                    );
+                  })}
+                </>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 📜 choose the promises you run on */}
       {pledgePick && sim && (() => {
