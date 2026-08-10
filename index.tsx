@@ -3181,7 +3181,10 @@ function iconKit(ctx, cx, cy, T) {
     return { at, ux, uy, nx, ny, L,
       bar: (t0, t1, w, f, r) => rpg([at(t0, -w), at(t1, -w), at(t1, w), at(t0, w)], f, r ?? 0) };
   };
-  return { pg, rc, el, ci, ln, tri, rpg, rrc, blob, ax, rot };
+  /* a bridge to the older top-left painters (furniture, the register), so their
+     art can be reused as an icon without being rewritten in icon space */
+  const host = (fn) => fn(ctx, cx - T / 2, cy - T / 2, T);
+  return { pg, rc, el, ci, ln, tri, rpg, rrc, blob, ax, rot, host };
 }
 
 /* shared assemblies — the reason this stays a family */
@@ -4085,6 +4088,14 @@ const ICON_ART = {
   padded_trous: k => { SH.gTrous(k, "#3a3f52", "#282c3b");
                        for (const y of [-0.12, 0.00, 0.12, 0.24]) { k.rrc(-0.22, y, 0.19, 0.045, "#282c3b", 0.02); k.rrc(0.03, y, 0.19, 0.045, "#282c3b", 0.02); } },
 };
+
+/* Furniture already had proper art — it just lived in drawFurnitureArt, which
+   paints from a tile's top-left rather than in icon space. Rather than redraw a
+   dozen pieces, register each one as an icon that calls straight through. They
+   are deliberately NOT in the studio: it carries the icon kit, not this painter,
+   so it could list them but never let you edit them. */
+for (const fid of Object.keys(FURNITURE))
+  ICON_ART["furn_" + fid] = k => k.host((c, x, y, T) => drawFurnitureArt(c, fid, x, y, T));
 
 /* Draw any object at (cx,cy) with T as its full width. Used both for the little
    icons in lists and for things lying on the ground in the world. */
@@ -15341,7 +15352,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                               cursor: slot ? "pointer" : "default",
                               background: ch === "#" ? "#4a4436" : here ? "#d8c9a8" : slot ? "#8fae76" : "#e8dfc9",
                               boxShadow: slot ? "inset 0 0 0 2px #5a7a3a" : "none" }}>
-                            {here ? FURNITURE[here]?.emoji : slot ? "＋" : glyphEmoji[ch] || ""}
+                            {here ? <ItemIcon id={`furn_${here}`} size={22} /> : slot ? "＋" : glyphEmoji[ch] || ""}
                           </div>
                         );
                       }))}
@@ -15572,7 +15583,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           <div style={S.chatOverlay} onClick={() => setStoragePanel(false)}>
             <div style={{ ...S.chatPanel, maxWidth: 380, padding: 20 }} onClick={e => e.stopPropagation()}>
               <div style={{ ...S.chatHeader, background: "#3a4a5a" }}>
-                <span style={{ fontWeight: 700 }}>{FURNITURE[store]?.emoji} {FURNITURE[store]?.name} · {player.stored}/{cap}c</span>
+                <span style={{ fontWeight: 700 }}><ItemIcon id={`furn_${store}`} size={18} /> {FURNITURE[store]?.name} · {player.stored}/{cap}c</span>
                 <button style={S.closeBtn} onClick={() => setStoragePanel(false)}>✕</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
@@ -16049,7 +16060,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       const desc = f.store ? `holds ${f.store}c` : f.slots ? `${f.slots} storage slots` : f.dining ? "+5 to home meals" : f.grants ? `home ${f.grants}` : f.restEase ? "restful sleep" : f.upkeep ? `+${f.upkeep}c/wk` : "";
                       return (
                         <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, background: "#f3eee6", opacity: owned ? 0.5 : 1 }}>
-                          <span style={{ fontSize: 22 }}>{f.emoji}</span>
+                          <ItemIcon id={`furn_${id}`} size={22} />
                           <span style={{ flex: 1 }}><b>{f.name}</b> · {f.price}c<span style={{ fontSize: fs - 3, opacity: 0.6 }}> · {desc}{f.upkeep && !f.store ? "" : ""}</span></span>
                           {owned ? <span style={{ fontSize: fs - 2, opacity: 0.6 }}>owned</span>
                             : <button style={{ ...S.smallBtn, opacity: player.coins >= f.price ? 1 : 0.4 }} onClick={() => buyFurniture(shopPanel.bId, id)}>Buy</button>}
