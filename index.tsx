@@ -765,11 +765,33 @@ const CFG = {
   COMBAT: { roundMs: 700, fistDmg: [4, 9], fleeBase: 45 },
   ROBBERY: { take: 0.4, escapeBase: 40 },
   /* ===== the civic overhaul: elections, the robbable treasury, and trespass ===== */
-  ELECTION: { everyDays: 30, firstDay: 10, regFee: 5, reelectMin: 50, snapBelow: 15 },   // first vote day 10, then every 30 days; an incumbent needs ≥50% avg approval to keep the chair, and ≤15% riots a snap election
+  ELECTION: { everyDays: 30, firstDay: 10, regFee: 5, reelectMin: 50, snapBelow: 15, ballotTokens: 700 },   // first vote day 10, then every 30 days; an incumbent needs ≥50% avg approval to keep the chair, and ≤15% riots a snap election. ballotTokens covers one AI call deciding every resident's vote
   MAYOR: {                                                // Stage 9: the chair KNOWS it's the chair — perks, and the goodwill that excuses them
     npcSalary: 2,                                         // a seated NPC mayor draws the same modest weekly stipend the player does
     favorPerUpgrade: 2, favorPerTaxCut: 1, favorPerGift: 1, favorCap: 6, favorDecay: 1,   // goodwill earned by governing well; fades if you coast
     perkDay: 3, perkChance: 0.4, perkCost: 2, skim: 8, perkApprovalHit: 9, tokens: 120,   // weekly temptation to help themselves (Claude decides in character); costs approval UNLESS goodwill covers it. perkChance is the no-AI fallback roll
+  },
+  /* ===== Stage 15 — POLITICS: the campaign trail, the promises, the debate, and the press ===== */
+  CAMPAIGN: {
+    seasonDays: 7,          // the run-up: canvassing and rallies only bite this close to the vote
+    canvassMin: 20, canvassEnergy: 6,        // a door-knock costs real time and shoe leather
+    canvassTokens: 200, rallyTokens: 220,
+    rallyCost: 25, rallyMin: 90, rallyEnergy: 12,   // a plaza rally: coin, an afternoon, and your voice
+    rallyReach: 9,          // how far across the plaza the speech carries
+    rallyApproval: 3,       // a good rally lifts the town's mood a little
+    leanCap: 12,            // how far persuasion can carry ONE voter
+    leanDecay: 1,           // per day: enthusiasm cools if you stop showing up
+    leanVoteWeight: 1.6,    // how much a point of lean is worth against relationship/fame in the local model
+    pledgeCount: 2,         // promises you make when you register
+  },
+  DEBATE: { hour: 19, tokens: 420, judgeTokens: 200, swingCap: 3 },   // the eve-of-vote debate on the plaza
+  PRESS: {
+    everyDays: 5, tokens: 260,          // the Herald goes to print on a cycle
+    mayorScandalApproval: 7,            // a scandal about the mayor costs the towns' faith
+    praiseApproval: 3,
+    playerScandalFame: 5,               // and one about YOU costs standing
+    bribeCost: 30,                      // the editor is not made of stone
+    archive: 8,                         // headlines kept on the save
   },
   SAFE_ROB: { yield: 0.6, minLoot: 5 },                   // cracking a hall safe: 3★, Extreme-tier check, takes 60% of escrow
   TRESPASS: { graceMin: 25, reportMin: 60 },              // uninvited lingering in a private home: warning, then a 1★ report
@@ -2349,6 +2371,32 @@ const TOWN_UPGRADES = {
   clinic: { name: "Clinic Fund",      emoji: "⚕️", cost: 70, blurb: "hospital bills 25% lighter" },
 };
 
+/* Stage 15 — CAMPAIGN PROMISES. Pick two when you register; the valley holds you to them.
+   Each one is checkable against the actual save state, so nobody has to take your word for it.
+   `check(sim, pl)` returns { done, progress } where progress is a short human line. */
+const PLEDGES = {
+  taxcut: {
+    name: "Cut the business tax", emoji: "📉", blurb: "get the business tax to 10% or lower",
+    check: (sim) => { const r = Math.round((sim.taxRate ?? CFG.TAX.rate) * 100); return { done: r <= 10, progress: `tax is ${r}% (need ≤10%)` }; },
+  },
+  build: {
+    name: "Build up the valley", emoji: "🏗️", blurb: "fund 3 town upgrades while in office",
+    check: (sim, pl) => { const n = Object.values(sim.townUpgrades || {}).reduce((s, t) => s + Object.keys(t || {}).length, 0) - (pl.base?.upgrades || 0); return { done: n >= 3, progress: `${Math.max(0, n)}/3 funded` }; },
+  },
+  safety: {
+    name: "Make the streets safe", emoji: "🛡️", blurb: "leave fewer open cases than you inherited",
+    check: (sim, pl) => { const open = (sim.cases || []).filter(c => c.state === "open").length; return { done: open < (pl.base?.cases ?? 0) || open === 0, progress: `${open} open (inherited ${pl.base?.cases ?? 0})` }; },
+  },
+  charity: {
+    name: "Give back", emoji: "🎁", blurb: "give 5 gifts to residents while in office",
+    check: (sim, pl) => { const n = (pl.progress?.gifts || 0); return { done: n >= 5, progress: `${n}/5 given` }; },
+  },
+  clean: {
+    name: "Keep clean hands", emoji: "🕊️", blurb: "never claim mayoral privileges for yourself",
+    check: (sim, pl) => ({ done: !(pl.progress?.perks > 0), progress: pl.progress?.perks > 0 ? `broken — ${pl.progress.perks} taken` : "clean so far" }),
+  },
+};
+
 let USER_API_KEY = "";
 const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 
@@ -2661,6 +2709,113 @@ Return ONLY JSON, no markdown: {"indulge":<true|false>,"line":"<what you mutter 
   return (out && typeof out.indulge === "boolean") ? out : null;
 }
 
+/* Stage 14 — the BALLOT: on election day every resident votes in character. One call decides the
+   whole valley's votes from each voter's feelings toward the candidates, the incumbent's record,
+   and what they personally want from a mayor. Returns { votes: {voterId: candidateId}, mood }.
+   Falls back to the local scoring model when the AI is off or the call fails. */
+async function ballotCall(voters, candidates, context) {
+  const slate = candidates.map(c =>
+    `- ${c.id} (${c.name})${c.incumbent ? " — THE SITTING MAYOR" : ""}${c.isPlayer ? " — the player" : ""}: ${c.blurb}`
+  ).join("\n");
+  const roll = voters.map(v =>
+    `- ${v.id} (${v.name}): ${v.personality}. Feels: ${v.feelings}.${v.memories ? ` On their mind: ${v.memories}.` : ""} Lives in ${v.town} (approval of the sitting mayor there: ${v.approval}%).${v.campaign ? ` CAMPAIGN: ${v.campaign}.` : ""}`
+  ).join("\n");
+  const prompt =
+`Election day in a cozy life-sim valley. Every adult resident casts one vote for mayor.
+THE SLATE:
+${slate}
+THE VOTERS:
+${roll}
+${context ? `Lately around the valley: ${context}.` : ""}
+For EACH voter, pick the candidate they'd genuinely back — weigh how they feel about each candidate personally, the sitting mayor's record and local approval, and what this particular voter wants out of a mayor. People vote their gut and their grudges, not just the polls; a well-liked challenger can absolutely unseat a competent incumbent. Every voter id must appear exactly once, mapped to one candidate id from the slate.
+Return ONLY JSON, no markdown: {"votes":{"<voterId>":"<candidateId>"},"mood":"<one line on how the valley is feeling about this election, under 18 words>"}`;
+  const out = await callClaude(prompt, CFG.ELECTION.ballotTokens);
+  return (out && out.votes && typeof out.votes === "object") ? out : null;
+}
+
+/* Stage 15 — CANVASSING: the player works a voter on their doorstep. The resident decides, in
+   character, how the pitch landed — warmly, coldly, or somewhere in between. Returns
+   { sway: -3..3, say, remember }. */
+async function canvassCall(npc, ctx) {
+  const prompt =
+`You are ${npc.name}, ${npc.desc} in a cozy life-sim valley. Personality: ${npc.personality}.
+You feel ${ctx.rel} the player. ${ctx.memories ? `On your mind: ${ctx.memories}.` : ""}
+It's election season and the player has just stopped you to ask for your vote for mayor.
+Their standing: ${ctx.playerTier}${ctx.playerWanted > 0 ? `, WANTED by the Watch (level ${ctx.playerWanted})` : ""}. ${ctx.pledges ? `They're campaigning on: ${ctx.pledges}.` : "They're campaigning on nothing in particular."}
+${ctx.record ? `Their record in office: ${ctx.record}.` : ""}${ctx.alreadyAsked ? " They have already worked you today — being pestered twice grates." : ""}
+Decide IN CHARACTER how this pitch lands with you: "sway" from -3 (it actively put you off) through 0 (unmoved) to +3 (genuinely won over). Be honest to your character and your feelings about them — a pushy stranger doesn't win a sceptic in one go, but a friend with a promise you care about might.
+Return ONLY JSON, no markdown: {"sway":<-3..3>,"say":"<your reply to their face, under 22 words, in character>","remember":"null OR a memory under 10 words"}`;
+  const out = await callClaude(prompt, CFG.CAMPAIGN.canvassTokens);
+  return (out && typeof out.sway === "number") ? out : null;
+}
+
+/* Stage 15 — THE RALLY: a speech in the plaza. Claude writes the speech from the player's actual
+   platform and record, and says how the crowd took it. Returns { speech, sway, mood }. */
+async function rallyCall(ctx) {
+  const prompt =
+`In a cozy life-sim valley, ${ctx.playerName} has called a public rally in the ${ctx.townName} plaza — they're running for mayor.
+Their standing: ${ctx.playerTier}${ctx.playerWanted > 0 ? `, and WANTED by the Watch (level ${ctx.playerWanted})` : ""}. Local approval of the sitting mayor: ${ctx.approval}%.
+Their platform: ${ctx.pledges || "no firm promises"}. ${ctx.record ? `Their record in office: ${ctx.record}.` : ""}
+In the crowd: ${ctx.crowd || "a thin turnout"}.
+Lately around the valley: ${ctx.recent || "a quiet stretch"}.
+Write the rally: a short stump speech in their voice, and how honestly it lands with THIS crowd — "sway" from -2 (it fell flat or backfired) to +3 (they ate it up). A wanted or disliked candidate should struggle; a solid record should carry.
+Return ONLY JSON, no markdown: {"speech":"<the stump speech, under 45 words>","sway":<-2..3>,"mood":"<one line on the crowd's reaction, under 15 words>"}`;
+  const out = await callClaude(prompt, CFG.CAMPAIGN.rallyTokens);
+  return (out && typeof out.sway === "number") ? out : null;
+}
+
+/* Stage 15 — THE DEBATE, eve of the vote. One call sets the whole stage: the moderator's question,
+   each rival's answer in their own voice, and three genuinely different stances for the player to
+   take. Returns { question, answers: [{id, answer}], options: [{label, gist}] }. */
+async function debateOpen(candidates, playerName, townName, recent) {
+  const rivals = candidates.filter(c => !c.isPlayer);
+  const prompt =
+`It's the eve of the mayoral election in a cozy life-sim valley. The candidates are on a stage in the ${townName} plaza.
+CANDIDATES:
+${candidates.map(c => `- ${c.id} (${c.name})${c.isPlayer ? " — the player, YOU do not write their answer" : ""}${c.incumbent ? " — the sitting mayor" : ""}: ${c.blurb}`).join("\n")}
+Lately around the valley: ${recent || "a quiet stretch"}.
+Write the debate's opening exchange:
+1. "question" — the moderator's question to the field. Make it bite on something real from the valley's recent life, under 25 words.
+2. "answers" — for EACH rival candidate (not the player), their answer in their own voice, under 30 words each. Stay true to their character; a vain one preens, a scheming one deflects.
+3. "options" — exactly 3 genuinely different stances ${playerName} could take in reply. Each needs a short button "label" (under 6 words) and a "gist" (what they'd actually argue, under 20 words). Make them real choices — e.g. a bold promise, a careful answer, an attack on a rival — not three flavours of the same thing.
+Return ONLY JSON, no markdown: {"question":"<text>","answers":[{"id":"<candidateId>","answer":"<text>"}],"options":[{"label":"<text>","gist":"<text>"}]}`;
+  const out = await callClaude(prompt, CFG.DEBATE.tokens);
+  return (out && typeof out.question === "string" && Array.isArray(out.options) && out.options.length) ? out : null;
+}
+
+/* Stage 15 — the debate verdict: how the player's stance played to the valley. Returns
+   { swing: -3..3, verdict, standout }. */
+async function debateJudge(question, playerAnswer, rivalLines, ctx) {
+  const prompt =
+`Judge how a mayoral debate went in a cozy life-sim valley.
+The question: "${question}"
+${ctx.playerName} answered: "${playerAnswer}"
+The rivals answered: ${rivalLines || "nothing memorable"}.
+${ctx.playerName}'s standing: ${ctx.playerTier}${ctx.playerWanted > 0 ? `, WANTED by the Watch` : ""}. Their platform: ${ctx.pledges || "no firm promises"}.${ctx.record ? ` Their record in office: ${ctx.record}.` : ""}
+Decide honestly how the watching residents took ${ctx.playerName}'s answer: "swing" from -3 (they hurt themselves badly) to +3 (they won the night). Substance and credibility should matter more than bluster — a promise from someone with a bad record rings hollow.
+Return ONLY JSON, no markdown: {"swing":<-3..3>,"verdict":"<how the crowd read it, under 22 words>","standout":"<candidate id who came off best, or empty string>"}`;
+  const out = await callClaude(prompt, CFG.DEBATE.judgeTokens);
+  return (out && typeof out.swing === "number") ? out : null;
+}
+
+/* Stage 15 — THE VALLEY HERALD. The press reads the week's real events and prints one story.
+   Returns { headline, standfirst, kind: news|praise|scandal, about: mayor|player|town, severity }. */
+async function pressCall(ctx) {
+  const prompt =
+`You are the editor of the Valley Herald, the only newspaper in a cozy life-sim valley. Print this cycle's front page.
+The mayor is ${ctx.mayorName}${ctx.mayorIsPlayer ? " (the player)" : ""}, on ${ctx.approval}% approval across the valley.${ctx.pledges ? ` They campaigned on: ${ctx.pledges}.` : ""}${ctx.pledgeState ? ` Promise tracker: ${ctx.pledgeState}.` : ""}
+The player, ${ctx.playerName}, is ${ctx.playerTier}${ctx.playerWanted > 0 ? ` and WANTED by the Watch (level ${ctx.playerWanted})` : ""}.
+What actually happened lately: ${ctx.events || "very little worth the ink"}.
+Write ONE story drawn from those real events — do not invent major events that aren't listed. Decide:
+- "about": "mayor" (the mayor's conduct or record), "player" (the player's conduct), or "town" (general valley news).
+- "kind": "scandal" (damaging), "praise" (flattering), or "news" (neutral).
+- "severity": 1 (a small item) to 3 (front-page thunder).
+A quiet, clean week should produce mild "news", not invented outrage. Real wrongdoing in the events — skimming, theft, broken promises, violence — deserves a proper scandal.
+Return ONLY JSON, no markdown: {"headline":"<under 12 words, in a small-town paper's voice>","standfirst":"<one sentence under 25 words>","kind":"news|praise|scandal","about":"mayor|player|town","severity":<1-3>}`;
+  const out = await callClaude(prompt, CFG.PRESS.tokens);
+  return (out && typeof out.headline === "string") ? out : null;
+}
+
 /* Stage 7 — the Heist Nudge: Claude PLANS a crime. Given desperate/outlaw candidates and the
    fattest marks (with their storage security), it picks who hits whom, and whether to wait for
    nightfall. Executes through the REAL burglary pipeline (walk, crack, case, interrogation). */
@@ -2970,6 +3125,13 @@ export default function Alderbrook() {
   const [travelPanel, setTravelPanel] = useState(false);// Mo's fare menu
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [threat, setThreat] = useState(null);           // { robberId } — submit/run/fight
+  const [ballot, setBallot] = useState(null);           // Stage 14: election day — YOUR vote { day, options, incumbentId, approvalPct, barred }
+  const [counting, setCounting] = useState(false);      // the votes are being counted (the AI is deciding the valley's ballots)
+  const [electionResult, setElectionResult] = useState(null);   // the count, revealed: tally + who voted for whom
+  const [rally, setRally] = useState(null);             // Stage 15: your stump speech and how the plaza took it
+  const [debate, setDebate] = useState(null);           // Stage 15: the eve-of-vote debate { question, answers, options, picked, verdict }
+  const [pressPanel, setPressPanel] = useState(null);   // Stage 15: a Herald front page about YOU — bribe, refute, or wear it
+  const [pledgePick, setPledgePick] = useState(null);   // Stage 15: choosing the promises you run on
   const [giftDemand, setGiftDemand] = useState(null);   // a friendly NPC asks for a gift instead of robbing: { robberId, coins, items, retaliate, line }
   const [combat, setCombat] = useState(null);           // { foeId, log, over, won }
   const [deathScreen, setDeathScreen] = useState(null); // hardcore epitaph
@@ -2987,8 +3149,9 @@ export default function Alderbrook() {
   const combatRef = useRef(null); combatRef.current = combat;
   const threatRef = useRef(null); threatRef.current = threat;
   const giftDemandRef = useRef(null); giftDemandRef.current = giftDemand;
+  const ballotRef = useRef(null); ballotRef.current = ballot;
   const modalRef = useRef(false);
-  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
+  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || ballot || counting || electionResult || rally || debate || pressPanel || pledgePick || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
   const jailRef = useRef(false);
   jailRef.current = !!jailScreen;                        // Stage 3.5: jail time is REAL — the cell must not pause the sim
   const apiBusyRef = useRef(false);
@@ -3093,6 +3256,10 @@ export default function Alderbrook() {
       election: { nextDay: CFG.ELECTION.firstDay, playerRunning: false, last: null },   // the ballot cycle
       taxRate: CFG.TAX.rate, playerMayor: false,        // the mayor's dials (player-adjustable in office)
       mayorFavor: 0,                                     // Stage 9: goodwill the sitting mayor has banked (funds/cuts/gifts); excuses the odd perk
+      campaign: { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] },   // Stage 15: the trail — persuasion banked per voter, and this run's promises
+      pledges: null,                                     // once elected: { list, madeDay, base, progress } — the promises you're being held to
+      press: { nextDay: CFG.PRESS.everyDays, items: [] },  // Stage 15: the Valley Herald
+      debate: null,                                      // the eve-of-vote debate, once per election
       bizQuotes: {},                                    // today's business asking prices {bId: {day, price, say}}
       settings: { difficulty: difficultyChoice || "normal", attitude: "peaceful", pulse: true, nudges: 2, incidents: 99, sfx: true, sfxVol: 0.6, apiKey: USER_API_KEY || "" },  // 99 = unlimited; carry any key set on the title screen
     };
@@ -3121,6 +3288,7 @@ export default function Alderbrook() {
       appliances: sim.appliances || {}, ownsManor: !!sim.ownsManor,
       homePlacements: sim.homePlacements || {}, election: sim.election,
       taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
+      campaign: sim.campaign, pledges: sim.pledges, press: sim.press, debate: sim.debate,
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
       npcs: Object.fromEntries(sim.npcs.map(n => [n.id, {
@@ -3192,9 +3360,14 @@ export default function Alderbrook() {
     sim.ownsManor = !!data.ownsManor;
     sim.homePlacements = data.homePlacements || {};
     sim.election = data.election || { nextDay: Math.max(sim.day + 3, CFG.ELECTION.firstDay), playerRunning: false, last: null };
+    if (sim.election.pending) setBallot({ ...sim.election.pending });   // saved mid-vote: the polls are still open
     sim.taxRate = data.taxRate ?? CFG.TAX.rate;
     sim.playerMayor = !!data.playerMayor;
     sim.mayorFavor = data.mayorFavor || 0;
+    sim.campaign = data.campaign || { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] };
+    sim.pledges = data.pledges || null;
+    sim.press = data.press || { nextDay: sim.day + 2, items: [] };
+    sim.debate = data.debate || null;
     sim.bizQuotes = {};
     if (!sim.treasury.ferndale) sim.treasury.ferndale = CFG.TREASURY_SEED;   // pre-Ferndale saves
     sim.opening = data.opening || null; sim.interviewBans = data.interviewBans || {};
@@ -4083,6 +4256,10 @@ export default function Alderbrook() {
     const g = gradeGift(value);
     const grubby = from.hygiene < CFG.HYGIENE.social;   // hard to warm up to someone who reeks
     if (from.mayor && value >= 3) sim.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim.mayorFavor || 0) + CFG.MAYOR.favorPerGift);   // a generous mayor banks goodwill the town remembers
+    if (!from.id && to.id && value >= 3) {                 // Stage 15: the player's generosity counts against a "give back" promise
+      if (sim.playerMayor) sim.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim.mayorFavor || 0) + CFG.MAYOR.favorPerGift);
+      notePledge(sim, "gifts");
+    }
 
     if (to.id) {
       to.bubble = { text: value >= 100 ? `...I— ${what}?! Are you SERIOUS?!` : value >= 10 ? `${what}! You shouldn't have!` : `Oh! Thanks for the ${what}.`, until: performance.now() / 1000 + 5 };
@@ -4122,6 +4299,7 @@ export default function Alderbrook() {
   const claimMayorPerk = (sim, mayor, isPlayer) => {
     const key = isPlayer ? "player" : mayor.id;
     const who = isPlayer ? "the mayor" : mayor.name;
+    if (isPlayer) notePledge(sim, "perks");              // Stage 15: this is exactly what "clean hands" promised not to do
     let took = 0;                                        // a skim across the safes, capped
     for (const t of Object.keys(sim.treasury)) {
       if (took >= CFG.MAYOR.skim) break;
@@ -6231,6 +6409,443 @@ export default function Alderbrook() {
     }
     return placed;
   };
+
+  /* ===================================================================
+     THE CAMPAIGN TRAIL — promises, canvassing, rallies
+     =================================================================== */
+  /* is the player standing in a vote that's close enough to campaign for? */
+  const campaignSeason = (sim) => {
+    const el = sim?.election; if (!el) return false;
+    if (!(el.playerRunning || sim.playerMayor)) return false;
+    if (sim.player.jailedUntil || sim.player.alive === false) return false;
+    return (el.nextDay - sim.day) <= CFG.CAMPAIGN.seasonDays;
+  };
+  /* what the player is promising this run (or promised when elected) */
+  const pledgeIds = (sim) => (sim.pledges?.list?.length ? sim.pledges.list : (sim.campaign?.pledges || []));
+  const pledgeLine = (sim) => pledgeIds(sim).map(id => PLEDGES[id]?.blurb).filter(Boolean).join("; ");
+  /* how the promises are actually going — the line the AI and the UI both read */
+  const pledgeState = (sim) => {
+    const pl = sim.pledges; if (!pl?.list?.length) return "";
+    return pl.list.map(id => { const P = PLEDGES[id]; if (!P) return null; const c = P.check(sim, pl); return `${P.name}: ${c.done ? "KEPT" : "not yet"} (${c.progress})`; }).filter(Boolean).join("; ");
+  };
+  /* a compact read on the player's time in the chair, for the campaign brains */
+  const officeRecord = (sim) => {
+    if (!sim.playerMayor && !sim.pledges) return "";
+    const bits = [`valley approval ${mayorApprovalPct(sim)}%`];
+    const ups = Object.values(sim.townUpgrades || {}).reduce((s, t) => s + Object.keys(t || {}).length, 0);
+    if (ups) bits.push(`${ups} town upgrade${ups === 1 ? "" : "s"} funded`);
+    bits.push(`business tax ${Math.round((sim.taxRate ?? CFG.TAX.rate) * 100)}%`);
+    if (sim.pledges?.progress?.perks) bits.push(`took mayoral privileges ${sim.pledges.progress.perks}×`);
+    const ps = pledgeState(sim); if (ps) bits.push(`promises — ${ps}`);
+    return bits.join(", ");
+  };
+  const leanOf = (sim, id) => (sim.campaign?.lean?.[id] || 0);
+  const addLean = (sim, id, n) => {
+    const c = (sim.campaign = sim.campaign || { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] });
+    c.lean[id] = clamp((c.lean[id] || 0) + n, -CFG.CAMPAIGN.leanCap, CFG.CAMPAIGN.leanCap);
+  };
+  /* promise bookkeeping — called from the systems the promises are ABOUT */
+  const notePledge = (sim, key, n = 1) => {
+    if (!sim.pledges) return;
+    const pr = (sim.pledges.progress = sim.pledges.progress || {});
+    pr[key] = (pr[key] || 0) + n;
+  };
+
+  /* ===== CANVASSING — work a voter on their doorstep ===== */
+  const canvassNPC = (npcId) => {
+    const sim = simRef.current, p = sim.player;
+    const npc = sim.npcs.find(n => n.id === npcId && n.alive);
+    if (!npc) return;
+    if (!campaignSeason(sim)) { showToast("There's no election to campaign for right now."); return; }
+    if (p.energy < CFG.CAMPAIGN.canvassEnergy) { showToast("You're too worn out to work a crowd."); return; }
+    sim.campaign = sim.campaign || { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] };
+    const asked = sim.campaign.canvassed[npcId] === sim.day;
+    sim.time += CFG.CAMPAIGN.canvassMin;
+    p.energy = clamp(p.energy - CFG.CAMPAIGN.canvassEnergy, 0, 100);
+    sim.campaign.canvassed[npcId] = sim.day;
+    const now = performance.now() / 1000;
+    const apply = (sway, say, remember) => {
+      const s = clamp(Math.round(sway), -3, 3);
+      addLean(sim, npcId, asked ? Math.min(s, 1) : s);       // pestering the same door twice buys little
+      npc.bubble = { text: (say || (s > 0 ? "...I'll think on it." : "I've heard enough.")).slice(0, 140), until: now + 6 };
+      if (remember && remember !== "null") npc.memories = [...npc.memories, String(remember).slice(0, 60)].slice(-CFG.MAX_MEMORIES);
+      if (s >= 2) { sfx.pop(); showToast(`🗳️ ${npc.name} is won over — that landed.`); }
+      else if (s > 0) showToast(`🗳️ ${npc.name} warms to you a little.`);
+      else if (s === 0) showToast(`🗳️ ${npc.name} hears you out. Hard to read.`);
+      else { sfx.alert(); showToast(`🗳️ That went badly — ${npc.name} liked you better before.`); }
+      bump();
+    };
+    const local = () => {   // no AI: relationship and standing carry the pitch
+      const rel = relIdx(npc.relationships.player || "neutral") - relIdx("neutral");
+      let s = Math.round(rel / 2 + (p.fame || 0) / 30 - (p.wanted || 0));
+      if (asked) s = Math.min(s, 1);
+      apply(clamp(s, -3, 3), null, null);
+    };
+    if (!USER_API_KEY || apiBusyRef.current) { local(); return; }
+    apiBusyRef.current = true;
+    canvassCall(npc, {
+      rel: REL_DESC[npc.relationships.player || "neutral"] || "neutral toward",
+      memories: (npc.memories || []).slice(-2).join("; "),
+      playerTier: fameTier(p.fame, p.renown), playerWanted: p.wanted || 0,
+      pledges: pledgeLine(sim), record: officeRecord(sim), alreadyAsked: asked,
+    })
+      .then(out => out ? apply(out.sway, out.say, out.remember) : local())
+      .catch(local)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* ===== THE RALLY — a speech in the plaza ===== */
+  const holdRally = () => {
+    const sim = simRef.current, p = sim.player, world = worldRef.current;
+    if (!campaignSeason(sim)) { showToast("There's no election to campaign for right now."); return; }
+    sim.campaign = sim.campaign || { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] };
+    if (sim.campaign.rallyDay === sim.day) { showToast("You've already held a rally today."); return; }
+    if (!spend(p, CFG.CAMPAIGN.rallyCost)) return;
+    const townId = townOfScene(world, p.scene);
+    sim.campaign.rallyDay = sim.day;
+    sim.time += CFG.CAMPAIGN.rallyMin;
+    p.energy = clamp(p.energy - CFG.CAMPAIGN.rallyEnergy, 0, 100);
+    const crowd = sim.npcs.filter(n => n.alive && !n.minor && !n.incap && !n.jailedUntil && n.scene === p.scene && dist(n, p) < CFG.CAMPAIGN.rallyReach);
+    const now = performance.now() / 1000;
+    const apply = (sway, speech, mood) => {
+      const s = clamp(Math.round(sway), -2, 3);
+      for (const n of crowd) addLean(sim, n.id, s);
+      if (sim.approval?.[townId] != null) sim.approval[townId] = clamp(sim.approval[townId] + s * CFG.CAMPAIGN.rallyApproval, 0, 100);
+      if (speech) p.bubble = { text: String(speech).slice(0, 220), until: now + 10 };
+      repEvent(sim, p, s, Math.max(1, s), `${playerLabel()} held a rally in ${TOWN_DEFS[townId]?.name || townId}`);
+      sim.dayLog.push(`${playerLabel()} held a campaign rally in ${townId}${s <= 0 ? " — it fell flat" : ""}`);
+      sim.buzz = { text: mood ? `Rally in ${TOWN_DEFS[townId]?.name || townId}: ${mood}` : `${playerLabel()} rallied the ${TOWN_DEFS[townId]?.name || townId} plaza.`, day: sim.day };
+      setRally({ speech: speech || null, mood: mood || null, sway: s, crowd: crowd.length, town: TOWN_DEFS[townId]?.name || townId });
+      bump();
+    };
+    const local = () => apply(crowd.length >= 3 ? 1 : 0, null, crowd.length ? null : "barely anyone stopped to listen");
+    if (!USER_API_KEY || apiBusyRef.current || !crowd.length) { local(); return; }
+    apiBusyRef.current = true;
+    rallyCall({
+      playerName: PLAYER_NAME || "the newcomer", townName: TOWN_DEFS[townId]?.name || townId,
+      playerTier: fameTier(p.fame, p.renown), playerWanted: p.wanted || 0,
+      approval: Math.round(sim.approval?.[townId] ?? CFG.APPROVAL.start),
+      pledges: pledgeLine(sim), record: officeRecord(sim),
+      crowd: crowd.map(n => `${n.name} (${REL_DESC[n.relationships.player || "neutral"] || "neutral toward"} you)`).join(", "),
+      recent: (sim.dayLog || []).slice(-3).join("; "),
+    })
+      .then(out => out ? apply(out.sway, out.speech, out.mood) : local())
+      .catch(local)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* ===== THE PROMISES — judged when the term ends ===== */
+  const judgePledges = (sim) => {
+    const pl = sim.pledges;
+    if (!pl?.list?.length) return null;
+    const rows = pl.list.map(id => { const P = PLEDGES[id]; if (!P) return null; const c = P.check(sim, pl); return { id, name: P.name, emoji: P.emoji, blurb: P.blurb, kept: !!c.done, progress: c.progress }; }).filter(Boolean);
+    const kept = rows.filter(r => r.kept).length, broke = rows.length - kept;
+    for (const t of Object.keys(sim.approval)) sim.approval[t] = clamp(sim.approval[t] + kept * 5 - broke * 6, 0, 100);
+    if (kept) sim.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim.mayorFavor || 0) + kept);
+    const witnesses = sim.npcs.filter(n => n.alive && !n.minor);
+    for (const r of rows)                                    // the valley remembers, by name
+      for (const w of witnesses.slice(0, 8))
+        w.memories = [...w.memories, `${playerLabel()} ${r.kept ? "kept" : "broke"} their promise to ${r.blurb}`].slice(-CFG.MAX_MEMORIES);
+    if (broke) seedGossip(sim, witnesses.slice(0, 5), { text: `${playerLabel()} broke ${broke} campaign promise${broke === 1 ? "" : "s"}`, subjectId: "player", bad: true });
+    else if (kept) seedGossip(sim, witnesses.slice(0, 5), { text: `${playerLabel()} kept every promise they made`, subjectId: "player", bad: false });
+    sim.dayLog.push(`the valley judged ${playerLabel()}'s promises — ${kept} kept, ${broke} broken`);
+    sim.pledges = { ...pl, judged: { day: sim.day, rows, kept, broke } };
+    return { rows, kept, broke };
+  };
+
+  /* ===== THE DEBATE — the eve of the vote ===== */
+  const openDebate = (sim, slate) => {
+    const p = sim.player;
+    const townId = townOfScene(worldRef.current, p.scene) || "alderbrook";
+    const nameOf = (id) => id === "player" ? (PLAYER_NAME || "You") : (sim.npcs.find(n => n.id === id)?.name || id);
+    const cands = slate.options.map(id => {
+      const c = id === "player" ? p : sim.npcs.find(n => n.id === id);
+      const isPlayer = id === "player";
+      return { id, name: nameOf(id), isPlayer, incumbent: isPlayer ? sim.playerMayor : !!c?.mayor,
+        blurb: `${isPlayer ? "the newcomer" : c?.desc || c?.personality || "a resident"}; ${fameTier(c?.fame || 0, c?.renown || 0)}` };
+    });
+    sim.debate = { day: sim.day, done: false };
+    const LOCAL_LINES = [   // no AI: at least give the rivals distinct postures
+      "Steady hands and no surprises. You know my record.",
+      "This valley needs building, not talking. Coin where it counts.",
+      "I'll say what others won't: we're being taken for fools.",
+      "Lower the burden on working folk. That's the whole of it.",
+    ];
+    const localStage = () => setDebate({          // no AI: a plain question and three honest postures
+      question: "The valley wants to know: what will you actually do for us?",
+      answers: cands.filter(c => !c.isPlayer).map((c, i) => ({ id: c.id, name: c.name, answer: LOCAL_LINES[i % LOCAL_LINES.length] })),
+      options: [
+        { label: "Promise boldly", gist: "sweeping change, funded from the treasury" },
+        { label: "Answer carefully", gist: "modest, honest, no promises they can't keep" },
+        { label: "Go on the attack", gist: "the sitting mayor has failed this valley" },
+      ],
+      cands, townName: TOWN_DEFS[townId]?.name || townId, picked: null, verdict: null, judging: false,
+    });
+    if (!USER_API_KEY || apiBusyRef.current) { localStage(); return; }
+    apiBusyRef.current = true;
+    debateOpen(cands, PLAYER_NAME || "the newcomer", TOWN_DEFS[townId]?.name || townId, (sim.dayLog || []).slice(-4).join("; "))
+      .then(out => {
+        if (!out) return localStage();
+        setDebate({
+          question: String(out.question).slice(0, 220),
+          answers: (Array.isArray(out.answers) ? out.answers : []).map(a => ({ id: a.id, name: nameOf(a.id), answer: String(a.answer || "").slice(0, 220) })).filter(a => a.answer),
+          options: out.options.slice(0, 3).map(o => ({ label: String(o.label || "Answer").slice(0, 40), gist: String(o.gist || "").slice(0, 140) })),
+          cands, townName: TOWN_DEFS[townId]?.name || townId, picked: null, verdict: null, judging: false,
+        });
+      })
+      .catch(localStage)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* the player picks a stance; the valley makes up its mind about it */
+  const answerDebate = (opt) => {
+    const sim = simRef.current, d = debate;
+    if (!d || d.judging) return;
+    setDebate({ ...d, picked: opt, judging: true });
+    const apply = (swing, verdictText, standout) => {
+      const s = clamp(Math.round(swing), -CFG.DEBATE.swingCap, CFG.DEBATE.swingCap);
+      const watchers = sim.npcs.filter(n => n.alive && !n.minor);
+      for (const n of watchers) addLean(sim, n.id, s);
+      sim.debate = { day: sim.day, done: true, swing: s, verdict: verdictText || null };
+      sim.dayLog.push(`${playerLabel()} debated on the eve of the vote — ${s > 0 ? "and came off well" : s < 0 ? "and came off badly" : "to a muted room"}`);
+      sim.buzz = { text: `Debate night: ${verdictText || `${playerLabel()} took the stage.`}`, day: sim.day };
+      if (s) repEvent(sim, sim.player, s, Math.abs(s), `${playerLabel()} ${s > 0 ? "won" : "lost"} the mayoral debate`);
+      seedGossip(sim, watchers.slice(0, 5), { text: `${playerLabel()} ${s > 0 ? "impressed" : s < 0 ? "flopped" : "held their own"} at the debate`, subjectId: "player", bad: s < 0 });
+      setDebate(dd => dd ? { ...dd, judging: false, verdict: { swing: s, text: verdictText || (s > 0 ? "That played well." : s < 0 ? "That did not land." : "A muted room."), standout: standout || null } } : dd);
+      bump();
+    };
+    const local = () => apply(0, "The room takes it in, hard to read.", null);
+    if (!USER_API_KEY || apiBusyRef.current) { local(); return; }
+    apiBusyRef.current = true;
+    debateJudge(d.question, `${opt.label} — ${opt.gist}`, d.answers.map(a => `${a.name}: "${a.answer}"`).join(" | "), {
+      playerName: PLAYER_NAME || "the newcomer", playerTier: fameTier(sim.player.fame, sim.player.renown),
+      playerWanted: sim.player.wanted || 0, pledges: pledgeLine(sim), record: officeRecord(sim),
+    })
+      .then(out => out ? apply(out.swing, out.verdict, out.standout) : local())
+      .catch(local)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* ===== THE VALLEY HERALD — the press prints what the valley did ===== */
+  const runPress = (sim) => {
+    const mayorNpc = sim.npcs.find(n => n.mayor && n.alive);
+    const mayorName = sim.playerMayor ? (PLAYER_NAME || "the newcomer") : (mayorNpc?.name || "nobody");
+    const file = (item) => {
+      const it = { ...item, day: sim.day };
+      sim.press.items = [it, ...(sim.press.items || [])].slice(0, CFG.PRESS.archive);
+      sim.buzz = { text: `📰 ${it.headline}`, day: sim.day };
+      sim.dayLog.push(`the Herald ran: "${it.headline}"`);
+      const sev = clamp(Math.round(it.severity || 1), 1, 3);
+      if (it.about === "mayor") {                          // the chair answers for its press
+        const d = it.kind === "scandal" ? -CFG.PRESS.mayorScandalApproval * sev / 2 : it.kind === "praise" ? CFG.PRESS.praiseApproval : 0;
+        if (d) for (const t of Object.keys(sim.approval)) sim.approval[t] = clamp(sim.approval[t] + d, 0, 100);
+        if (it.kind === "scandal") seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 5), { text: it.headline, subjectId: sim.playerMayor ? "player" : mayorNpc?.id || null, bad: true });
+      }
+      if (it.about === "player" && it.kind === "scandal") {  // your name, in print — and a chance to answer it
+        setPressPanel({ ...it, severity: sev, answered: false });
+        sfx.alert();
+      } else if (it.about === "player" && it.kind === "praise") {
+        repEvent(sim, sim.player, 3, 2, `the Herald praised ${playerLabel()}`);
+        showToast(`📰 ${it.headline}`);
+      } else showToast(`📰 ${it.headline}`);
+      bump();
+    };
+    const local = () => file({                             // no AI: a plain notice, no invented drama
+      headline: `${TOWN_DEFS[["alderbrook", "mossford", "stonecross", "ferndale"][sim.day % 4]]?.name || "The valley"} carries on`,
+      standfirst: "A quiet cycle in the valley — the Herald finds little to report.",
+      kind: "news", about: "town", severity: 1,
+    });
+    if (!USER_API_KEY || apiBusyRef.current) { local(); return; }
+    apiBusyRef.current = true;
+    pressCall({
+      mayorName, mayorIsPlayer: !!sim.playerMayor, approval: mayorApprovalPct(sim),
+      playerName: PLAYER_NAME || "the newcomer", playerTier: fameTier(sim.player.fame, sim.player.renown),
+      playerWanted: sim.player.wanted || 0, pledges: pledgeLine(sim), pledgeState: pledgeState(sim),
+      events: (sim.dayLog || []).slice(-8).join("; "),
+    })
+      .then(out => out ? file({
+        headline: String(out.headline).slice(0, 120), standfirst: String(out.standfirst || "").slice(0, 220),
+        kind: ["scandal", "praise", "news"].includes(out.kind) ? out.kind : "news",
+        about: ["mayor", "player", "town"].includes(out.about) ? out.about : "town",
+        severity: out.severity,
+      }) : local())
+      .catch(local)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* your answer to a Herald story about you: buy it off, face it down, or wear it */
+  const answerPress = (how) => {
+    const sim = simRef.current, p = sim.player, item = pressPanel;
+    if (!item) return;
+    setPressPanel(null);
+    const sev = item.severity || 1;
+    if (how === "bribe") {
+      if (!spend(p, CFG.PRESS.bribeCost)) { showToast("You can't cover the editor's price."); return; }
+      sim.press.items = (sim.press.items || []).map(i => i.day === item.day && i.headline === item.headline ? { ...i, spiked: true } : i);
+      sim.dayLog.push(`a Herald story about ${playerLabel()} was quietly spiked`);
+      showToast(`📰 ${CFG.PRESS.bribeCost}c changes hands. The story doesn't run — this time.`);
+      if (Math.random() < 0.3) {                           // a bought editor is a loose end
+        seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 4), { text: `${playerLabel()} paid the Herald to bury a story`, subjectId: "player", bad: true });
+        repEvent(sim, p, -4, 1, `${playerLabel()} was rumoured to have bribed the press`);
+        showToast("🤫 ...but someone at the paper talked.");
+      }
+    } else if (how === "refute") {
+      const ok = Math.random() < clamp(0.35 + (p.fame || 0) / 120 + skillLevel(p, "office") * 0.05 - sev * 0.08, 0.05, 0.9);
+      if (ok) {
+        repEvent(sim, p, 4, 2, `${playerLabel()} publicly refuted the Herald`);
+        if (sim.playerMayor) for (const t of Object.keys(sim.approval)) sim.approval[t] = clamp(sim.approval[t] + 4, 0, 100);
+        seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 4), { text: `${playerLabel()} faced the Herald down and came out clean`, subjectId: "player", bad: false });
+        showToast("🗣️ You face it down — and the valley believes you.");
+      } else {
+        repEvent(sim, p, -CFG.PRESS.playerScandalFame, 2, `${playerLabel()} denied the Herald's story badly`);
+        if (sim.playerMayor) for (const t of Object.keys(sim.approval)) sim.approval[t] = clamp(sim.approval[t] - 5, 0, 100);
+        showToast("🗣️ Your denial rings hollow. It only spreads the story.");
+      }
+    } else {
+      repEvent(sim, p, -CFG.PRESS.playerScandalFame * sev / 2, 1, `the Herald ran a story on ${playerLabel()}`);
+      seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 4), { text: item.headline, subjectId: "player", bad: true });
+      showToast("📰 You let it run. People read it.");
+    }
+    bump();
+  };
+
+  /* ===================================================================
+     THE BALLOT — who's standing, how each resident votes, and the count
+     =================================================================== */
+  /* who's on the ballot this cycle. null = no viable slate at all. */
+  const buildSlate = (sim) => {
+    const incumbent = sim.npcs.find(n => n.mayor && n.alive);
+    const incumbentId = sim.playerMayor ? "player" : (incumbent ? incumbent.id : null);
+    // an incumbent needs the valley behind them: below reelectMin average approval, they're off the ballot and someone new takes over
+    const approvalPct = mayorApprovalPct(sim);
+    const barred = incumbentId != null && approvalPct < CFG.ELECTION.reelectMin;
+    let bench = sim.npcs.filter(n => n.alive && n.renown >= 12 && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
+      .sort((a, b) => b.renown - a.renown);
+    if (barred && bench.length < 2)   // a barred incumbent MUST have a replacement — widen the field if the renowned bench is thin
+      bench = sim.npcs.filter(n => n.alive && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
+        .sort((a, b) => b.renown - a.renown);
+    bench = bench.slice(0, 2);
+    const cands = [...new Set([...(barred ? [] : [incumbent]), ...bench].filter(Boolean))];
+    const playerBarred = sim.playerMayor && barred;   // an unpopular player-mayor is booted off the ballot too
+    const playerRuns = (sim.election.playerRunning || sim.playerMayor) && !sim.player.jailedUntil && sim.player.alive !== false;
+    const options = [...cands.map(c => c.id), ...((playerRuns && !playerBarred) ? ["player"] : [])];
+    return options.length ? { day: sim.day, options, incumbentId, approvalPct, barred } : null;
+  };
+
+  /* the local voting model — a gut score per candidate; the fallback when the AI is off */
+  const REL_VOTE = { nemesis: -16, enemy: -12, hates: -8, dislikes: -4, neutral: 0, likes: 4, friend: 8, close: 12, beloved: 16 };
+  const localVote = (sim, voter, options) => {
+    let best = null, bestScore = -1e9;
+    for (const oid of options) {
+      const c = oid === "player" ? sim.player : sim.npcs.find(x => x.id === oid);
+      if (!c) continue;
+      let s = Math.random() * 8 + (c.fame || 0) / 4 + (c.renown || 0) / 6;
+      s += REL_VOTE[voter.relationships[oid] || "neutral"] || 0;
+      if (oid === "player" ? sim.playerMayor : c.mayor) s += (sim.approval[voter.town] ?? 60) / 10 - 6;   // incumbents live and die on approval
+      if (oid === "player") s += leanOf(sim, voter.id) * CFG.CAMPAIGN.leanVoteWeight;   // Stage 15: the doors you knocked and the speeches you gave
+      if ((c.wanted || 0) > 0) s -= 10;
+      if (s > bestScore) { bestScore = s; best = oid; }
+    }
+    return best;
+  };
+
+  /* open the polls for the player */
+  const openBallot = (sim) => {
+    const p = sim.player;
+    if (p.alive === false || p.jailedUntil) { resolveElection(sim, null); return; }   // dead or in the cells: no vote for you
+    setBallot({ ...sim.election.pending });
+  };
+
+  /* count every vote and seat the winner. playerVote: candidate id, or null to abstain. */
+  const resolveElection = (sim, playerVote) => {
+    const pend = sim.election.pending;
+    if (!pend) return;
+    const { options, incumbentId, approvalPct, barred } = pend;
+    const voters = sim.npcs.filter(n => n.alive && !n.minor);
+    const nameOf = (id) => id === "player" ? (PLAYER_NAME || "You") : (sim.npcs.find(n => n.id === id)?.name || id);
+    // Stage 15: before a single vote is counted, the valley settles up on the promises of the term just ending
+    const verdict = (pend.judged !== undefined) ? pend.judged : (pend.judged = judgePledges(sim));
+    const pledgeVerdict = verdict ? verdict.rows.map(r => `${r.kept ? "KEPT" : "BROKE"} "${r.blurb}"`).join("; ") : "";
+
+    const finish = (choiceById, mood, aiDriven) => {
+      if (!sim.election.pending) return;                 // already counted (double-resolve guard)
+      const votes = {}, ballots = [];
+      for (const v of voters) {
+        const pick = options.includes(choiceById[v.id]) ? choiceById[v.id] : localVote(sim, v, options);
+        votes[pick] = (votes[pick] || 0) + 1;
+        ballots.push({ id: v.id, name: v.name, town: v.town, choice: pick, choiceName: nameOf(pick) });
+      }
+      if (playerVote && options.includes(playerVote)) {  // your ballot counts the same as anyone's
+        votes[playerVote] = (votes[playerVote] || 0) + 1;
+        ballots.push({ id: "player", name: PLAYER_NAME || "You", town: townOfScene(worldRef.current, sim.player.scene), choice: playerVote, choiceName: nameOf(playerVote), isPlayer: true });
+      }
+      const tally = options.map(id => [id, votes[id] || 0]).sort((a, b) => b[1] - a[1]);   // every name on the ballot shows, even at zero
+      const winId = tally[0][0];
+      for (const n of sim.npcs) n.mayor = false;
+      sim.playerMayor = winId === "player";
+      const winNpc = sim.playerMayor ? null : sim.npcs.find(c => c.id === winId);
+      if (winNpc) winNpc.mayor = true;
+      const playerWon = !!sim.playerMayor;
+      const winnerName = playerWon ? playerLabel() : winNpc?.name || "nobody";
+      if (winId !== incumbentId) sim.mayorFavor = 0;     // a new mayor starts with a clean ledger of goodwill
+      const oustedNote = barred ? ` (the sitting mayor's ${approvalPct}% approval was too low to keep the seat)` : "";
+      const result = {
+        day: sim.day, barred, approvalPct, winner: winId, winnerName: playerWon ? "You" : winnerName,
+        tally: tally.map(([id, v]) => ({ id, name: nameOf(id), votes: v })),
+        ballots, playerVote: playerVote || null, mood: mood || null, aiDriven: !!aiDriven,
+        turnout: ballots.length,
+        pledgeVerdict: verdict ? { rows: verdict.rows, kept: verdict.kept, broke: verdict.broke } : null,
+        debate: sim.debate?.day === sim.day - 1 || sim.debate?.day === sim.day ? { swing: sim.debate.swing, verdict: sim.debate.verdict } : null,
+      };
+      sim.election.last = result;
+      sim.election.pending = null;
+      sim.election.playerRunning = false;
+      sim.election.nextDay = sim.day + CFG.ELECTION.everyDays;
+      // Stage 15: the trail resets. A new winner takes on the promises they ran on; a loser's slate is torn up.
+      const ranOn = [...(sim.campaign?.pledges || [])];
+      sim.campaign = { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] };
+      sim.debate = null;
+      sim.pledges = playerWon && ranOn.length
+        ? { list: ranOn, madeDay: sim.day, progress: {}, base: { upgrades: Object.values(sim.townUpgrades || {}).reduce((s, t) => s + Object.keys(t || {}).length, 0), cases: (sim.cases || []).filter(c => c.state === "open").length } }
+        : null;
+      sim.dayLog.push(`ELECTION DAY — ${winnerName} won the mayoralty (${tally[0][1]} votes)${oustedNote}`);
+      sim.buzz = { text: `Election day! ${playerWon ? "The NEWCOMER" : winnerName} takes the mayor's chair${barred ? " — the old mayor was voted out." : "."}`, day: sim.day };
+      seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 6), { text: `${winnerName} won the election${barred ? " after the town turned on the last mayor" : ""}`, subjectId: null, bad: false });
+      if (playerWon) { repEvent(sim, sim.player, 10, 15, "the player was elected mayor"); sfx.coin(); }
+      setBallot(null); setCounting(false); setElectionResult(result); bump();
+    };
+
+    const localAll = () => finish({}, null, false);      // every voter falls through to the local model
+    if (!USER_API_KEY || apiBusyRef.current) { localAll(); return; }
+    setBallot(null); setCounting(true);                  // "the count is under way" while Claude decides the valley's ballots
+    // let Claude decide the valley's votes in character
+    const candMeta = options.map(id => {
+      const c = id === "player" ? sim.player : sim.npcs.find(n => n.id === id);
+      const isPlayer = id === "player";
+      const incumbentNow = isPlayer ? sim.playerMayor : !!c?.mayor;
+      return {
+        id, name: nameOf(id), incumbent: incumbentNow, isPlayer,
+        blurb: `${isPlayer ? "the newcomer" : c?.desc || c?.personality || "a resident"}; ${fameTier(c?.fame || 0, c?.renown || 0)}${(c?.wanted || 0) > 0 ? `; WANTED by the Watch (level ${c.wanted})` : ""}${incumbentNow ? `; has held the chair, valley approval ${approvalPct}%` : ""}${isPlayer && pledgeLine(sim) ? `; campaigning on: ${pledgeLine(sim)}` : ""}${isPlayer && pledgeVerdict ? `; PROMISE RECORD from their last term: ${pledgeVerdict}` : ""}`,
+      };
+    });
+    const voterMeta = voters.map(v => {
+      const lean = leanOf(sim, v.id);
+      return {
+        id: v.id, name: v.name, personality: v.personality, town: v.town,
+        approval: Math.round(sim.approval?.[v.town] ?? CFG.APPROVAL.start),
+        feelings: options.map(oid => `${REL_DESC[v.relationships[oid] || "neutral"] || "neutral toward"} ${nameOf(oid)}`).join("; "),
+        memories: (v.memories || []).slice(-2).join("; "),
+        // Stage 15: what the campaign actually did to this voter
+        campaign: lean === 0 ? "" : `${playerLabel()}'s campaign has ${lean > 0 ? "won them over" : "put them off"} (${lean > 0 ? "+" : ""}${lean})`,
+      };
+    });
+    apiBusyRef.current = true;
+    ballotCall(voterMeta, candMeta, (sim.dayLog || []).slice(-3).join("; "))
+      .then(out => { if (out) finish(out.votes || {}, typeof out.mood === "string" ? out.mood : null, true); else localAll(); })
+      .catch(localAll)
+      .finally(() => { apiBusyRef.current = false; });
+  };
+
   const dailyTick = (sim, world) => {
     // Stage 2.1: recent-demand fades so restock chases CURRENT buying, not history
     for (const bId of Object.keys(sim.demand || {}))
@@ -6454,64 +7069,38 @@ export default function Alderbrook() {
         seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === seat.town).slice(0, 5), { text: `${seat.name} took the mayor's chair`, subjectId: null, bad: false });
       }
     }
-    /* ===== ELECTION DAY — every two weeks the valley votes =====
-       Candidates: the incumbent, the two most renowned upstanding citizens, and the player
-       if they registered at a hall (the incumbent player auto-runs). Every adult votes from
-       relationships, reputation, and — for incumbents — how the towns actually feel. */
+    /* ===== ELECTION DAY — the valley votes, and so do YOU =====
+       Candidates: the incumbent (unless approval barred them), the two most renowned upstanding
+       citizens, and the player if they registered at a hall. The polls OPEN here — the player
+       casts their own ballot, then every resident's vote is decided (in character by Claude when
+       the AI is on, by the local model otherwise) and the count is revealed. */
     sim.election = sim.election || { nextDay: CFG.ELECTION.firstDay, playerRunning: false, last: null };
-    if (sim.day >= sim.election.nextDay) {
-      const el = sim.election;
-      const incumbent = sim.npcs.find(n => n.mayor && n.alive);
-      const incumbentId = sim.playerMayor ? "player" : (incumbent ? incumbent.id : null);
-      // an incumbent needs the valley behind them: below reelectMin average approval, they're off the ballot and someone new takes over
-      const approvalPct = mayorApprovalPct(sim);
-      const barred = incumbentId != null && approvalPct < CFG.ELECTION.reelectMin;
-      let bench = sim.npcs.filter(n => n.alive && n.renown >= 12 && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
-        .sort((a, b) => b.renown - a.renown);
-      if (barred && bench.length < 2)   // a barred incumbent MUST have a replacement — widen the field if the renowned bench is thin
-        bench = sim.npcs.filter(n => n.alive && !n.outlaw && !n.thief && !n.minor && !n.enforcer && n.home && !n.jailedUntil && !n.mayor)
-          .sort((a, b) => b.renown - a.renown);
-      bench = bench.slice(0, 2);
-      const cands = [...new Set([...(barred ? [] : [incumbent]), ...bench].filter(Boolean))];
-      const playerBarred = sim.playerMayor && barred;   // an unpopular player-mayor is booted off the ballot too
-      const playerRuns = (el.playerRunning || sim.playerMayor) && !sim.player.jailedUntil && sim.player.alive !== false;
-      const options = [...cands.map(c => c.id), ...((playerRuns && !playerBarred) ? ["player"] : [])];
-      if (options.length) {
-        const votes = {};
-        const relScore = { nemesis: -16, enemy: -12, hates: -8, dislikes: -4, neutral: 0, likes: 4, friend: 8, close: 12, beloved: 16 };
-        for (const v of sim.npcs) {
-          if (!v.alive || v.minor) continue;
-          let best = null, bestScore = -1e9;
-          for (const oid of options) {
-            const c = oid === "player" ? sim.player : cands.find(x => x.id === oid);
-            let s = Math.random() * 8 + (c.fame || 0) / 4 + (c.renown || 0) / 6;
-            s += relScore[v.relationships[oid] || "neutral"] || 0;
-            if (oid === "player" ? sim.playerMayor : c.mayor) s += (sim.approval[v.town] ?? 60) / 10 - 6;   // incumbents live and die on approval
-            if ((c.wanted || 0) > 0) s -= 10;
-            if (s > bestScore) { bestScore = s; best = oid; }
-          }
-          votes[best] = (votes[best] || 0) + 1;
-        }
-        const tally = Object.entries(votes).sort((a, b) => b[1] - a[1]);
-        const winId = tally[0][0];
-        for (const n of sim.npcs) n.mayor = false;
-        sim.playerMayor = winId === "player";
-        const winNpc = sim.playerMayor ? null : cands.find(c => c.id === winId);
-        if (winNpc) winNpc.mayor = true;
-        const playerWon = !!sim.playerMayor;
-        const winnerName = playerWon ? playerLabel() : winNpc?.name || "nobody";
-        if (winId !== incumbentId) sim.mayorFavor = 0;   // a new mayor starts with a clean ledger of goodwill
-        const oustedNote = barred ? ` (the sitting mayor's ${approvalPct}% approval was too low to keep the seat)` : "";
-        el.last = { day: sim.day, tally: tally.map(([id, v]) => ({ id, name: id === "player" ? "You" : cands.find(c => c.id === id)?.name || id, votes: v })), barred };
-        el.playerRunning = false;
-        el.nextDay = sim.day + CFG.ELECTION.everyDays;
-        sim.dayLog.push(`ELECTION DAY — ${winnerName} won the mayoralty (${tally[0][1]} votes)${oustedNote}`);
-        sim.buzz = { text: `Election day! ${playerWon ? "The NEWCOMER" : winnerName} takes the mayor's chair${barred ? " — the old mayor was voted out." : "."}`, day: sim.day };
-        seedGossip(sim, sim.npcs.filter(n => n.alive).slice(0, 6), { text: `${winnerName} won the election${barred ? " after the town turned on the last mayor" : ""}`, subjectId: null, bad: false });
-        if (sim.playerMayor) { repEvent(sim, sim.player, 10, 15, "the player was elected mayor"); sfx.coin(); showToast("🏛️ YOU are the mayor of the valley! Govern from any hall's Mayor's desk."); }
-        else showToast(`🗳️ Election day: ${winnerName} won the mayoralty${barred ? " — the last mayor's approval was too low to hold on." : "."}`);
-      } else sim.election.nextDay = sim.day + CFG.ELECTION.everyDays;
+    sim.campaign = sim.campaign || { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] };
+    // Stage 15: enthusiasm cools. Stop knocking on doors and the lean you bought drains back toward nothing.
+    for (const id of Object.keys(sim.campaign.lean)) {
+      const v = sim.campaign.lean[id];
+      const nv = v > 0 ? v - CFG.CAMPAIGN.leanDecay : v + CFG.CAMPAIGN.leanDecay;
+      if (Math.abs(nv) < 1 || Math.sign(nv) !== Math.sign(v)) delete sim.campaign.lean[id]; else sim.campaign.lean[id] = nv;
     }
+    // Stage 15: THE DEBATE — the eve of the vote, on the plaza, once per election
+    if (sim.day === sim.election.nextDay - 1 && !sim.election.pending && sim.debate?.day !== sim.day
+        && (sim.election.playerRunning || sim.playerMayor) && !sim.player.jailedUntil && sim.player.alive !== false) {
+      const slate = buildSlate(sim);
+      if (slate && slate.options.includes("player") && slate.options.length > 1) openDebate(sim, slate);
+    }
+    if (sim.day >= sim.election.nextDay && !sim.election.pending) {
+      const slate = buildSlate(sim);
+      if (!slate) sim.election.nextDay = sim.day + CFG.ELECTION.everyDays;   // nobody fit to stand — try again next cycle
+      else {
+        sim.election.pending = slate;                    // the polls are OPEN: the player gets their say before anything is counted
+        sim.dayLog.push("ELECTION DAY — the polls opened across the valley");
+        sfx.alert();
+        openBallot(sim);
+      }
+    }
+    // Stage 15: THE VALLEY HERALD goes to print
+    sim.press = sim.press || { nextDay: sim.day + CFG.PRESS.everyDays, items: [] };
+    if (sim.day >= sim.press.nextDay) { sim.press.nextDay = sim.day + CFG.PRESS.everyDays; runPress(sim); }
     /* the player-mayor draws a small weekly salary from the local safes */
     if (sim.playerMayor && sim.day % 7 === CFG.COUNCIL.weekday) {
       let pay = 0;
@@ -8280,6 +8869,9 @@ export default function Alderbrook() {
       const town = world.towns[p.scene.slice(2)];
       for (const b of BUILDINGS.filter(b => b.town === town.id && b.enterable))
         if (near(b.door)) out.push({ id: `enter_${b.id}`, label: `🚪 Enter ${b.name}`, enter: b.id });
+      // Stage 15: the campaign trail — a rally in the plaza, once a day, while a vote is close
+      if (near(town.spots.plaza, 2.2) && campaignSeason(sim) && sim.campaign?.rallyDay !== sim.day)
+        out.push({ id: "rally", label: `📣 Hold a campaign rally (${CFG.CAMPAIGN.rallyCost}c)` });
       if (near(town.drink, 1.8)) out.push({ id: "drink", label: `💧 Drink (${town.drink.label})` });
       if (near(town.busStop, 1.8)) out.push({ id: "travel", label: "🚌 Mo's Bus — routes & fares" });
       // Stage 3: anyone CAN rough it; only the locked-out or exhausted are offered it
@@ -8848,6 +9440,7 @@ export default function Alderbrook() {
         setHallPanel({ town: townOfScene(world, p.scene) });
         break;
       }
+      case "rally": { holdRally(); break; }   // Stage 15: the stump speech
       case "takeorder": {
         const items = Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => rand(["🍔", "🍟", "🌭", "🥤"]));
         sim.foodOrder = { items, cooked: 0, stage: "cook" };
@@ -9946,6 +10539,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const quarry = beastAt(simRef.current, npcId);
     if (quarry) return kind === "threaten" ? spookBeast(quarry) : huntBeast(quarry);
     if (kind === "talk") return openChat(npcId);
+    if (kind === "canvass") return canvassNPC(npcId);   // Stage 15: ask for their vote
     if (kind === "gift") { setPayPanel({ npcId }); setPayAmount(""); return; }
     if (kind === "trade") { setTradePanel({ npcId, giveC: 0, giveItem: "", giveQty: 1, askC: 0, askItem: "", askQty: 1, note: "" }); return; }
     if (kind === "threaten") { const tN = simRef.current.npcs.find(n => n.id === npcId); if (tN) tN.steelUntil = performance.now() / 1000 + 60; return threatenNPC(npcId); }
@@ -10369,6 +10963,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         if (k === "g") { openPicker("gift"); return; }
         if (k === "t") { openPicker("talk"); return; }
         if (k === "h") { openPicker("trade"); return; }
+        if (k === "c" && campaignSeason(simRef.current)) { openPicker("canvass"); return; }
         if (k === "b") { openPicker("threaten"); return; }
         if (k === "z") { openPicker("attack"); return; }
       }
@@ -11392,6 +11987,283 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         );
       })()}
 
+      {/* 🗳️ ELECTION DAY — your ballot */}
+      {ballot && sim && (() => {
+        const cast = (choice) => { const s = simRef.current; resolveElection(s, choice); };
+        return (
+          <div style={S.chatOverlay}>
+            <div style={{ ...S.chatPanel, maxWidth: 460, height: "80%" }}>
+              <div style={{ ...S.chatHeader, background: "#8a7a42" }}>
+                <span style={{ fontWeight: 700 }}>🗳️ Election Day — day {ballot.day}</span>
+              </div>
+              <div style={S.chatBody}>
+                <div style={{ ...S.folkCard, fontStyle: "italic" }}>
+                  The polls are open across the valley. One vote each — including yours.
+                  {ballot.barred && <><br /><b style={{ fontStyle: "normal", color: "#a05252" }}>The sitting mayor was struck from the ballot — {ballot.approvalPct}% approval, below the {CFG.ELECTION.reelectMin}% needed to stand again.</b></>}
+                </div>
+                {ballot.options.map(oid => {
+                  const isP = oid === "player";
+                  const c = isP ? sim.player : sim.npcs.find(n => n.id === oid);
+                  if (!c) return null;
+                  const sitting = isP ? sim.playerMayor : !!c.mayor;
+                  const rel = isP ? null : (c.relationships?.player || "neutral");
+                  return (
+                    <div key={oid} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
+                      {!isP && <span style={{ width: 14, height: 14, borderRadius: 7, background: c.color, display: "inline-block" }} />}
+                      <span style={{ flex: 1, fontSize: fs - 1 }}>
+                        <b>{isP ? (PLAYER_NAME || "You") : c.name}</b>{isP && " (you)"}{sitting && <span style={{ color: "#c9a84a" }}> 🎖️ sitting mayor</span>}
+                        {(c.wanted || 0) > 0 && <span style={{ color: "#a05252" }}> · wanted {"★".repeat(Math.min(3, c.wanted))}</span>}
+                        <br />
+                        <span style={{ opacity: 0.7, fontSize: fs - 3 }}>
+                          {fameTier(c.fame || 0, c.renown || 0)}{!isP && rel && rel !== "neutral" && ` · ${REL_TOYOU[rel] || `${rel} you`}`}
+                          {sitting && ` · valley approval ${ballot.approvalPct}%`}
+                        </span>
+                      </span>
+                      <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => cast(oid)}>Vote</button>
+                    </div>
+                  );
+                })}
+                <button style={{ ...S.binBtn, width: "100%", background: "#6a6a6a" }} onClick={() => cast(null)}>🚫 Abstain — let the valley decide</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 🗳️ the count is under way */}
+      {counting && (
+        <div style={S.chatOverlay}>
+          <div style={{ ...S.chatPanel, maxWidth: 360 }}>
+            <div style={{ ...S.chatHeader, background: "#8a7a42" }}><span style={{ fontWeight: 700 }}>🗳️ Counting the votes…</span></div>
+            <div style={{ ...S.chatBody, alignItems: "center" }}>
+              <div style={{ ...S.folkCard, textAlign: "center", fontStyle: "italic" }}>Ballots are coming in from every town. The valley is making up its mind.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🗳️ the result — the count, and who backed whom */}
+      {electionResult && sim && (() => {
+        const r = electionResult;
+        const total = Math.max(1, r.turnout);
+        return (
+          <div style={S.chatOverlay} onClick={() => setElectionResult(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 460, height: "82%" }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: r.winner === "player" ? "#4a7a4a" : "#8a7a42" }}>
+                <span style={{ fontWeight: 700 }}>🗳️ The count — day {r.day}</span>
+                <button style={S.closeBtn} onClick={() => setElectionResult(null)}>✕</button>
+              </div>
+              <div style={S.chatBody}>
+                <div style={{ ...S.folkCard, textAlign: "center" }}>
+                  <div style={{ fontSize: fs + 3, fontWeight: 700 }}>
+                    {r.winner === "player" ? "🎖️ You are the mayor of the valley!" : `🎖️ ${r.winnerName} takes the chair`}
+                  </div>
+                  {r.barred && <div style={{ fontSize: fs - 2, color: "#a05252", marginTop: 4 }}>The old mayor was struck off at {r.approvalPct}% approval.</div>}
+                  {r.mood && <div style={{ fontSize: fs - 2, opacity: 0.75, fontStyle: "italic", marginTop: 4 }}>"{r.mood}"</div>}
+                </div>
+                <div style={{ ...S.folkCard }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Final tally <span style={{ fontWeight: 400, opacity: 0.6 }}>({r.turnout} vote{r.turnout === 1 ? "" : "s"} cast)</span></div>
+                  {r.tally.map(row => (
+                    <div key={row.id} style={{ marginBottom: 6 }}>
+                      <div style={{ display: "flex", fontSize: fs - 1 }}>
+                        <span style={{ flex: 1 }}>{row.id === r.winner ? "🎖️ " : ""}<b>{row.name}</b>{row.id === r.playerVote && <span style={{ opacity: 0.7 }}> · your vote</span>}</span>
+                        <span><b>{row.votes}</b> · {Math.round((row.votes / total) * 100)}%</span>
+                      </div>
+                      <div style={{ height: 8, background: "#00000033", borderRadius: 4, overflow: "hidden", marginTop: 2 }}>
+                        <div style={{ width: `${(row.votes / total) * 100}%`, height: "100%", background: row.id === r.winner ? "#5a8a4a" : "#7a7a9a" }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {r.pledgeVerdict && (
+                  <div style={{ ...S.folkCard }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>📜 Your promises, judged</div>
+                    {r.pledgeVerdict.rows.map(row => (
+                      <div key={row.id} style={{ fontSize: fs - 1, display: "flex", gap: 6 }}>
+                        <span>{row.kept ? "✅" : "❌"}</span>
+                        <span style={{ flex: 1 }}>{row.emoji} {row.blurb} <span style={{ opacity: 0.6 }}>· {row.progress}</span></span>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: fs - 3, opacity: 0.7, marginTop: 4 }}>
+                      {r.pledgeVerdict.broke ? "Broken promises cost approval — and the valley remembers them by name." : "Every promise kept. The valley noticed."}
+                    </div>
+                  </div>
+                )}
+                {r.debate && (
+                  <div style={{ ...S.folkCard, fontSize: fs - 2 }}>
+                    🎤 <b>Debate night:</b> {r.debate.verdict || (r.debate.swing > 0 ? "you came off well" : r.debate.swing < 0 ? "you came off badly" : "a muted room")}
+                  </div>
+                )}
+                <div style={{ ...S.folkCard }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Who backed whom</div>
+                  <div style={{ fontSize: fs - 2, lineHeight: 1.6 }}>
+                    {r.ballots.map(b => (
+                      <div key={b.id} style={{ opacity: b.isPlayer ? 1 : 0.85 }}>
+                        {b.isPlayer ? "🗳️ " : ""}<b>{b.name}</b> <span style={{ opacity: 0.6 }}>({b.town})</span> → {b.choiceName}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: fs - 3, opacity: 0.6, marginTop: 6 }}>
+                    {r.playerVote ? `You voted for ${r.tally.find(x => x.id === r.playerVote)?.name || r.playerVote}.` : "You abstained."}
+                    {r.aiDriven ? " Every resident's vote was decided in character." : " Votes were decided by the local model (no API key)."}
+                  </div>
+                </div>
+                <button style={{ ...S.binBtn, width: "100%" }} onClick={() => setElectionResult(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 📣 the rally — your speech, and how the plaza took it */}
+      {rally && (
+        <div style={S.chatOverlay} onClick={() => setRally(null)}>
+          <div style={{ ...S.chatPanel, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div style={{ ...S.chatHeader, background: rally.sway > 0 ? "#4a7a4a" : rally.sway < 0 ? "#8a4a4a" : "#7a6a4a" }}>
+              <span style={{ fontWeight: 700 }}>📣 Rally — {rally.town}</span>
+              <button style={S.closeBtn} onClick={() => setRally(null)}>✕</button>
+            </div>
+            <div style={S.chatBody}>
+              {rally.speech && <div style={{ ...S.folkCard, fontStyle: "italic" }}>"{rally.speech}"</div>}
+              <div style={{ ...S.folkCard }}>
+                <div>{rally.crowd} {rally.crowd === 1 ? "person" : "people"} within earshot.</div>
+                {rally.mood && <div style={{ opacity: 0.8, marginTop: 4 }}>{rally.mood}</div>}
+                <div style={{ marginTop: 6, fontWeight: 700, color: rally.sway > 0 ? "#5a8a4a" : rally.sway < 0 ? "#a05252" : "#999" }}>
+                  {rally.sway > 1 ? "They loved it." : rally.sway === 1 ? "It went down well." : rally.sway === 0 ? "Polite. Unmoved." : "That backfired."}
+                </div>
+              </div>
+              <button style={{ ...S.binBtn, width: "100%" }} onClick={() => setRally(null)}>Step down from the crate</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🎤 the debate — the eve of the vote */}
+      {debate && (
+        <div style={S.chatOverlay}>
+          <div style={{ ...S.chatPanel, maxWidth: 470, height: "82%" }}>
+            <div style={{ ...S.chatHeader, background: "#6a5a8a" }}>
+              <span style={{ fontWeight: 700 }}>🎤 Debate night — {debate.townName} plaza</span>
+            </div>
+            <div style={S.chatBody}>
+              <div style={{ ...S.folkCard }}>
+                <div style={{ fontSize: fs - 3, opacity: 0.6, marginBottom: 2 }}>THE MODERATOR ASKS</div>
+                <div style={{ fontStyle: "italic" }}>"{debate.question}"</div>
+              </div>
+              {debate.answers.map(a => (
+                <div key={a.id} style={{ ...S.folkCard, fontSize: fs - 1 }}>
+                  <b>{a.name}:</b> <span style={{ fontStyle: "italic", opacity: 0.9 }}>"{a.answer}"</span>
+                </div>
+              ))}
+              {!debate.verdict ? (
+                <>
+                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 4 }}>Your reply</div>
+                  {debate.judging && <div style={{ ...S.folkCard, fontStyle: "italic", opacity: 0.8 }}>The plaza goes quiet, weighing it…</div>}
+                  {!debate.judging && debate.options.map((o, i) => (
+                    <button key={i} style={{ ...S.binBtn, width: "100%", textAlign: "left", background: ["#4a6a8a", "#4a6a5a", "#8a5a4a"][i] || "#5a5a5a" }}
+                      onClick={() => answerDebate(o)}>
+                      <b>{o.label}</b><br /><span style={{ fontSize: fs - 3, opacity: 0.85 }}>{o.gist}</span>
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <div style={{ ...S.folkCard, background: debate.verdict.swing > 0 ? "#3a5a3a55" : debate.verdict.swing < 0 ? "#5a3a3a55" : undefined }}>
+                    <div style={{ fontSize: fs - 3, opacity: 0.6 }}>YOU SAID</div>
+                    <div style={{ fontStyle: "italic", marginBottom: 6 }}>"{debate.picked?.gist}"</div>
+                    <div style={{ fontWeight: 700, color: debate.verdict.swing > 0 ? "#5a8a4a" : debate.verdict.swing < 0 ? "#a05252" : "#999" }}>
+                      {debate.verdict.swing > 0 ? `You won the night (+${debate.verdict.swing} across the valley)` : debate.verdict.swing < 0 ? `That hurt you (${debate.verdict.swing} across the valley)` : "A wash — nobody moved"}
+                    </div>
+                    <div style={{ opacity: 0.85, marginTop: 4 }}>{debate.verdict.text}</div>
+                  </div>
+                  <button style={{ ...S.binBtn, width: "100%" }} onClick={() => setDebate(null)}>Leave the stage — the vote is tomorrow</button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📰 the Herald has your name on the front page */}
+      {pressPanel && (
+        <div style={S.chatOverlay}>
+          <div style={{ ...S.chatPanel, maxWidth: 440 }}>
+            <div style={{ ...S.chatHeader, background: "#7a4a4a" }}>
+              <span style={{ fontWeight: 700 }}>📰 The Valley Herald</span>
+            </div>
+            <div style={S.chatBody}>
+              <div style={{ ...S.folkCard, borderLeft: "3px solid #a05252" }}>
+                <div style={{ fontWeight: 700, fontSize: fs + 2 }}>{pressPanel.headline}</div>
+                {pressPanel.standfirst && <div style={{ opacity: 0.85, marginTop: 4 }}>{pressPanel.standfirst}</div>}
+                <div style={{ fontSize: fs - 3, opacity: 0.6, marginTop: 4 }}>The editor sends word before it goes to print. You have until the presses roll.</div>
+              </div>
+              <button style={{ ...S.binBtn, width: "100%", background: "#7a6a4a" }} onClick={() => answerPress("bribe")}>
+                💰 Pay the editor to spike it ({CFG.PRESS.bribeCost}c)
+              </button>
+              <button style={{ ...S.binBtn, width: "100%", background: "#4a6a8a" }} onClick={() => answerPress("refute")}>
+                🗣️ Refute it publicly
+              </button>
+              <button style={{ ...S.binBtn, width: "100%", background: "#6a6a6a" }} onClick={() => answerPress("ignore")}>
+                🤐 Let it run
+              </button>
+              <div style={{ fontSize: fs - 3, opacity: 0.55, textAlign: "center" }}>Buying silence works — until someone at the paper talks.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📜 choose the promises you run on */}
+      {pledgePick && sim && (() => {
+        const picked = pledgePick.picked || [];
+        const need = CFG.CAMPAIGN.pledgeCount;
+        const toggle = (id) => setPledgePick(pp => {
+          const cur = pp.picked || [];
+          return { ...pp, picked: cur.includes(id) ? cur.filter(x => x !== id) : (cur.length >= need ? cur : [...cur, id]) };
+        });
+        const confirm = () => {
+          const s = simRef.current;
+          if (!spend(s.player, CFG.ELECTION.regFee)) return;
+          s.campaign = s.campaign || { lean: {}, canvassed: {}, rallyDay: -1, pledges: [] };
+          s.campaign.pledges = [...picked];
+          s.election.playerRunning = true;
+          s.dayLog.push(`${playerLabel()} registered to run for mayor on: ${picked.map(id => PLEDGES[id].blurb).join("; ")}`);
+          s.buzz = { text: `${playerLabel()} is running for mayor — promising ${picked.map(id => PLEDGES[id].name.toLowerCase()).join(" and ")}.`, day: s.day };
+          seedGossip(s, s.npcs.filter(n => n.alive).slice(0, 5), { text: `${playerLabel()} is standing for mayor`, subjectId: "player", bad: false });
+          setPledgePick(null);
+          showToast("🎗️ You're on the ballot. Now go and earn it — canvass, rally, debate.");
+          bump();
+        };
+        return (
+          <div style={S.chatOverlay} onClick={() => setPledgePick(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 450, height: "76%" }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#4a6a5a" }}>
+                <span style={{ fontWeight: 700 }}>🎗️ Stand for mayor — your platform</span>
+                <button style={S.closeBtn} onClick={() => setPledgePick(null)}>✕</button>
+              </div>
+              <div style={S.chatBody}>
+                <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
+                  Pick <b>{need}</b> promises to run on. If you win, the valley checks them at the next election — kept promises buy real goodwill, broken ones cost you dearly.
+                </div>
+                {Object.entries(PLEDGES).map(([id, P]) => {
+                  const on = picked.includes(id);
+                  return (
+                    <div key={id} onClick={() => toggle(id)} style={{ ...S.folkCard, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, outline: on ? "2px solid #5a8a4a" : "none", opacity: on || picked.length < need ? 1 : 0.5 }}>
+                      <span style={{ fontSize: 20 }}>{P.emoji}</span>
+                      <span style={{ flex: 1 }}><b>{P.name}</b><br /><span style={{ fontSize: fs - 3, opacity: 0.7 }}>{P.blurb}</span></span>
+                      <span style={{ fontSize: 18 }}>{on ? "☑️" : "⬜"}</span>
+                    </div>
+                  );
+                })}
+                <button style={{ ...S.binBtn, width: "100%", background: picked.length === need ? "#4a6a5a" : "#666" }}
+                  disabled={picked.length !== need} onClick={confirm}>
+                  🎗️ Register on this platform ({CFG.ELECTION.regFee}c)
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 🥊 combat */}
       {combat && sim && (() => {
         /* Stage 9: the same panel serves a brawl and a hunt — the foe is just read from a different
@@ -11723,17 +12595,77 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     {sim2.playerMayor && <b>You hold the chair — you're on the ballot automatically (if approval allows).</b>}
                   </div>
                   {el.last && (
-                    <div style={{ fontSize: fs - 2, opacity: 0.75, marginTop: 4 }}>
-                      Last result (day {el.last.day}): {el.last.tally.map(r => `${r.name} ${r.votes}`).join(" · ")}
-                    </div>
+                    <>
+                      <div style={{ fontSize: fs - 2, opacity: 0.75, marginTop: 4 }}>
+                        Last result (day {el.last.day}): {el.last.tally.map(r => `${r.name} ${r.votes}`).join(" · ")}
+                        {el.last.playerVote != null && <> · <span style={{ opacity: 0.9 }}>you voted {el.last.tally.find(x => x.id === el.last.playerVote)?.name || el.last.playerVote}</span></>}
+                      </div>
+                      {el.last.ballots && (
+                        <button style={{ ...S.smallBtn, marginTop: 6, width: "100%" }} onClick={() => { setHallPanel(null); setElectionResult(el.last); }}>
+                          📊 See the full count — who backed whom
+                        </button>
+                      )}
+                    </>
                   )}
                   {!el.playerRunning && !sim2.playerMayor && (
                     <button style={{ ...S.smallBtn, marginTop: 6, background: "#4a6a5a", width: "100%" }}
-                      onClick={() => { if (!spend(player, CFG.ELECTION.regFee)) return; el.playerRunning = true; sim2.dayLog.push("the player registered to run for mayor"); sim2.buzz = { text: "The NEWCOMER is running for mayor. Genuinely anyone's race now.", day: sim2.day }; showToast("🎗️ You're on the ballot. Make friends — they vote."); bump(); }}>
+                      onClick={() => { setHallPanel(null); setPledgePick({ picked: [] }); }}>
                       🎗️ Run for mayor ({CFG.ELECTION.regFee}c registration)
                     </button>
                   )}
                 </div>
+
+                {/* ---- Stage 15: the campaign trail ---- */}
+                {(el.playerRunning || sim2.playerMayor) && (() => {
+                  const inSeason = campaignSeason(sim2);
+                  const mine = sim2.campaign?.pledges || [];
+                  const leans = Object.entries(sim2.campaign?.lean || {});
+                  const won = leans.filter(([, v]) => v > 0), lost = leans.filter(([, v]) => v < 0);
+                  return (
+                    <div style={{ ...S.folkCard }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>🎗️ Your campaign</div>
+                      <div style={{ fontSize: fs - 1, lineHeight: 1.5 }}>
+                        {mine.length > 0 && <>Running on: {mine.map(id => `${PLEDGES[id].emoji} ${PLEDGES[id].name}`).join(" · ")}<br /></>}
+                        {inSeason
+                          ? <><b style={{ color: "#5a8a4a" }}>The campaign is on.</b> Canvass folk (C) and hold plaza rallies to win them over.<br /></>
+                          : <><span style={{ opacity: 0.7 }}>Campaigning opens {CFG.CAMPAIGN.seasonDays} days before the vote.</span><br /></>}
+                        Won over: <b>{won.length}</b> · Put off: <b>{lost.length}</b>
+                        {sim2.debate?.done && <><br />🎤 Debate: {sim2.debate.swing > 0 ? "you came off well" : sim2.debate.swing < 0 ? "you came off badly" : "a wash"}</>}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* ---- Stage 15: the promises you're being held to ---- */}
+                {sim2.pledges?.list?.length > 0 && (
+                  <div style={{ ...S.folkCard }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>📜 Promises you made <span style={{ fontWeight: 400, opacity: 0.6 }}>(judged at the next election)</span></div>
+                    {sim2.pledges.list.map(id => {
+                      const P = PLEDGES[id]; if (!P) return null;
+                      const c = P.check(sim2, sim2.pledges);
+                      return (
+                        <div key={id} style={{ fontSize: fs - 1, display: "flex", gap: 6, marginBottom: 2 }}>
+                          <span>{c.done ? "✅" : "⏳"}</span>
+                          <span style={{ flex: 1 }}>{P.emoji} {P.blurb} <span style={{ opacity: 0.6 }}>· {c.progress}</span></span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ---- Stage 15: the Valley Herald ---- */}
+                {sim2.press?.items?.length > 0 && (
+                  <div style={{ ...S.folkCard }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>📰 The Valley Herald</div>
+                    {sim2.press.items.slice(0, 5).map((it, i) => (
+                      <div key={i} style={{ fontSize: fs - 2, marginBottom: 5, opacity: it.spiked ? 0.45 : 1 }}>
+                        <b style={{ color: it.kind === "scandal" ? "#a05252" : it.kind === "praise" ? "#5a8a4a" : undefined }}>{it.headline}</b>
+                        {it.spiked && <span style={{ fontStyle: "italic" }}> — spiked</span>}
+                        <br /><span style={{ opacity: 0.65 }}>day {it.day}{it.standfirst ? ` · ${it.standfirst}` : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {sim2.playerMayor && (
                   <>
                     <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>🖋️ The Mayor's Pen</div>
@@ -11977,6 +12909,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             {btn("🎁 Gift", () => openPicker("gift"), anyone, "G")}
             {btn("💬 Talk", () => openPicker("talk"), anyone, "T")}
             {btn("🤝 Trade", () => openPicker("trade"), anyone, "H")}
+            {btn("🗳️ Canvass", () => openPicker("canvass"), anyone && campaignSeason(sim), "C")}
             {btn("😠 Threaten", () => openPicker("threaten"), (anyone || quarryNear) && p.unsheathed, "B")}
             {btn(quarryNear && !anyone ? "🏹 Hunt" : "⚔ Attack", () => openPicker("attack"), (anyone || quarryNear) && p.unsheathed && (isPhone || quarryNear), "Z")}
           </div>
@@ -11989,7 +12922,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           <div style={{ ...S.chatPanel, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
             <div style={{ ...S.chatHeader, background: "#3a4a5a" }}>
               <span style={{ fontWeight: 700 }}>
-                {picker.kind === "gift" ? "🎁 Gift who?" : picker.kind === "talk" ? "💬 Talk to who?" : picker.kind === "trade" ? "🤝 Trade with who?" : picker.kind === "threaten" ? "😠 Threaten who?" : "⚔ Attack who?"}
+                {picker.kind === "gift" ? "🎁 Gift who?" : picker.kind === "talk" ? "💬 Talk to who?" : picker.kind === "canvass" ? "🗳️ Ask who for their vote?" : picker.kind === "trade" ? "🤝 Trade with who?" : picker.kind === "threaten" ? "😠 Threaten who?" : "⚔ Attack who?"}
               </span>
               <button style={S.closeBtn} onClick={() => setPicker(null)}>✕</button>
             </div>
