@@ -2941,6 +2941,21 @@ const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 // The model every AI call runs on. Change it here to swap models globally.
 const CLAUDE_MODEL = "claude-sonnet-5";
 
+/* THE METER. You are spending your own money on this key, so the game keeps an
+   honest running tally of what it has spent it on — every call, tokens both
+   ways, grouped by the feature that asked. Read it in ⚙️ Settings. The numbers
+   are Anthropic's own `usage` block, not an estimate of ours. */
+const CLAUDE_PRICE = { in: 3 / 1e6, out: 15 / 1e6 };   // USD per token — Sonnet 5 list price
+const API_USAGE = { calls: 0, inTok: 0, outTok: 0, feat: {} };
+function noteApiUsage(label, inTok, outTok) {
+  const k = label || "other";
+  API_USAGE.calls++; API_USAGE.inTok += inTok; API_USAGE.outTok += outTok;
+  const f = API_USAGE.feat[k] || (API_USAGE.feat[k] = { calls: 0, inTok: 0, outTok: 0 });
+  f.calls++; f.inTok += inTok; f.outTok += outTok;
+}
+const apiSpend = (u) => (u.inTok || 0) * CLAUDE_PRICE.in + (u.outTok || 0) * CLAUDE_PRICE.out;
+const usdLine = (d) => d < 0.01 ? `${(d * 100).toFixed(2)}¢` : `$${d.toFixed(2)}`;
+
 // Persist the key on its own so it survives reloads and pre-fills the title
 // screen — independent of any save file. Stored on this device only.
 const API_KEY_STORE = "alderbrook_api_key";
@@ -2952,7 +2967,7 @@ const loadPersistedApiKey = () => {
   try { return localStorage.getItem(API_KEY_STORE) || ""; } catch (e) { return ""; }
 };
 
-async function callClaude(prompt, maxTokens) {
+async function callClaude(prompt, maxTokens, label) {
   // Standalone / GitHub Pages build: every AI call is authenticated with the
   // player's own Anthropic key. The CORS-unlock header lets the browser reach
   // the API directly, so no server or proxy is needed.
@@ -2991,6 +3006,8 @@ async function callClaude(prompt, maxTokens) {
     throw new Error(`Claude API error: ${detail}`);
   }
   const data = await res.json();
+  const u = data.usage || {};
+  noteApiUsage(label, (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), u.output_tokens || 0);
   const text = (data.content || []).map(b => b.text || "").join("");
   try {
     return JSON.parse(text.replace(/```json|```/g, "").trim());
@@ -3025,7 +3042,7 @@ async function registerConsider(shopName, ownerName, personality, hasRegister, s
 Register status: ${hasRegister ? `installed, security=${["none","light","high"][security]}, till holds ${tillCash}c` : "no register yet"}. Your pocket: ${pocket}c.
 A register earns a per-sale bonus when full and protects takings from muggers; higher security means less lost to robbery. Money for upgrades comes from the till (except the initial install, from pocket).
 Would you invest now? Choose: ${opts}. Return ONLY JSON: {"choice":"install|light|high|wait"}.`;
-  const out = await callClaude(prompt, 60);
+  const out = await callClaude(prompt, 60, "shop upgrades");
   const c = out?.choice;
   return ["install", "light", "high", "wait"].includes(c) ? c : null;   // null → caller uses auto heuristic
 }
@@ -3037,7 +3054,7 @@ async function furniturePlaceChoice(buyerName, personality, furnName, slotLabels
   const prompt =
 `${buyerName} (${personality}) just bought a ${furnName} for their one-room cottage and must pick where it goes.
 Free spots — ${opts}. Return ONLY JSON: {"slot":<number>}.`;
-  const out = await callClaude(prompt, 24);
+  const out = await callClaude(prompt, 24, "furniture");
   const i = Number(out?.slot);
   return Number.isInteger(i) && i >= 0 && i < slotLabels.length ? i : null;
 }
@@ -3050,7 +3067,7 @@ async function bizQuote(ownerName, personality, bizName, basePrice, recentGross)
 The player wants to buy your business outright — keys, stock, goodwill, all of it. A fair market benchmark is ${basePrice} coins${recentGross ? ` (recent takings: ~${recentGross}c this period)` : ""}.
 Name YOUR asking price in whole coins — anywhere from ${Math.round(basePrice * 0.6)} to ${Math.round(basePrice * 1.8)} depending on how attached you are, how business is going, and your read of the buyer. Add ONE short in-character line to go with it.
 Return ONLY JSON: {"price":<number>,"say":"<under 20 words>"}.`;
-  const out = await callClaude(prompt, 80);
+  const out = await callClaude(prompt, 80, "business sale");
   return out && typeof out === "object" ? out : null;
 }
 
@@ -3068,7 +3085,7 @@ Current menu:
 ${lines}
 ${canSwap ? `You may also revise the menu: DROP up to ${maxSwaps} items you dislike and ADD the same number from your available stock: ${poolLine}. Anything you add starts at ZERO stock and must be reordered. Swap only if it fits your character/shop; keeping the menu is fine.` : "No menu changes today — just prices."}
 Return ONLY compact JSON: {"prices":{"item":coins,...for every current menu item},"drop":[${canSwap ? '"item",...' : ''}],"add":[${canSwap ? '"item",...' : ''}]}. No prose.`;
-  const out = await callClaude(prompt, CFG.OWNERECON.apiMaxTokens);
+  const out = await callClaude(prompt, CFG.OWNERECON.apiMaxTokens, "shop menus");
   return out && typeof out === "object" ? out : { prices: {}, drop: [], add: [] };
 }
 
@@ -3077,7 +3094,7 @@ async function skillCheck(actorName, taskDesc, ability, difficulty) {
 `Adjudicate a skill check in a life-sim. Return ONLY {"pass":true} or {"pass":false}.
 Actor: ${actorName}. Task: ${taskDesc}. Their ability: ${ability}. Task difficulty: ${difficulty}/100 (higher is harder).
 Judge realistically whether they succeed this attempt. A capable actor on a moderate task usually passes; a novice on a hard task usually fails, but nothing is guaranteed either way.`;
-  const out = await callClaude(prompt, CFG.SKILLCHECK.maxTokens);
+  const out = await callClaude(prompt, CFG.SKILLCHECK.maxTokens, "skill checks");
   return out?.pass === true;   // anything malformed reads as a failed attempt (safe default)
 }
 
@@ -3100,7 +3117,7 @@ Transcript so far:
 ${hist}
 Detective's question: "${question}"
 Reply in character, ONE or two sentences. Return ONLY JSON: {"say":"your reply","cracked":true|false}.`;
-  const out = await callClaude(prompt, 220);
+  const out = await callClaude(prompt, 220, "interrogation");
   return out && typeof out.say === "string" ? { say: out.say, cracked: out.cracked === true && guilty } : { say: "...I have nothing to say.", cracked: false };
 }
 
@@ -3118,7 +3135,7 @@ A sharper detective asks tighter questions, catches contradictions, and judges g
 Transcript:
 ${hist}
 Return ONLY JSON. To ask: {"action":"ask","say":"your question"}. To conclude: {"action":"conclude","verdict":"accuse"|"clear","say":"what you say to them"}.`;
-  const out = await callClaude(prompt, 220);
+  const out = await callClaude(prompt, 220, "interrogation");
   if (!out || (out.action !== "ask" && out.action !== "conclude")) return { action: "conclude", verdict: "clear", say: "That's all for now." };
   if (out.action === "ask" && mustConclude) return { action: "conclude", verdict: out.verdict === "accuse" ? "accuse" : "clear", say: out.say || "We're done here." };
   return out;
@@ -3181,7 +3198,7 @@ ${ctx.interview ? `\nJOB INTERVIEW IN PROGRESS — you are interviewing the play
 Respond ONLY with JSON, no markdown:
 {"reply":"under 35 words, in character","mood":"happy|neutral|grumpy|tired","remember":"null OR a new important memory under 12 words","relationship":"null|warmer|cooler","impression":"null|kind|rude"${ctx.interview ? ',"verdict":"null|hire|pass"' : ""}}
 Only set remember for genuinely notable things. Only shift relationship if the player earned it. Set impression only if the player was clearly kind or clearly rude.`;
-  return callClaude(prompt, CFG.CHAT_MAX_TOKENS);
+  return callClaude(prompt, CFG.CHAT_MAX_TOKENS, "chat");
 }
 
 async function dailyPulse(town, npcs, dayLog, npcsById, playerTier, sky) {
@@ -3211,7 +3228,7 @@ FAVOURITES: everyone owns several outfits (listed as their Wardrobe) and has a f
 BONDS (residents only, never the player): at most ONE entry, and only when the day genuinely earned it. Two residents whose history warrants it may grow "closer" or go "cooler". "reply" is how the approached one takes it: "accept" (warmly), "reject" (kindly but no), or "rebuff" (rudely — they were graceless about it). Leave the array empty on an ordinary day.
 IF A RESIDENT IS THE MAYOR: their intent should read like a mayor's — being seen around town, hearing folk out, showing up at the hall, tending to unrest or a project — fitting their character (dutiful, vain, scheming, generous, whatever they are).
 IMPORTANT — SELF-CARE: anyone marked ⚠LOW-SUPPLIES, or with a need below 30, should have an intent that gets them sorted: buying food/water to carry, stocking up, or heading to eat/drink. A resident keeping a few meals and drinks in their pocket is normal, sensible behavior — lean toward it. Nobody should wander idly while low on supplies or needs.`;
-  return callClaude(prompt, CFG.PULSE_MAX_TOKENS);
+  return callClaude(prompt, CFG.PULSE_MAX_TOKENS, "daily pulse");
 }
 
 /* Stage 6 — ambient NPC↔NPC chatter. A VERY simplified two-line exchange: speaker says
@@ -3226,7 +3243,7 @@ LISTENER: ${listener.name} — ${listener.personality}.
 What's on ${speaker.name}'s mind right now: ${context}
 ${speaker.name} opens with ONE short line (gossip, an observation, a reaction — under 14 words), ${listener.name} replies with ONE short line (under 14 words). Keep it casual and in-character; no narration.
 Return ONLY JSON: {"a":"<speaker line>","b":"<listener reply>"}.`;
-  const out = await callClaude(prompt, CFG.AMBIENT.chatTokens);
+  const out = await callClaude(prompt, CFG.AMBIENT.chatTokens, "ambient chatter");
   return (out && typeof out.a === "string" && typeof out.b === "string") ? out : null;
 }
 
@@ -3238,7 +3255,7 @@ async function speechReply(npc, playerName, said, context) {
 You are ${npc.name} — ${npc.personality}. Context you know: ${context}
 If this is worth reacting to, reply with ONE short in-character line (under 16 words). If it's not addressed to you or not worth a reply, return an empty reply.
 Return ONLY JSON: {"reply":"<your line or empty string>"}.`;
-  const out = await callClaude(prompt, CFG.AMBIENT.speechTokens);
+  const out = await callClaude(prompt, CFG.AMBIENT.speechTokens, "ambient chatter");
   return (out && typeof out.reply === "string") ? out.reply.trim() : null;
 }
 
@@ -3251,7 +3268,7 @@ Treasury: ${coins} coins. Public approval: ${approval}%. Affordable town upgrade
 This week around town: ${recent || "a quiet week"}.
 Decide: fund ONE listed upgrade id, or none. Then give a one-line public proclamation (under 22 words, in character).
 Return ONLY JSON: {"buy":"<upgrade id or empty string>","say":"<proclamation>"}.`;
-  const out = await callClaude(prompt, CFG.COUNCIL.tokens);
+  const out = await callClaude(prompt, CFG.COUNCIL.tokens, "council");
   return (out && typeof out.say === "string") ? out : null;
 }
 
@@ -3268,7 +3285,7 @@ Your GOODWILL with the towns is ${favor} out of ${favorCap} — goodwill you've 
 Lately around the valley: ${recent || "a quiet week"}.
 Decide IN CHARACTER whether you help yourself this week.
 Return ONLY JSON, no markdown: {"indulge":<true|false>,"line":"<what you mutter as you do it, or wave the idea off — under 18 words, in character>"}`;
-  const out = await callClaude(prompt, CFG.MAYOR.tokens);
+  const out = await callClaude(prompt, CFG.MAYOR.tokens, "mayor");
   return (out && typeof out.indulge === "boolean") ? out : null;
 }
 
@@ -3292,7 +3309,7 @@ ${roll}
 ${context ? `Lately around the valley: ${context}.` : ""}
 For EACH voter, pick the candidate they'd genuinely back — weigh how they feel about each candidate personally, the sitting mayor's record and local approval, and what this particular voter wants out of a mayor. People vote their gut and their grudges, not just the polls; a well-liked challenger can absolutely unseat a competent incumbent. Every voter id must appear exactly once, mapped to one candidate id from the slate.
 Return ONLY JSON, no markdown: {"votes":{"<voterId>":"<candidateId>"},"mood":"<one line on how the valley is feeling about this election, under 18 words>"}`;
-  const out = await callClaude(prompt, CFG.ELECTION.ballotTokens);
+  const out = await callClaude(prompt, CFG.ELECTION.ballotTokens, "elections");
   return (out && out.votes && typeof out.votes === "object") ? out : null;
 }
 
@@ -3308,7 +3325,7 @@ Their standing: ${ctx.playerTier}${ctx.playerWanted > 0 ? `, WANTED by the Watch
 ${ctx.record ? `Their record in office: ${ctx.record}.` : ""}${ctx.alreadyAsked ? " They have already worked you today — being pestered twice grates." : ""}
 Decide IN CHARACTER how this pitch lands with you: "sway" from -3 (it actively put you off) through 0 (unmoved) to +3 (genuinely won over). Be honest to your character and your feelings about them — a pushy stranger doesn't win a sceptic in one go, but a friend with a promise you care about might.
 Return ONLY JSON, no markdown: {"sway":<-3..3>,"say":"<your reply to their face, under 22 words, in character>","remember":"null OR a memory under 10 words"}`;
-  const out = await callClaude(prompt, CFG.CAMPAIGN.canvassTokens);
+  const out = await callClaude(prompt, CFG.CAMPAIGN.canvassTokens, "campaigning");
   return (out && typeof out.sway === "number") ? out : null;
 }
 
@@ -3323,7 +3340,7 @@ In the crowd: ${ctx.crowd || "a thin turnout"}.
 Lately around the valley: ${ctx.recent || "a quiet stretch"}.
 Write the rally: a short stump speech in their voice, and how honestly it lands with THIS crowd — "sway" from -2 (it fell flat or backfired) to +3 (they ate it up). A wanted or disliked candidate should struggle; a solid record should carry.
 Return ONLY JSON, no markdown: {"speech":"<the stump speech, under 45 words>","sway":<-2..3>,"mood":"<one line on the crowd's reaction, under 15 words>"}`;
-  const out = await callClaude(prompt, CFG.CAMPAIGN.rallyTokens);
+  const out = await callClaude(prompt, CFG.CAMPAIGN.rallyTokens, "campaigning");
   return (out && typeof out.sway === "number") ? out : null;
 }
 
@@ -3342,7 +3359,7 @@ Write the debate's opening exchange:
 2. "answers" — for EACH rival candidate (not the player), their answer in their own voice, under 30 words each. Stay true to their character; a vain one preens, a scheming one deflects.
 3. "options" — exactly 3 genuinely different stances ${playerName} could take in reply. Each needs a short button "label" (under 6 words) and a "gist" (what they'd actually argue, under 20 words). Make them real choices — e.g. a bold promise, a careful answer, an attack on a rival — not three flavours of the same thing.
 Return ONLY JSON, no markdown: {"question":"<text>","answers":[{"id":"<candidateId>","answer":"<text>"}],"options":[{"label":"<text>","gist":"<text>"}]}`;
-  const out = await callClaude(prompt, CFG.DEBATE.tokens);
+  const out = await callClaude(prompt, CFG.DEBATE.tokens, "debate");
   return (out && typeof out.question === "string" && Array.isArray(out.options) && out.options.length) ? out : null;
 }
 
@@ -3357,7 +3374,7 @@ The rivals answered: ${rivalLines || "nothing memorable"}.
 ${ctx.playerName}'s standing: ${ctx.playerTier}${ctx.playerWanted > 0 ? `, WANTED by the Watch` : ""}. Their platform: ${ctx.pledges || "no firm promises"}.${ctx.record ? ` Their record in office: ${ctx.record}.` : ""}
 Decide honestly how the watching residents took ${ctx.playerName}'s answer: "swing" from -3 (they hurt themselves badly) to +3 (they won the night). Substance and credibility should matter more than bluster — a promise from someone with a bad record rings hollow.
 Return ONLY JSON, no markdown: {"swing":<-3..3>,"verdict":"<how the crowd read it, under 22 words>","standout":"<candidate id who came off best, or empty string>"}`;
-  const out = await callClaude(prompt, CFG.DEBATE.judgeTokens);
+  const out = await callClaude(prompt, CFG.DEBATE.judgeTokens, "debate");
   return (out && typeof out.swing === "number") ? out : null;
 }
 
@@ -3375,7 +3392,7 @@ Write ONE story drawn from those real events — do not invent major events that
 - "severity": 1 (a small item) to 3 (front-page thunder).
 A quiet, clean week should produce mild "news", not invented outrage. Real wrongdoing in the events — skimming, theft, broken promises, violence — deserves a proper scandal.
 Return ONLY JSON, no markdown: {"headline":"<under 12 words, in a small-town paper's voice>","standfirst":"<one sentence under 25 words>","kind":"news|praise|scandal","about":"mayor|player|town","severity":<1-3>}`;
-  const out = await callClaude(prompt, CFG.PRESS.tokens);
+  const out = await callClaude(prompt, CFG.PRESS.tokens, "the press");
   return (out && typeof out.headline === "string") ? out : null;
 }
 
@@ -3389,7 +3406,7 @@ CANDIDATES (would-be burglars): ${perps.map(p => `${p.id} — ${p.why}, guile ${
 MARKS (targets): ${marks.map(m => `${m.id} — ~${m.loot}c loot, security: ${m.security}, ${m.away}`).join("; ")}.
 Pick ONE perp id and ONE mark id (a plausible pairing — desperate people take risks, professionals take scores). Timing matters: people are HOME at night — hitting a worker's house in the daytime finds it empty, while night jobs risk waking the resident (a witness). Set night accordingly. Give the perp a short muttered line (under 10 words).
 Return ONLY JSON: {"perp":"<id>","mark":"<id>","night":true,"say":"<line>"}.`;
-  const out = await callClaude(prompt, CFG.HEIST.tokens);
+  const out = await callClaude(prompt, CFG.HEIST.tokens, "heists");
   return (out && out.perp && out.mark) ? out : null;
 }
 
@@ -3403,7 +3420,7 @@ CRIME PICTURE: ${context}
 Towns: ${towns.join(", ")}.
 Good routes cover the hot spots hardest, split coverage so the Juniors aren't in the same town at once, and leave no town unvisited all week. Each route is an ordered list of 2-3 towns to cycle. Add a one-line briefing to the Juniors.
 Return ONLY JSON: {"tessa":["<town>","<town>"],"briar":["<town>","<town>"],"brief":"<one line>"}.`;
-  const out = await callClaude(prompt, CFG.WATCH_PLAN.tokens);
+  const out = await callClaude(prompt, CFG.WATCH_PLAN.tokens, "the Watch");
   return (out && Array.isArray(out.tessa) && Array.isArray(out.briar)) ? out : null;
 }
 
@@ -3418,7 +3435,7 @@ async function tradeConsider(decider, offererName, rel, t) {
 THEY GIVE you: ${giveStr}. THEY ASK from you: ${askStr}.${t.note ? ` They add: "${t.note}"` : ""}
 You hold ${Math.floor(decider.coins)} coins. Accept only if it serves you — fair value, a friend's ask, or a favor that suits your character.
 Return ONLY JSON: {"accept":true,"say":"<one short in-character line>"}.`;
-  const out = await callClaude(prompt, CFG.TRADE.tokens);
+  const out = await callClaude(prompt, CFG.TRADE.tokens, "trades");
   return (out && typeof out.accept === "boolean") ? out : null;
 }
 
@@ -3434,7 +3451,7 @@ Which concrete business actions did they agree to take? Pick any that apply:
 - "restock": order more stock / supplies
 If the note isn't really a business request, return an empty list.
 Return ONLY JSON: {"tasks":["upgrade"|"hire"|"restock", ...]}.`;
-  const out = await callClaude(prompt, 40);
+  const out = await callClaude(prompt, 40, "trades");
   const tasks = Array.isArray(out?.tasks) ? out.tasks.filter(t => ["upgrade", "hire", "restock"].includes(t)) : null;
   return tasks;   // null → caller runs the keyword fallback
 }
@@ -3457,7 +3474,7 @@ Actions must fit character, relationships, and what happened today. Gifts stay s
 "trade" proposes a SWAP with target: item/amount = what they GIVE, askItem/askAmount = what they ASK back; say is the pitch and may include a favor ("I'll pay you to watch the shop") — the other side decides.
 "send_letter" needs target + say (the letter text). "throw_party" ONLY for someone with 30+ coins — they cater the WHOLE town. Max 3 nudges.
 SELF-CARE PRIORITY: if someone is ⚠LOW-SUPPLIES or has a need under 30, prefer a "buy" action (food or a drink to carry) for them over flavor — keeping a pocket buffer of meals and drinks is smart, in-character behavior worth nudging.`;
-  return callClaude(prompt, CFG.NUDGE_MAX_TOKENS);
+  return callClaude(prompt, CFG.NUDGE_MAX_TOKENS, "nudges");
 }
 
 /* Incident Call — fired only when NPCs witness a theft or face a robber.
@@ -3480,7 +3497,7 @@ Respond ONLY with JSON, no markdown: {"reaction":"report|panic"}`
 ${roster}
 Decide their response in character: "submit" (hand over coins), "run" (try to escape and report it), or "fight" (stand their ground).
 Respond ONLY with JSON, no markdown: {"response":"submit|run|fight"}`;
-  return callClaude(prompt, CFG.INCIDENT.tokens);
+  return callClaude(prompt, CFG.INCIDENT.tokens, "incidents");
 }
 
 /* A friendlier fork on a mugging: an NPC who feels warmly toward the player gets to choose,
@@ -3501,7 +3518,7 @@ Decide, fully in character:
 - "retaliate": if the player REFUSES the gift, does ${robber.name} turn on them and rob them anyway (true) — or could they not bring themselves to do that to someone they feel this way about, and back off (false)?
 - "line": what ${robber.name} says as they step up, in character, under 25 words.
 Respond ONLY with JSON, no markdown: {"action":"rob|ask","coins":<int>,"items":[{"id":"<itemId>","qty":<int>}],"retaliate":<bool>,"line":"<text>"}`;
-  return callClaude(prompt, 240);
+  return callClaude(prompt, 240, "muggings");
 }
 
 /* =====================================================================
@@ -3999,6 +4016,7 @@ export default function Alderbrook() {
       taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
       campaign: sim.campaign, pledges: sim.pledges, press: sim.press, debate: sim.debate,
       season: sim.season, weather: sim.weather,   // Stage 16: the year and the sky
+      apiUsage: { calls: API_USAGE.calls, inTok: API_USAGE.inTok, outTok: API_USAGE.outTok, feat: API_USAGE.feat },
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
       npcs: Object.fromEntries(sim.npcs.map(n => [n.id, {
@@ -4056,6 +4074,13 @@ export default function Alderbrook() {
     sim.approval = { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start, ...(data.approval || {}) };
     sim.tradeQueue = data.tradeQueue || [];
     sim.foragedAt = data.foragedAt || {};
+    // the meter is cumulative across sessions — a save carries what it has already spent
+    if (data.apiUsage) {
+      API_USAGE.calls = data.apiUsage.calls || 0;
+      API_USAGE.inTok = data.apiUsage.inTok || 0;
+      API_USAGE.outTok = data.apiUsage.outTok || 0;
+      API_USAGE.feat = data.apiUsage.feat || {};
+    }
     sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
     sim.weather = data.weather || { kind: "clear", day: sim.day };
     // Stage 17: pre-wardrobe saves get dressed on the way in
@@ -10929,7 +10954,7 @@ Pick ONE kind:
 Invite only matters for "slumber" — list up to 4 ids. Choose people in character; someone with nowhere to sleep is a kind invite.
 Respond ONLY with JSON:
 {"kind": "plaza"|"house"|"slumber", "invite": ["id", ...], "line": "<one short in-character sentence about the plan>"}`;
-  return callClaude(prompt, 160);
+  return callClaude(prompt, 160, "parties");
 }
 
 async function commissionCall(ownerName, personality, itemName, tier, baseCost, baseDays, playerRep) {
@@ -10938,7 +10963,7 @@ async function commissionCall(ownerName, personality, itemName, tier, baseCost, 
 Job: make "${itemName}" (${tier} difficulty). Baseline: ${baseCost} coins, ${baseDays} day(s). Customer reputation: ${playerRep}.
 Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; rush jobs cost). Respond ONLY with JSON:
 {"price": <int>, "days": <int>, "line": "<one short in-character sentence quoting the job>"}`;
-  return callClaude(prompt, 120);
+  return callClaude(prompt, 120, "commissions");
 }
 
 /* THE OFFLINE INTERROGATION. No API? The duel still happens — as dice. The detective's
@@ -13011,6 +13036,43 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   {apiKeyInput && <button style={{ ...S.smallBtn, background: "#8a5a5a" }} onClick={() => { setApiKeyInput(""); setUserApiKey(""); sim.settings.apiKey = ""; persistApiKey(""); showToast("Key cleared."); bump(); saveGame(); }}>Clear</button>}
                 </div>
               </div>
+              {(() => {   // the meter — what this save has actually cost you at the API
+                const u = API_USAGE;
+                const rows = Object.entries(u.feat)
+                  .map(([k, f]) => [k, f, apiSpend(f)])
+                  .sort((a, b) => b[2] - a[2]);
+                const total = apiSpend(u);
+                const perDay = sim.day > 0 ? total / sim.day : 0;
+                return (
+                  <div style={S.folkCard}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>📊 AI usage <span style={{ fontWeight: 400, opacity: 0.6 }}>(this save, all time)</span></div>
+                    {!u.calls ? (
+                      <div style={{ fontSize: fs - 2, opacity: 0.7 }}>
+                        No AI calls billed yet on this save. With a key set, the town starts thinking and this fills in.
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: fs - 1, marginBottom: 6 }}>
+                          <b>{usdLine(total)}</b> over {u.calls.toLocaleString()} call{u.calls === 1 ? "" : "s"} — about <b>{usdLine(perDay)}</b> per in-game day.
+                        </div>
+                        <div style={{ fontSize: fs - 3, opacity: 0.65, marginBottom: 8 }}>
+                          {u.inTok.toLocaleString()} tokens in, {u.outTok.toLocaleString()} out, at ${(CLAUDE_PRICE.in * 1e6).toFixed(0)}/${(CLAUDE_PRICE.out * 1e6).toFixed(0)} per million ({CLAUDE_MODEL}).
+                        </div>
+                        {rows.map(([k, f, c]) => (
+                          <div key={k} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: fs - 2, padding: "2px 0" }}>
+                            <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k}</div>
+                            <div style={{ width: 74, height: 6, background: "#0002", borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ width: `${total > 0 ? Math.round((c / total) * 100) : 0}%`, height: "100%", background: "#6b8f5e" }} />
+                            </div>
+                            <div style={{ width: 46, textAlign: "right", opacity: 0.7 }}>{f.calls}×</div>
+                            <div style={{ width: 58, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{usdLine(c)}</div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={S.folkCard}>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>💾 Save file</div>
                 <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 6 }}>
