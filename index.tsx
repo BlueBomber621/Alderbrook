@@ -338,6 +338,10 @@ const CFG = {
        feel like a story, not a coin flip. */
     priceWeight: 0.45,
     braggableAt: 20,           // a haul worth this much per item earns its own line
+    /* The gilded crate is the same idea, built better: one more item, and a
+       flatter weight curve so the dear end of the pool is genuinely in reach. */
+    shinyDraws: 4,
+    shinyWeight: 0.24,
   },
   REQUISITION: {   // Stage 11: how a contraband commission becomes legal
     /* A wright will not take an order for a crossbow — it's contraband and their licence is
@@ -921,6 +925,7 @@ const ITEMS = {
   tropical_fish:{ name: "Tropical Fish",  emoji: "🐠", price: 12, cat: "ingredient", eat: { hunger: 12 } },   // Stage 6: a rare hard-fishing catch
   river_titan:  { name: "River Titan",    emoji: "🐋", price: 48, cat: "ingredient", eat: { hunger: 30 } },   // Stage 12: the EXPERT catch — three stages of fight for one of these
   goodie_crate: { name: "Goodie Crate",   emoji: "🎲", price: 0,  cat: "misc",    use: "goodie" },            // Stage 6: open for 3 random items
+  shiny_crate:  { name: "Gilded Crate",   emoji: "🎁", price: 0,  cat: "misc",    use: "goodie" },            // the good one: 4 items, weighted kinder
   fish_stew:    { name: "Hearty Fish Stew", emoji: "🫕", price: 16, cat: "food",   eat: { hunger: 75, energy: 15 } },   // Stage 6: hard cook from tropical fish
   /* Stage 22 — not a real item: the placeholder a recipe shows when it'll take ANY cut.
      Never held in a pack; resolveNeeds() swaps it for the cheapest meat on the shelf. */
@@ -930,7 +935,7 @@ const ITEMS = {
   flower:       { name: "Wildflowers",    emoji: "🌼", price: 2,  cat: "misc" },
   cotton:       { name: "Raw Cotton",     emoji: "🤍", price: 3,  cat: "material" },
   pelt:         { name: "Pelt",           emoji: "🟫", price: 7,  cat: "material" },
-  finefiber:    { name: "Fine Fibre",     emoji: "🧵", price: 14, cat: "material" },
+  finefiber:    { name: "Fine Fabric",     emoji: "🧵", price: 14, cat: "material" },
   cloth:        { name: "Bolt of Cloth",  emoji: "🧶", price: 9,  cat: "material" },
   flour:        { name: "Flour",          emoji: "🌾", price: 2,  cat: "ingredient" },
   sugar:        { name: "Sugar",          emoji: "🍬", price: 2,  cat: "ingredient" },   // Stage 3.6: baking staple
@@ -1148,7 +1153,7 @@ const SHOP_STOCK = {
   cafe:     ["meal", "coffee", "bread", "flour"],
   cafe_s:   ["coffee", "tea", "cookies"],
   store_f:  ["bread", "water", "veg", "flour"],
-  tailor_f: ["cloth", "finefiber", "cotton", "work_shirt", "cloth_cap"],   // Stage 17: the tailor sells cloth, fibre and ready-made clothes
+  tailor_f: ["cloth", "finefiber", "cotton", "work_shirt", "cloth_cap"],   // Stage 17: the tailor sells cloth, fabric and ready-made clothes
   grill_f:  ["stew", "bread", "coffee"],
   market_s: ["bread", "veg", "fruit", "water", "milk"],
   workshop_s: ["saw", "hammer", "screwdriver", "wood", "rock", "pipe", "heatcoil", "nozzle"],   // tools, materials, and REPAIR PARTS: the owner's extra sales
@@ -2309,10 +2314,10 @@ const SEASONS = {
    sky is what you feel. Kept here (not in the clothing block) so the climate model stands alone. */
 function wardrobeWarmth(ent) {
   let w = 0;
-  for (const id of (ent?.worn || [])) {
-    const G = GARMENTS[id];
+  for (const pc of wornPieces(ent || {})) {
+    const G = GARMENTS[pc.g];
     if (!G) continue;
-    w += (ent.wornTorn?.[id] ? G.warmth * 0.4 : G.warmth);   // a torn coat is barely a coat
+    w += (pc.t ? G.warmth * 0.4 : G.warmth);   // a torn coat is barely a coat
   }
   return w;
 }
@@ -2385,6 +2390,28 @@ const poly = (ctx, cx, cy, T, pts, fill) => {
   ctx.fillStyle = fill;
   ctx.beginPath();
   pts.forEach(([dx, dy], i) => { const x = cx + dx * T, y = cy + dy * T; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.closePath(); ctx.fill();
+};
+/* The same polygon with its corners eased off. `r` is a corner radius in icon
+   units, either one number for the whole shape or an array giving a radius per
+   vertex — 0 keeps that corner sharp, which is how a fish stays pointy at the
+   tail while its body goes soft. Each radius is clamped to half the shorter
+   adjacent edge, since arcTo distorts badly once it can't fit the fillet. */
+const rpoly = (ctx, cx, cy, T, pts, fill, r = 0.06) => {
+  const P = pts.map(([dx, dy]) => [cx + dx * T, cy + dy * T]);
+  const n = P.length;
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const want = (i) => (Array.isArray(r) ? (r[i] ?? 0) : r) * T;
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  const s = mid(P[0], P[1]);
+  ctx.moveTo(s[0], s[1]);
+  for (let i = 1; i <= n; i++) {
+    const v = P[i % n], w = P[(i + 1) % n], u = P[(i - 1 + n) % n];
+    const m = mid(v, w);
+    const lim = Math.min(Math.hypot(v[0] - u[0], v[1] - u[1]), Math.hypot(w[0] - v[0], w[1] - v[1])) / 2;
+    ctx.arcTo(v[0], v[1], m[0], m[1], Math.max(0, Math.min(want(i % n), lim)));
+  }
   ctx.closePath(); ctx.fill();
 };
 const FLORA = {
@@ -2525,34 +2552,114 @@ const FLORA = {
 /* =====================================================================
    STAGE 17 — THE WARDROBE. Three slots (head / torso / legs), three
    weights of clothing, and armour on top. Everything here is made at a
-   TAILOR BENCH from cotton, pelts and fine fibre.
+   TAILOR BENCH from cotton, pelts and fine fabric.
      warmth  — negative is airy (helps in heat), positive insulates (helps in cold)
      tough   — added toughness: how much punishment you soak before you go down
      endur   — what it costs your maximum energy to carry it around
    Torn pieces give NO toughness and a fraction of their warmth until patched.
    ===================================================================== */
+/* Colourways. A garment names a palette rather than a colour, and each piece
+   somebody owns picks one entry out of it — so two work shirts in the same town
+   are rarely the same blue, and the valley stops looking like a uniform. */
+const CLOTH_PALS = {
+  light:  [["#efe7d2", "#cfc3a4"], ["#dbe6e8", "#adc3c8"], ["#f2e2cc", "#d4bb98"], ["#e4ecd8", "#bccfa8"],
+           ["#f4dcd8", "#d8b0aa"], ["#e8e4f0", "#bcb4d0"]],
+  earthy: [["#5f7f9c", "#44607a"], ["#7a8a5a", "#5c6b3f"], ["#8a6a4a", "#6a4e33"], ["#6f7f8c", "#53606b"],
+           ["#8a5a5a", "#6a4040"], ["#5f7f6a", "#44604f"], ["#7a6a8a", "#5b4d69"], ["#8a7a4a", "#695c34"]],
+  deep:   [["#3f5f7a", "#2c465c"], ["#5f3f4a", "#452c34"], ["#3f4a3a", "#2c3529"], ["#4a3f5f", "#352c45"],
+           ["#5a4a2f", "#403420"], ["#2f4a4a", "#1f3535"], ["#6a3a3a", "#4d2828"], ["#3a3f52", "#282c3b"]],
+  straw:  [["#e2c882", "#c2a05a"], ["#d8bb70", "#b8974c"], ["#eed9a2", "#cdb478"]],
+  hide:   [["#6b4a2e", "#4c331e"], ["#7a5530", "#573920"], ["#5c4028", "#412c1a"]],
+  plate:  [["#7f8794", "#5f6672"]],
+};
+/* ---------------------------------------------------------------------------
+   `cut` is the shape the figure is drawn in — several garments share one cut
+   and differ only by palette and weight, which is what makes mixing and
+   matching cheap. `covers` lets a dress stand in for the legs slot too.
+   --------------------------------------------------------------------------- */
 const GARMENTS = {
   /* ---- SUMMER WEAR: airy, no protection, cheap ---- */
-  sun_hat:      { name: "Straw Sun Hat",   emoji: "👒", slot: "head",  warmth: -3, tough: 0,  endur: 0,  tier: "easy",   mats: { fiber: 3 },                      dur: 70,  wear: "summer" },
-  summer_tunic: { name: "Summer Tunic",    emoji: "🎽", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 80,  wear: "summer" },
-  light_shorts: { name: "Light Shorts",    emoji: "🩳", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 80,  wear: "summer" },
+  sun_hat:      { name: "Straw Sun Hat",   emoji: "👒", slot: "head",  warmth: -3, tough: 0,  endur: 0,  tier: "easy",   mats: { fiber: 3 },                      dur: 70,  wear: "summer", cut: "brim",     pal: "straw" },
+  head_scarf:   { name: "Head Scarf",      emoji: "🧣", slot: "head",  warmth: -1, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 70,  wear: "summer", cut: "kerchief", pal: "light" },
+  summer_tunic: { name: "Summer Tunic",    emoji: "🎽", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 80,  wear: "summer", cut: "tunic",    pal: "light" },
+  linen_shirt:  { name: "Linen Shirt",     emoji: "👔", slot: "torso", warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3, fiber: 1 },           dur: 90,  wear: "summer", cut: "shirt",    pal: "light" },
+  sun_dress:    { name: "Sun Dress",       emoji: "👗", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "simple", mats: { cotton: 4, fiber: 1 },           dur: 85,  wear: "summer", cut: "dress",    pal: "light", covers: "legs" },
+  airy_vest:    { name: "Airy Vest",       emoji: "🦺", slot: "torso", warmth: -5, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 85,  wear: "summer", cut: "vest",     pal: "light" },
+  light_shorts: { name: "Light Shorts",    emoji: "🩳", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 80,  wear: "summer", cut: "shorts",   pal: "light" },
+  linen_skirt:  { name: "Linen Skirt",     emoji: "👗", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 85,  wear: "summer", cut: "skirt",    pal: "light" },
+  crop_trous:   { name: "Cropped Trousers",emoji: "👖", slot: "legs",  warmth: -2, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 90,  wear: "summer", cut: "trous",    pal: "light" },
   /* ---- MEDIUM WEAR: what most people own ---- */
-  cloth_cap:    { name: "Cloth Cap",       emoji: "🧢", slot: "head",  warmth: 2,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 100, wear: "medium" },
-  work_shirt:   { name: "Work Shirt",      emoji: "👕", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4, finefiber: 1 },       dur: 120, wear: "medium" },
-  work_trous:   { name: "Work Trousers",   emoji: "👖", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 3, finefiber: 1 },       dur: 120, wear: "medium" },
+  cloth_cap:    { name: "Cloth Cap",       emoji: "🧢", slot: "head",  warmth: 2,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 100, wear: "medium", cut: "cap",      pal: "earthy" },
+  knit_beanie:  { name: "Knit Beanie",     emoji: "🧢", slot: "head",  warmth: 4,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, finefiber: 1 },       dur: 105, wear: "medium", cut: "beanie",   pal: "earthy" },
+  work_shirt:   { name: "Work Shirt",      emoji: "👕", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4, finefiber: 1 },       dur: 120, wear: "medium", cut: "shirt",    pal: "earthy" },
+  flannel:      { name: "Flannel Shirt",   emoji: "👕", slot: "torso", warmth: 5,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 4, finefiber: 1 },       dur: 125, wear: "medium", cut: "shirt",    pal: "earthy" },
+  waistcoat:    { name: "Waistcoat",       emoji: "🦺", slot: "torso", warmth: 4,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 3, finefiber: 2 },       dur: 130, wear: "medium", cut: "vest",     pal: "deep" },
+  day_dress:    { name: "Day Dress",       emoji: "👗", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 5, finefiber: 1 },       dur: 120, wear: "medium", cut: "dress",    pal: "earthy", covers: "legs" },
+  work_trous:   { name: "Work Trousers",   emoji: "👖", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 3, finefiber: 1 },       dur: 120, wear: "medium", cut: "trous",    pal: "earthy" },
+  corduroys:    { name: "Corduroys",       emoji: "👖", slot: "legs",  warmth: 4,  tough: 1,  endur: 0,  tier: "simple", mats: { cotton: 4, finefiber: 1 },       dur: 130, wear: "medium", cut: "trous",    pal: "earthy" },
+  canvas_skirt: { name: "Canvas Skirt",    emoji: "👗", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4 },                     dur: 120, wear: "medium", cut: "skirt",    pal: "earthy" },
   /* ---- WINTER WEAR: the jacket is genuinely protective in its own right ---- */
-  wool_hood:    { name: "Wool Hood",       emoji: "🧣", slot: "head",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 3, finefiber: 1 },       dur: 130, wear: "winter" },
-  winter_jacket:{ name: "Winter Jacket",   emoji: "🧥", slot: "torso", warmth: 13, tough: 5,  endur: -3, tier: "medium", mats: { cotton: 5, finefiber: 2 },       dur: 150, wear: "winter" },
-  winter_trous: { name: "Lined Trousers",  emoji: "👖", slot: "legs",  warmth: 8,  tough: 2,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 1 },       dur: 140, wear: "winter" },
+  wool_hood:    { name: "Wool Hood",       emoji: "🧣", slot: "head",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 3, finefiber: 1 },       dur: 130, wear: "winter", cut: "hood",     pal: "deep" },
+  fur_cap:      { name: "Fur Cap",         emoji: "🧢", slot: "head",  warmth: 9,  tough: 2,  endur: -1, tier: "medium", mats: { pelt: 1, finefiber: 1 },         dur: 150, wear: "winter", cut: "furcap",   pal: "hide" },
+  winter_jacket:{ name: "Winter Jacket",   emoji: "🧥", slot: "torso", warmth: 13, tough: 5,  endur: -3, tier: "medium", mats: { cotton: 5, finefiber: 2 },       dur: 150, wear: "winter", cut: "coat",     pal: "deep" },
+  wool_coat:    { name: "Wool Overcoat",   emoji: "🧥", slot: "torso", warmth: 15, tough: 4,  endur: -4, tier: "hard",   mats: { cotton: 6, finefiber: 3 },       dur: 165, wear: "winter", cut: "longcoat", pal: "deep" },
+  quilt_vest:   { name: "Quilted Vest",    emoji: "🦺", slot: "torso", warmth: 9,  tough: 3,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 2 },       dur: 145, wear: "winter", cut: "quilt",    pal: "deep" },
+  winter_trous: { name: "Lined Trousers",  emoji: "👖", slot: "legs",  warmth: 8,  tough: 2,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 1 },       dur: 140, wear: "winter", cut: "trous",    pal: "deep" },
+  padded_trous: { name: "Padded Trousers", emoji: "👖", slot: "legs",  warmth: 10, tough: 3,  endur: -3, tier: "hard",   mats: { cotton: 5, finefiber: 2 },       dur: 155, wear: "winter", cut: "quiltlegs",pal: "deep" },
+  wool_skirt:   { name: "Wool Skirt",      emoji: "👗", slot: "legs",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 5, finefiber: 1 },       dur: 135, wear: "winter", cut: "skirt",    pal: "deep" },
   /* ---- HUNTER'S LEATHERS: pelt work, warm and genuinely tough ---- */
-  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium", hunt: true },
-  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium", hunt: true },
-  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium", hunt: true },
+  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium", cut: "hunter",   pal: "hide", hunt: true },
+  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium", cut: "coat",     pal: "hide", hunt: true },
+  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium", cut: "trous",    pal: "hide", hunt: true },
   /* ---- THE WATCH'S PLATE: guard issue. Heavy, hard, and not for just anyone. ---- */
-  guard_helm:   { name: "Watch Helm",      emoji: "⛑️", slot: "head",  warmth: 3,  tough: 7,  endur: -3, tier: "hard",   mats: { ore: 4, finefiber: 1 },          dur: 260, wear: "medium", guard: true },
-  guard_mail:   { name: "Watch Hauberk",   emoji: "🦺", slot: "torso", warmth: 5,  tough: 18, endur: -9, tier: "hard",   mats: { ore: 9, pelt: 2, finefiber: 2 }, dur: 320, wear: "medium", guard: true },
-  guard_greaves:{ name: "Watch Greaves",   emoji: "🥾", slot: "legs",  warmth: 4,  tough: 9,  endur: -5, tier: "hard",   mats: { ore: 6, pelt: 1, finefiber: 1 }, dur: 280, wear: "medium", guard: true },
+  guard_helm:   { name: "Watch Helm",      emoji: "⛑️", slot: "head",  warmth: 3,  tough: 7,  endur: -3, tier: "hard",   mats: { ore: 4, finefiber: 1 },          dur: 260, wear: "medium", cut: "helm",     pal: "plate", guard: true },
+  guard_mail:   { name: "Watch Hauberk",   emoji: "🦺", slot: "torso", warmth: 5,  tough: 18, endur: -9, tier: "hard",   mats: { ore: 9, pelt: 2, finefiber: 2 }, dur: 320, wear: "medium", cut: "mail",     pal: "plate", guard: true },
+  guard_greaves:{ name: "Watch Greaves",   emoji: "🥾", slot: "legs",  warmth: 4,  tough: 9,  endur: -5, tier: "hard",   mats: { ore: 6, pelt: 1, finefiber: 1 }, dur: 280, wear: "medium", cut: "greaves",  pal: "plate", guard: true },
 };
+/* the colourways open to a given piece, and the one a given instance wears */
+const palOf = (gid) => CLOTH_PALS[GARMENTS[gid]?.pal] || CLOTH_PALS.earthy;
+const colourway = (gid, i) => { const p = palOf(gid); return p[((i | 0) % p.length + p.length) % p.length]; };
+/* patterns are per-piece too, so two shirts in the same blue still differ */
+const CLOTH_PATTERNS = ["plain", "plain", "plain", "stripe", "band", "check", "patch"];
+
+/* =====================================================================
+   A GARMENT YOU OWN IS A THING, NOT A COUNT. Two work shirts are two
+   separate shirts: each keeps its own wear, its own colourway, its own
+   tear. They live in `ent.kit`; `ent.worn` holds the uids of the ones
+   actually on the body. Nothing about clothing stacks any more, which is
+   why the pack lists each piece by condition instead of showing "×3".
+   ===================================================================== */
+let PIECE_SEQ = 0;
+const newPiece = (gid, seed) => {
+  const h = seed === undefined ? Math.floor(Math.random() * 1e9)
+          : typeof seed === "number" ? Math.floor(Math.abs(seed)) : hash32(seed);
+  return { u: `p${(++PIECE_SEQ).toString(36)}${(h % 60466176).toString(36)}`,
+           g: gid, w: 0, t: false, c: h % palOf(gid).length, p: (h >> 5) % CLOTH_PATTERNS.length };
+};
+const kitOf = (ent) => (ent.kit || []);
+const pieceOf = (ent, uid) => kitOf(ent).find(k => k.u === uid) || null;
+const wornPieces = (ent) => (ent.worn || []).map(u => pieceOf(ent, u)).filter(Boolean);
+const wornIds = (ent) => wornPieces(ent).map(k => k.g);
+const wornPieceIn = (ent, slot) => wornPieces(ent).find(k => GARMENTS[k.g]?.slot === slot) || null;
+const pieceMax = (pc) => GARMENTS[pc.g]?.dur || 100;
+const pieceCondition = (pc) => clamp(Math.round(100 - (pc.w / pieceMax(pc)) * 100), 0, 100);
+/* the ids somebody owns at all — what the AI is told about, and what dressing picks from */
+const ownedIds = (ent) => [...new Set(kitOf(ent).map(k => k.g))];
+/* put a piece on, taking off whatever already held that slot (and the legs too,
+   if the new piece is a dress that covers them) */
+function wearPiece(ent, uid) {
+  const pc = pieceOf(ent, uid); if (!pc) return false;
+  const G = GARMENTS[pc.g]; if (!G) return false;
+  const drop = new Set();
+  for (const w of wornPieces(ent)) {
+    const WG = GARMENTS[w.g];
+    if (WG.slot === G.slot) drop.add(w.u);
+    if (G.covers && WG.slot === G.covers) drop.add(w.u);
+    if (WG.covers && WG.covers === G.slot) drop.add(w.u);   // taking a dress off to put trousers on
+  }
+  ent.worn = [...(ent.worn || []).filter(u => !drop.has(u)), uid];
+  return true;
+}
 const GARMENT_SLOTS = ["head", "torso", "legs"];
 /* the three weights, and what each one is FOR — used by the tailor menus and the AI */
 const WEAR_BANDS = { summer: "light and airy, for heat", medium: "everyday wear", winter: "heavy and insulating, for cold" };
@@ -2563,7 +2670,7 @@ const garmentsOfBand = (band) => Object.entries(GARMENTS).filter(([, G]) => G.we
 /* the two things the bench makes that aren't clothes: the fibre everything good needs, and
    the bolt of cloth the tailor sells over the counter. */
 const TAILOR_MATS = {
-  finefiber: { name: "Fine Fibre",     emoji: "🧵", mats: { cotton: 2, fiber: 3 }, out: 1 },   // 2 cotton + 3 grass bundles
+  finefiber: { name: "Fine Fabric",     emoji: "🧵", mats: { cotton: 2, fiber: 3 }, out: 1 },   // 2 cotton + 3 grass bundles
   cloth:     { name: "Bolt of Cloth",  emoji: "🧶", mats: { cotton: 3, finefiber: 1 }, out: 1 },
 };
 const PATCH_FRACTION = 0.45;   // patching a torn piece costs less than half of making a new one
@@ -2625,16 +2732,16 @@ function lookOf(ent) {
   };
 }
 /* what someone is actually wearing, by slot — worn garments beat their default clothes */
-const wornInSlot = (ent, slot) => (ent.worn || []).find(id => GARMENTS[id]?.slot === slot) || null;
+const wornInSlot = (ent, slot) => wornPieceIn(ent, slot)?.g || null;
 /* Stage 19: does this soul actually need to see a tailor? Torn kit is the real driver — you
    can re-layer what you own for the weather, but a hole is a hole. Returns the reason, or null. */
 function needsTailor(ent, felt) {
   if (!ent.alive || ent.minor) return null;
-  const torn = (ent.worn || []).filter(id => ent.wornTorn?.[id]);
-  if (torn.length) return `${GARMENTS[torn[0]].name.toLowerCase()} is torn through`;
+  const torn = wornPieces(ent).filter(pc => pc.t);
+  if (torn.length) return `${GARMENTS[torn[0].g].name.toLowerCase()} is torn through`;
   const st = tempStress(felt);
-  if (st.cold && !(ent.worn || []).some(id => GARMENTS[id]?.warmth >= 6)) return "nothing warm enough for this weather";
-  if (st.hot && !(ent.worn || []).some(id => GARMENTS[id]?.warmth < 0)) return "nothing light enough for this heat";
+  if (st.cold && !wornPieces(ent).some(pc => GARMENTS[pc.g]?.warmth >= 6)) return "nothing warm enough for this weather";
+  if (st.hot && !wornPieces(ent).some(pc => GARMENTS[pc.g]?.warmth < 0)) return "nothing light enough for this heat";
   return null;
 }
 const TAILOR_BID = "tailor_f";
@@ -2646,46 +2753,116 @@ const TAILOR_BID = "tailor_f";
    they reach for whenever the weather lets them. */
 function startingWardrobe(ent) {
   const h = hash32(ent.id || "player");
-  const kit = [];
-  if (ent.enforcer) kit.push("guard_helm", "guard_mail", "guard_greaves");
-  if (ent.outlaw || ent.thief || ent.hunter) kit.push("hunter_hat", "leather_coat", "leather_legs");
+  const want = [];
+  if (ent.enforcer) want.push("guard_helm", "guard_mail", "guard_greaves");
+  if (ent.outlaw || ent.thief || ent.hunter) want.push("hunter_hat", "leather_coat", "leather_legs");
   let i = 0;
   for (const band of ["summer", "medium", "winter"]) {      // a set for each weight
     const pool = garmentsOfBand(band);
-    for (const slot of GARMENT_SLOTS) {
+    /* Two torsos and two leg pieces per band, one hat — there are far more
+       shirts and trousers to pick from than hats, so a wardrobe should look
+       like it. Different offsets into the pool means neighbours don't match. */
+    for (const [slot, n] of [["head", 1], ["torso", 2], ["legs", 2]]) {
       const opts = pool.filter(id => GARMENTS[id].slot === slot);
-      if (opts.length) kit.push(opts[(h + i++) % opts.length]);
+      if (!opts.length) continue;
+      for (let j = 0; j < n; j++) want.push(opts[(h + i++ * 5 + j * 3) % opts.length]);
     }
   }
-  const owned = [...new Set(kit)];
+  const kit = [...new Set(want)].map((gid, n) => newPiece(gid, h + n * 7919));
   // the favourite: a torso piece they're fond of, so it actually shows
-  const torsos = owned.filter(id => GARMENTS[id].slot === "torso");
-  return { wardrobe: owned, favorite: torsos.length ? torsos[h % torsos.length] : owned[0] || null };
+  const torsos = kit.filter(k => GARMENTS[k.g].slot === "torso");
+  return { kit, favorite: torsos.length ? torsos[h % torsos.length].g : kit[0]?.g || null };
 }
 /* dress from what they OWN, for the weather — leaning on their favourite whenever its weight
-   suits the day. Falls back to conjuring a sensible set for anyone without a wardrobe yet. */
+   suits the day. Returns the uids of the pieces to put on, preferring the least worn of any
+   duplicates, so nobody walks out in the torn shirt while a good one hangs in the wardrobe. */
 function dressForSeason(ent, season, temp) {
   const band = temp <= 6 ? "winter" : temp >= 24 ? "summer" : "medium";
   const h = hash32((ent.id || "player") + season);
-  if (ent.enforcer) return ["guard_helm", "guard_mail", "guard_greaves"];
-  if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") return ["hunter_hat", "leather_coat", "leather_legs"];
-  const owned = (ent.wardrobe && ent.wardrobe.length) ? ent.wardrobe : startingWardrobe(ent).wardrobe;
+  const kit = kitOf(ent);
+  const pick = (test) => {
+    const opts = kit.filter(test);
+    if (!opts.length) return null;
+    const best = Math.min(...opts.map(o => (o.t ? 1 : 0) * 1e6 + o.w));    // sound before torn, fresh before worn
+    const good = opts.filter(o => (o.t ? 1 : 0) * 1e6 + o.w === best);
+    return good[h % good.length];
+  };
+  if (ent.enforcer) {
+    const set = ["guard_helm", "guard_mail", "guard_greaves"].map(g => pick(k => k.g === g)).filter(Boolean);
+    if (set.length) return set.map(k => k.u);
+  }
+  if ((ent.outlaw || ent.thief || ent.hunter) && band !== "summer") {
+    const set = ["hunter_hat", "leather_coat", "leather_legs"].map(g => pick(k => k.g === g)).filter(Boolean);
+    if (set.length) return set.map(k => k.u);
+  }
   const fav = ent.favorite;
   const out = [];
+  let covered = null;                                        // a dress fills the legs slot as well
   for (const slot of GARMENT_SLOTS) {
-    // their own things of the right weight for this slot, favourite first if it qualifies
-    let opts = owned.filter(id => GARMENTS[id]?.slot === slot && GARMENTS[id].wear === band && !GARMENTS[id].guard);
-    if (!opts.length) opts = owned.filter(id => GARMENTS[id]?.slot === slot && !GARMENTS[id].guard);
-    if (!opts.length) opts = garmentsOfBand(band).filter(id => GARMENTS[id].slot === slot);
-    if (!opts.length) continue;
+    if (covered === slot) continue;
+    const ok = (k) => GARMENTS[k.g]?.slot === slot && !GARMENTS[k.g].guard;
+    let chosen = fav && GARMENTS[fav]?.slot === slot && GARMENTS[fav].wear === band ? pick(k => k.g === fav) : null;
+    chosen = chosen || pick(k => ok(k) && GARMENTS[k.g].wear === band) || pick(ok);
+    if (!chosen) continue;
     if (slot === "head" && h % 3 === 0) continue;            // not everybody wears a hat
-    out.push(fav && opts.includes(fav) ? fav : opts[h % opts.length]);
+    out.push(chosen.u);
+    if (GARMENTS[chosen.g].covers) covered = GARMENTS[chosen.g].covers;
   }
   return out;
 }
+/* Saves written before clothes became individual things stored them as garment
+   ids, with wear and tears in two side tables keyed by id, and the player's
+   spares as counts in the pack. Rebuild all of that as real pieces — worn ones
+   keep the wear and the tear they had, spares come through sound. */
+function migrateWardrobe(ent) {
+  if (!ent) return;
+  /* Detecting the old shape by "has no kit" does NOT work: a save is applied with
+     Object.assign, which cannot delete keys, so a fresh entity's kit survives an
+     old save that has none. Test the old fields themselves — and treat `worn`
+     holding garment ids rather than uids as the giveaway. */
+  const old = ent.wardrobe !== undefined || ent.wornWear !== undefined || ent.wornTorn !== undefined
+    || (ent.worn || []).some(u => GARMENTS[u]);
+  /* Garments also arrive in the pack the ordinary way — bought over a counter,
+     handed over as a gift, pulled out of a crate. Anything of that kind sitting
+     in `inv` becomes a real piece here, or it would be unwearable. */
+  const loose = ent.inv ? Object.keys(ent.inv).filter(id => GARMENTS[id] && ent.inv[id] > 0) : [];
+  if (!old && Array.isArray(ent.kit)) {
+    for (const gid of loose) {
+      for (let i = 0; i < Math.min(ent.inv[gid], 12); i++) ent.kit.push(newPiece(gid));
+      delete ent.inv[gid];
+    }
+    ent.worn = (ent.worn || []).filter(u => ent.kit.some(k => k.u === u));   // never leave a dangling uid
+    return;
+  }
+  const kit = [], seen = new Map();
+  const add = (gid, wear = 0, torn = false) => {
+    if (!GARMENTS[gid]) return null;
+    const pc = newPiece(gid, hash32((ent.id || "player") + gid + kit.length));
+    pc.w = wear; pc.t = torn; kit.push(pc); return pc;
+  };
+  const wornOld = Array.isArray(ent.worn) ? ent.worn : [];
+  for (const gid of wornOld) {
+    const pc = add(gid, ent.wornWear?.[gid] || 0, !!ent.wornTorn?.[gid]);
+    if (pc) seen.set(gid, pc);
+  }
+  for (const gid of (ent.wardrobe || [])) if (!seen.has(gid)) add(gid);
+  if (ent.inv) for (const [gid, n] of Object.entries(ent.inv)) {        // spares used to stack in the pack
+    if (!GARMENTS[gid]) continue;
+    for (let i = 0; i < Math.min(n, 12); i++) add(gid);
+    delete ent.inv[gid];
+  }
+  ent.kit = kit;
+  ent.worn = wornOld.map(g => seen.get(g)?.u).filter(Boolean);
+  delete ent.wardrobe; delete ent.wornWear; delete ent.wornTorn;
+}
+/* How much faster you get filthy for every hole you're walking around in. One
+   torn piece and you grubby up half again as fast; a full set of rags is more
+   than double. Clean living is not available to someone dressed in tatters. */
+const TORN_GRIME = 0.55;
+const tornGrime = (ent) => 1 + wornPieces(ent).filter(pc => pc.t).length * TORN_GRIME;
 /* the two numbers armour trades against each other */
-const toughnessOf = (ent) => (ent.worn || []).reduce((s, id) => s + (ent.wornTorn?.[id] ? 0 : (GARMENTS[id]?.tough || 0)), 0);
-const enduranceOf = (ent) => (ent.worn || []).reduce((s, id) => s + (GARMENTS[id]?.endur || 0), 0);   // torn or not, you still carry it
+const toughnessOf = (ent) => wornPieces(ent).reduce((s, pc) => s + (pc.t ? 0 : (GARMENTS[pc.g]?.tough || 0)), 0);
+const enduranceOf = (ent) => wornPieces(ent).reduce((s, pc) => s + (GARMENTS[pc.g]?.endur || 0), 0);   // torn or not, you still carry it
 const maxEnergyOf = (ent) => clamp(100 + enduranceOf(ent), 40, 100);
 /* the Watch's kit is Watch issue — unless the valley thinks well enough of you to look away */
 const GUARD_KIT_FAME = 25;
@@ -2935,6 +3112,1090 @@ const PLEDGES = {
   },
 };
 
+/* ===== Stage 24 — AN ACTUAL PIECE FOR EVERY THING =====
+   Emoji were always placeholders. They render differently on every machine,
+   they carry some font designer's opinion of what a "meat cut" looks like, and
+   they sit badly beside a valley drawn in flat polygons. Every object in the
+   game now has real vertex art in the same language as the flora, the trees and
+   the people: a small kit of shared shapes — plate, bottle, mug, blade, haft —
+   that the individual pieces dress up, so a hundred-odd things read as one
+   family instead of a hundred-odd unrelated doodles.
+
+   Coordinates run about -0.45..0.45 around the icon's centre, exactly like the
+   flora, so one recipe draws at any size: 18px in an inventory row, a whole
+   tile lying on the ground. */
+const PAL = {
+  wood: "#8a6134", woodDk: "#63431f", bark: "#54402a",
+  steel: "#b9c0c8", steelDk: "#7c858e", iron: "#6f7378",
+  stone: "#9a9187", stoneDk: "#6f685f", rope: "#c2a86a", twine: "#b9a06a",
+  cloth: "#d8cdb4", linen: "#eae2cc", leaf: "#4f7f3e", leafDk: "#355c2b",
+  crust: "#c68b45", crumb: "#f0dcae", dough: "#e8d7b0",
+  meat: "#a8443f", meatDk: "#7d2f2c", fat: "#e6c3ae",
+  plate: "#efeadc", rim: "#cbc2ae", glass: "#cfe3ee", milk: "#f7f4ec",
+  cocoa: "#5a3c2a", tea: "#8fa863", berry: "#5b3a72", rose: "#c05a76",
+  gold: "#d8a93c", amber: "#c98a2e", fish: "#7fa9c4", fishDk: "#4d7791",
+  flame: "#e08a3c", green: "#6b8f5e", cream: "#f4e7c8", choc: "#4a2f22",
+  ink: "#3a352c", paper: "#efe7d2", pink: "#e2879b", purple: "#6f4a86",
+};
+
+/* the kit: every primitive draws in icon space, closing over the canvas */
+function iconKit(ctx, cx, cy, T) {
+  const pg = (pts, fill) => poly(ctx, cx, cy, T, pts, fill);
+  const rc = (x, y, w, h, f) => pg([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], f);
+  const el = (x, y, rx, ry, f, n = 14) => {
+    const pts = [];
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; pts.push([x + Math.cos(a) * rx, y + Math.sin(a) * ry]); }
+    pg(pts, f);
+  };
+  const ci = (x, y, r, f, n = 14) => el(x, y, r, r, f, n);
+  const ln = (x1, y1, x2, y2, w, f) => {              // a thick segment, as a quad
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / L) * (w / 2), ny = (dx / L) * (w / 2);
+    pg([[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]], f);
+  };
+  const tri = (a, b, c, f) => pg([a, b, c], f);
+  const rpg = (pts, f, r) => rpoly(ctx, cx, cy, T, pts, f, r);
+  /* tilt a whole shape about the icon's centre — `pts.map(k.rot(-12))`. Lets a
+     recipe be authored square and then set on a slant as one piece. */
+  const rot = (deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    return ([x, y]) => [x * c - y * s, x * s + y * c]; };
+  const rrc = (x, y, w, h, f, r = 0.05) => rpg([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], f, r);
+  /* an organic lump — a circle pushed in and out around its rim. Dough, cotton
+     bolls and berries all want this instead of a clean ellipse. */
+  const blob = (x, y, rx, ry, f, bumps = 7, wob = 0.16, phase = 0.4) => {
+    const pts = [];
+    for (let i = 0; i < bumps * 2; i++) {
+      const a = (i / (bumps * 2)) * Math.PI * 2 + phase;
+      const g = 1 + (i % 2 ? -wob : wob);
+      pts.push([x + Math.cos(a) * rx * g, y + Math.sin(a) * ry * g]);
+    }
+    rpg(pts, f, Math.min(rx, ry) * 0.55);
+  };
+  /* Lay a tool along a line and place its parts against that line instead of
+     guessing coordinates: `at(t, s)` is a fraction t from butt to tip, offset s
+     across it. This is what keeps a hammer head square to its own handle. */
+  const ax = (x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
+    const at = (t, s = 0) => [x1 + dx * t + nx * s, y1 + dy * t + ny * s];
+    return { at, ux, uy, nx, ny, L,
+      bar: (t0, t1, w, f, r) => rpg([at(t0, -w), at(t1, -w), at(t1, w), at(t0, w)], f, r ?? 0) };
+  };
+  /* a bridge to the older top-left painters (furniture, the register), so their
+     art can be reused as an icon without being rewritten in icon space */
+  const host = (fn) => fn(ctx, cx - T / 2, cy - T / 2, T);
+  return { pg, rc, el, ci, ln, tri, rpg, rrc, blob, ax, rot, host };
+}
+
+/* shared assemblies — the reason this stays a family */
+const SH = {
+  plate: (k, food = null) => {                         // a dish, seen slightly from above
+    k.el(0, 0.20, 0.40, 0.13, PAL.rim);
+    k.el(0, 0.17, 0.34, 0.10, PAL.plate);
+    if (food) food(k);
+  },
+  bowl: (k, fill) => {                                 // sharp at the rim, rounded where it sits
+    k.rpg([[-0.32, -0.02], [0.32, -0.02], [0.22, 0.27], [-0.22, 0.27]], PAL.rim, [0.02, 0.02, 0.17, 0.17]);
+    k.rpg([[-0.26, 0.13], [0.26, 0.13], [0.20, 0.27], [-0.20, 0.27]], "#bab08f", [0.03, 0.03, 0.15, 0.15]);   // shadow under the belly
+    k.el(0, -0.02, 0.32, 0.09, PAL.plate);
+    k.el(0, -0.01, 0.26, 0.07, fill);
+  },
+  bottle: (k, liquid, cap = PAL.steelDk) => {
+    k.rc(-0.09, -0.38, 0.18, 0.09, cap);
+    k.pg([[-0.06, -0.30], [0.06, -0.30], [0.06, -0.20], [0.16, -0.08], [0.16, 0.32], [-0.16, 0.32], [-0.16, -0.08], [-0.06, -0.20]], PAL.glass);
+    k.pg([[-0.13, 0.02], [0.13, 0.02], [0.13, 0.29], [-0.13, 0.29]], liquid);
+  },
+  mug: (k, brew, body = PAL.linen) => {
+    k.pg([[-0.24, -0.20], [0.20, -0.20], [0.16, 0.28], [-0.20, 0.28]], body);
+    k.el(-0.02, -0.20, 0.22, 0.07, brew);
+    k.pg([[0.20, -0.12], [0.34, -0.08], [0.34, 0.10], [0.20, 0.14], [0.20, 0.06], [0.27, 0.03], [0.27, -0.03], [0.20, -0.05]], body);
+  },
+  glassCup: (k, drink, straw = null) => {
+    k.pg([[-0.20, -0.26], [0.20, -0.26], [0.15, 0.30], [-0.15, 0.30]], PAL.glass);
+    k.pg([[-0.17, -0.16], [0.17, -0.16], [0.13, 0.27], [-0.13, 0.27]], drink);
+    if (straw) k.ln(0.06, -0.36, -0.02, -0.12, 0.06, straw);
+  },
+  /* rounded along the flanks, still sharp where a fish should be sharp: the
+     snout, and the two points of the tail. */
+  fishBody: (k, body, dk) => {
+    k.tri([0.26, 0.00], [0.44, -0.15], [0.44, 0.15], dk);       // tail, behind the body
+    k.rpg([[-0.36, 0.00], [-0.12, -0.19], [0.14, -0.15], [0.30, 0.00], [0.14, 0.15], [-0.12, 0.19]],
+          body, [0, 0.10, 0.10, 0.05, 0.10, 0.10]);
+    k.tri([-0.04, -0.18], [0.08, -0.32], [0.14, -0.15], dk);    // dorsal
+    k.tri([-0.02, 0.17], [0.06, 0.28], [0.12, 0.14], dk);       // pelvic
+    k.rpg([[-0.12, -0.13], [0.10, -0.10], [0.06, -0.02], [-0.14, -0.05]], "#ffffff22", 0.05);   // sheen along the back
+    k.ci(-0.21, -0.02, 0.048, "#20262b");
+  },
+  haft: (k, c = PAL.wood) => k.ln(-0.26, 0.36, 0.10, -0.16, 0.10, c),
+  /* a risen loaf: domed and rounded end to end, dark underneath where it sat on
+     the tray, pale on top where the light falls, with slashes cut across it. */
+  loaf: (k, top = PAL.crust, cut = PAL.crumb) => {
+    k.rpg([[-0.36, 0.21], [-0.34, -0.02], [-0.20, -0.17], [0.00, -0.21], [0.20, -0.17], [0.34, -0.02], [0.36, 0.21]],
+          top, [0.13, 0.10, 0.10, 0.10, 0.10, 0.10, 0.13]);
+    k.rpg([[-0.35, 0.09], [0.35, 0.09], [0.33, 0.21], [-0.33, 0.21]], "#a06a33", [0.03, 0.03, 0.12, 0.12]);
+    k.rpg([[-0.25, -0.09], [0.00, -0.16], [0.25, -0.09], [0.00, -0.01]], "#d8a25c", 0.09);       // the lit crown
+    for (const x of [-0.16, 0.00, 0.16]) k.ln(x - 0.05, -0.10, x + 0.05, 0.02, 0.045, cut);
+  },
+  gem: (k, c, dk) => { k.tri([0, -0.26], [-0.22, 0.02], [0.22, 0.02], c); k.tri([-0.22, 0.02], [0.22, 0.02], [0, 0.28], dk); },
+  sack: (k, c, tie = PAL.twine) => {                   // soft everywhere it bulges, creased at the tie
+    k.rpg([[-0.26, 0.32], [-0.30, -0.06], [-0.12, -0.22], [0.12, -0.22], [0.30, -0.06], [0.26, 0.32]],
+          c, [0.12, 0.14, 0.04, 0.04, 0.14, 0.12]);
+    k.rrc(-0.14, -0.26, 0.28, 0.07, tie, 0.025);
+  },
+  pouchLeaf: (k, c = PAL.leaf) => {
+    k.pg([[0.00, -0.30], [0.22, -0.06], [0.00, 0.28], [-0.22, -0.06]], c);
+    k.ln(0.00, -0.26, 0.00, 0.24, 0.035, PAL.leafDk);
+  },
+  /* ---- garment blanks. Several pieces share a cut and differ only in colour
+     and trim, so the shapes live here once and the recipes just dress them. ---- */
+  gTunic: (k, c, a) => {                                     // loose, sleeveless, over the head
+    k.rpg([[-0.28, -0.14], [-0.11, -0.26], [0.11, -0.26], [0.28, -0.14], [0.21, -0.02], [0.23, 0.28], [-0.23, 0.28], [-0.21, -0.02]], c, 0.05);
+    k.rpg([[-0.10, -0.26], [0.10, -0.26], [0.00, -0.11]], a, 0.03);
+  },
+  gShirt: (k, c, a, buttons = true) => {                     // set-in sleeves, placket, collar
+    k.rpg([[-0.32, -0.13], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.13], [0.25, 0.03], [0.26, 0.29], [-0.26, 0.29], [-0.25, 0.03]], c, 0.05);
+    k.rpg([[-0.03, -0.22], [0.03, -0.22], [0.03, 0.29], [-0.03, 0.29]], a, 0.015);
+    k.rpg([[-0.12, -0.26], [0.00, -0.13], [0.12, -0.26], [0.06, -0.28], [-0.06, -0.28]], a, 0.02);   // collar
+    if (buttons) for (const y of [-0.10, 0.00, 0.10, 0.20]) k.ci(0, y, 0.024, "#efe7d2");
+  },
+  gDress: (k, c, a) => {                                     // bodice, waist, skirt falling from it
+    k.rpg([[-0.24, -0.14], [-0.10, -0.26], [0.10, -0.26], [0.24, -0.14], [0.19, 0.00], [-0.19, 0.00]], c, 0.05);
+    k.rrc(-0.20, -0.01, 0.40, 0.05, a, 0.015);
+    k.rpg([[-0.19, 0.03], [0.19, 0.03], [0.31, 0.30], [-0.31, 0.30]], c, [0.03, 0.03, 0.09, 0.09]);
+    k.rpg([[-0.29, 0.24], [0.29, 0.24], [0.31, 0.30], [-0.31, 0.30]], a, [0.04, 0.04, 0.08, 0.08]);
+  },
+  gVest: (k, c, a) => {                                      // open at the front, over a shirt
+    k.rpg([[-0.30, -0.13], [-0.11, -0.24], [0.11, -0.24], [0.30, -0.13], [0.26, 0.28], [-0.26, 0.28]], a, 0.05);
+    k.rpg([[-0.30, -0.13], [-0.09, -0.23], [-0.03, 0.28], [-0.26, 0.28]], c, 0.04);
+    k.rpg([[0.30, -0.13], [0.09, -0.23], [0.03, 0.28], [0.26, 0.28]], c, 0.04);
+    for (const y of [0.02, 0.14]) k.ci(-0.07, y, 0.026, "#efe7d2");
+  },
+  gCoat: (k, c, a, long = false) => {                        // lapels, seam, belt, optional long skirt
+    const h = long ? 0.34 : 0.28;
+    k.rpg([[-0.33, -0.12], [-0.12, -0.26], [0.12, -0.26], [0.33, -0.12], [0.29, h], [-0.29, h]], c, 0.05);
+    k.rpg([[-0.12, -0.26], [-0.01, -0.24], [-0.01, -0.02], [-0.15, -0.10]], a, 0.03);   // lapels
+    k.rpg([[0.12, -0.26], [0.01, -0.24], [0.01, -0.02], [0.15, -0.10]], a, 0.03);
+    k.rpg([[-0.02, -0.20], [0.02, -0.20], [0.02, h], [-0.02, h]], a, 0.01);
+    k.rrc(-0.30, long ? 0.06 : 0.08, 0.60, 0.06, a, 0.02);                              // the belt
+    for (const y of [-0.02 + (long ? 0.10 : 0.12), 0.10 + (long ? 0.10 : 0.12)]) k.ci(-0.09, y, 0.026, "#d8cbb0");
+  },
+  gQuilt: (k, c, a) => {                                     // padded channels, sleeveless
+    k.rpg([[-0.29, -0.13], [-0.11, -0.24], [0.11, -0.24], [0.29, -0.13], [0.26, 0.28], [-0.26, 0.28]], c, 0.06);
+    for (const y of [-0.08, 0.02, 0.12, 0.22]) k.rrc(-0.26, y, 0.52, 0.045, a, 0.02);
+    k.rpg([[-0.02, -0.20], [0.02, -0.20], [0.02, 0.28], [-0.02, 0.28]], a, 0.01);
+  },
+  gTrous: (k, c, a, crop = 0) => {                           // two legs from one waistband
+    const hem = 0.32 - crop;
+    k.rpg([[-0.26, -0.26], [0.26, -0.26], [0.22, hem], [0.04, hem], [0.00, 0.02], [-0.04, hem], [-0.22, hem]], c, 0.03);
+    k.rrc(-0.26, -0.28, 0.52, 0.07, a, 0.02);
+    if (crop > 0) { k.rrc(-0.23, hem - 0.05, 0.19, 0.05, a, 0.015); k.rrc(0.04, hem - 0.05, 0.19, 0.05, a, 0.015); }
+  },
+  gSkirt: (k, c, a) => {                                     // waistband and a flare
+    k.rrc(-0.20, -0.26, 0.40, 0.07, a, 0.02);
+    k.rpg([[-0.19, -0.20], [0.19, -0.20], [0.32, 0.28], [-0.32, 0.28]], c, [0.03, 0.03, 0.09, 0.09]);
+    for (const x of [-0.14, 0.00, 0.14]) k.ln(x, -0.16, x * 1.6, 0.24, 0.02, a);        // the pleats
+  },
+  gHat: (k, c, a, brim) => {                                 // one crown, a brim you choose the width of
+    k.el(0, 0.10, brim, brim * 0.36, c);
+    k.el(0, 0.09, brim * 0.62, brim * 0.22, a);
+    k.rpg([[-0.17, 0.08], [-0.14, -0.16], [0.14, -0.16], [0.17, 0.08]], c, [0.04, 0.09, 0.09, 0.04]);
+    k.rrc(-0.18, 0.00, 0.36, 0.06, a, 0.02);
+  },
+};
+
+/* one recipe per object. Anything without an entry falls back to a labelled
+   crate, which is deliberately ugly so a missing piece is obvious, not silent. */
+const ICON_ART = {
+  /* ---------- bread, baking, sweets ---------- */
+  bread:        k => SH.loaf(k),
+  /* a bâtard: round at both ends, near-flat along the top, dark where it sits,
+     with the light catching the ridges between the slashes. */
+  fresh_bread:  k => { const r = k.rot(-13);                                            // the whole loaf set on a slant
+                       k.rpg([[-0.38, 0.06], [-0.30, -0.13], [0.00, -0.17], [0.30, -0.13], [0.38, 0.06], [0.30, 0.24], [0.00, 0.27], [-0.30, 0.24]].map(r),
+                             "#d59a4e", [0.15, 0.10, 0.08, 0.10, 0.15, 0.14, 0.10, 0.14]);
+                       k.rpg([[-0.36, 0.11], [0.36, 0.11], [0.30, 0.25], [-0.30, 0.25]].map(r), "#a8703a", [0.04, 0.04, 0.14, 0.14]);
+                       k.rpg([[-0.28, -0.08], [0.00, -0.13], [0.28, -0.08], [0.00, 0.02]].map(r), "#eab871", 0.10);
+                       for (const x of [-0.17, 0.00, 0.17])
+                         k.ln(...r([x - 0.05, -0.07]), ...r([x + 0.05, 0.09]), 0.05, PAL.crumb); },
+  /* the classic crescent: fat middle, tapered horns, every lobe rounded */
+  croissant:    k => { k.rpg([[-0.37, 0.16], [-0.26, -0.10], [-0.09, -0.21], [0.09, -0.21], [0.26, -0.10], [0.37, 0.16], [0.22, 0.11], [0.00, 0.03], [-0.22, 0.11]],
+                             "#dda85a", [0.06, 0.11, 0.11, 0.11, 0.11, 0.06, 0.09, 0.11, 0.09]);
+                       for (const x of [-0.15, 0.00, 0.15]) k.ln(x, -0.15, x, 0.06, 0.05, "#c08e42");
+                       k.rpg([[-0.20, -0.13], [0.00, -0.18], [0.20, -0.13], [0.00, -0.05]], "#f0cd8e", 0.07);
+                       k.ci(-0.30, 0.11, 0.065, "#e8c07a"); k.ci(0.30, 0.11, 0.065, "#e8c07a"); },
+  cookies:      k => { k.ci(0, 0.04, 0.30, "#c9944e"); for (const [x, y] of [[-0.10, -0.06], [0.10, 0.00], [-0.02, 0.14], [0.14, -0.12]]) k.ci(x, y, 0.045, PAL.choc); },
+  /* an actual layer cake: sponge, cream, sponge, cream, sponge — read from the side */
+  cake:         k => { k.rrc(-0.31, -0.05, 0.62, 0.09, "#e0b077", 0.02);   // top sponge
+                       k.rrc(-0.32, 0.04, 0.64, 0.05, PAL.cream, 0.015);   // filling
+                       k.rrc(-0.30, 0.09, 0.60, 0.09, "#d8a468", 0.02);    // middle sponge
+                       k.rrc(-0.31, 0.18, 0.62, 0.05, PAL.cream, 0.015);   // filling
+                       k.rrc(-0.29, 0.23, 0.58, 0.07, "#c9954f", 0.03);    // base sponge
+                       k.rpg([[-0.31, -0.05], [0.31, -0.05], [0.25, -0.15], [-0.25, -0.15]], PAL.rose, 0.04);   // icing
+                       for (const x of [-0.16, 0.16]) k.ci(x, -0.11, 0.035, "#f2c8d4");
+                       k.ci(0, -0.20, 0.06, "#c0344f"); k.tri([0.03, -0.25], [0.13, -0.30], [0.05, -0.21], PAL.leaf); },
+  pie:          k => { k.el(0, 0.10, 0.36, 0.16, "#cf9550"); k.el(0, 0.04, 0.30, 0.13, PAL.berry);
+                       k.ln(-0.22, 0.00, 0.22, 0.10, 0.05, "#cf9550"); k.ln(-0.20, 0.12, 0.24, -0.02, 0.05, "#cf9550"); },
+  herb_tart:    k => { k.el(0, 0.10, 0.36, 0.16, "#c99a58"); k.el(0, 0.05, 0.29, 0.12, "#6d8c46");
+                       for (const [x, y] of [[-0.12, 0.02], [0.10, 0.08], [0.00, 0.12]]) k.ci(x, y, 0.045, PAL.leaf);
+                       for (const [x, y] of [[-0.18, 0.08], [-0.04, 0.01], [0.06, 0.13], [0.17, 0.03], [0.00, 0.07], [-0.10, 0.13], [0.13, 0.09]])
+                         k.rpg([[x - 0.026, y], [x, y - 0.020], [x + 0.026, y], [x, y + 0.020]], "#b8c9a2", 0.012); },   // dried flakes scattered over
+  game_pie:     k => { k.el(0, 0.10, 0.36, 0.16, "#b5813f"); k.el(0, 0.04, 0.29, 0.12, PAL.meatDk);
+                       k.tri([-0.10, -0.02], [0.00, -0.14], [0.10, -0.02], "#d8ab62"); },
+  /* toffee still running off the bottom and setting into lumps */
+  candy_apple:  k => { k.ln(0, -0.14, 0, 0.38, 0.05, PAL.wood);
+                       k.ci(0, -0.10, 0.24, "#c03a4a");
+                       k.rpg([[-0.19, 0.04], [0.19, 0.04], [0.15, 0.20], [0.05, 0.15], [-0.03, 0.24], [-0.13, 0.16]], "#a82b3c", [0.06, 0.06, 0.07, 0.06, 0.07, 0.06]);
+                       k.ci(-0.05, 0.25, 0.055, "#a82b3c"); k.ci(0.11, 0.21, 0.042, "#a82b3c");
+                       k.ci(-0.08, -0.18, 0.06, "#e88a92"); k.ci(0.10, -0.20, 0.032, "#e88a92"); },
+  /* half out of its wrapper — the foil peeled back off the top-left corner */
+  chocolate:    k => { k.rpg([[-0.34, -0.26], [0.16, -0.30], [0.20, 0.20], [-0.30, 0.24]], "#3f6ea8", 0.03);   // the blue wrapper behind
+                       k.rpg([[-0.34, -0.26], [-0.06, -0.28], [-0.14, -0.10], [-0.32, -0.06]], "#5b8cc4", 0.03);  // its lit fold
+                       k.rrc(-0.22, -0.18, 0.52, 0.40, PAL.choc, 0.03);                                        // the bar, sliding out
+                       for (const x of [-0.20, -0.03, 0.14]) k.rrc(x + 0.015, -0.16, 0.15, 0.17, "#63402c", 0.02);
+                       for (const x of [-0.20, -0.03, 0.14]) k.rrc(x + 0.015, 0.03, 0.15, 0.17, "#63402c", 0.02);
+                       k.rpg([[0.30, -0.18], [0.36, -0.14], [0.36, 0.18], [0.30, 0.22]], "#2f1d14", 0.02); },   // the cut edge, in shadow
+  sugar:        k => { SH.sack(k, PAL.linen); k.rrc(-0.10, -0.02, 0.20, 0.14, "#fff", 0.035);
+                       for (const [x, y] of [[-0.03, 0.02], [0.05, 0.08]]) k.rrc(x, y, 0.05, 0.05, "#e8e4d8", 0.015); },
+  flour:        k => { SH.sack(k, "#e6dcc2"); k.rpg([[-0.10, 0.04], [0.00, -0.08], [0.10, 0.04], [0.00, 0.14]], "#c8b98f", 0.035);
+                       k.ci(-0.16, 0.16, 0.03, "#f4eee0"); k.ci(0.15, 0.12, 0.025, "#f4eee0"); },
+  /* a clump of dough slumped onto the board: lumpy on top, spread and flattened
+     where it meets the surface, with the board's shadow keeping it grounded. */
+  dough:        k => { k.el(0.00, 0.24, 0.34, 0.07, "#d8c9a4");                       // the spread foot
+                       k.blob(0.00, 0.22, 0.30, 0.10, "#e8d7b0", 6, 0.10, 0.9);
+                       k.blob(-0.01, 0.05, 0.27, 0.22, "#e8d7b0", 7, 0.13, 0.35);      // the body of the clump
+                       k.blob(-0.08, -0.04, 0.15, 0.12, "#f4e6c6", 6, 0.14, 1.7);      // the lit shoulder
+                       k.rpg([[-0.28, 0.14], [0.28, 0.14], [0.24, 0.24], [-0.24, 0.24]], "#d5c096", 0.09);   // shading where it sags
+                       k.ci(0.13, 0.09, 0.05, "#dccaa0"); k.ci(-0.19, 0.10, 0.04, "#dccaa0"); },
+
+  /* ---------- meals in a bowl or on a plate ---------- */
+  meal:         k => SH.bowl(k, "#c07a3a"),
+  stew:         k => { SH.bowl(k, "#a4652f"); k.ci(-0.08, -0.02, 0.05, PAL.meat); k.ci(0.08, 0.01, 0.045, "#d59a3e"); },
+  mystery_stew: k => { SH.bowl(k, "#5f6b47"); k.ci(0.04, -0.02, 0.05, "#8ea84e"); k.ci(-0.09, 0.00, 0.035, "#7b5a86"); },
+  wild_stew:    k => { SH.bowl(k, "#8b7a3c"); k.ci(-0.07, -0.02, 0.045, PAL.leaf); k.ci(0.08, 0.00, 0.04, "#b8863c"); },
+  hearty_stew:  k => { SH.bowl(k, "#9c5730"); k.ci(-0.08, -0.02, 0.05, PAL.meatDk); k.ci(0.07, 0.01, 0.045, "#cf9a45"); },
+  fish_stew:    k => { SH.bowl(k, "#7d94a2"); k.tri([0.00, -0.06], [0.14, 0.00], [0.00, 0.06], PAL.fish); },
+  veg_soup:     k => { SH.bowl(k, "#c2762f"); k.ci(-0.07, -0.02, 0.04, PAL.leaf); k.ci(0.07, 0.00, 0.04, "#e08a3c"); },
+  noodles:      k => { SH.bowl(k, "#e0cf9a"); for (const x of [-0.12, 0.00, 0.12]) k.ln(x, -0.06, x + 0.04, 0.06, 0.035, "#f2e3b4");
+                       k.ci(0.10, -0.03, 0.04, PAL.leaf); },
+  salad:        k => { SH.bowl(k, "#5f8a3f"); k.ci(-0.08, -0.02, 0.05, "#7fae4e"); k.ci(0.08, 0.00, 0.045, "#c0463c"); },
+  bland_salad:  k => { SH.bowl(k, "#8aa06a"); k.ci(0.02, -0.02, 0.05, "#a8bb84"); },
+  sushi:        k => { k.rc(-0.34, -0.04, 0.28, 0.26, PAL.linen);                       // nigiri: rice bed
+                       k.pg([[-0.36, -0.10], [-0.04, -0.16], [-0.04, -0.02], [-0.36, 0.02]], "#e07a6a");   // the fish over it
+                       k.rc(-0.24, -0.06, 0.07, 0.28, "#2f3a33");                        // its nori band
+                       k.rc(0.06, -0.06, 0.28, 0.28, "#2f3a33");                          // maki roll
+                       k.el(0.20, 0.08, 0.11, 0.11, PAL.linen); k.ci(0.20, 0.08, 0.05, "#c0463c"); },
+  /* the far wall of the shell sits in the filling's shadow; the near one catches light */
+  taco:         k => { k.rpg([[-0.32, 0.18], [-0.19, -0.17], [0.19, -0.17], [0.32, 0.18]], "#b8873c", [0.10, 0.09, 0.09, 0.10]);   // back of the shell
+                       k.rpg([[-0.24, -0.04], [0.24, -0.04], [0.19, -0.13], [-0.19, -0.13]], PAL.meatDk, 0.04);
+                       k.ln(-0.20, -0.06, 0.20, -0.08, 0.05, PAL.leaf);
+                       for (const [x, y] of [[-0.12, -0.02], [0.09, -0.04]]) k.ci(x, y, 0.035, "#c94a3c");
+                       k.rpg([[-0.32, 0.20], [-0.17, -0.06], [0.17, -0.06], [0.32, 0.20], [0.20, 0.25], [-0.20, 0.25]],
+                             "#e0b155", [0.10, 0.08, 0.08, 0.10, 0.09, 0.09]); },                                                 // front of the shell
+  /* a slice with a proper raised crust at the back and cheese short of the edge */
+  pizza:        k => { k.rpg([[0, -0.35], [-0.31, 0.26], [0.31, 0.26]], "#e2b45e", [0.05, 0.13, 0.13]);
+                       k.rpg([[0, -0.31], [-0.25, 0.17], [0.25, 0.17]], "#f0c877", [0.04, 0.09, 0.09]);   // the lit crust face
+                       k.rpg([[0, -0.25], [-0.22, 0.15], [0.22, 0.15]], "#d9603c", [0.04, 0.08, 0.08]);   // sauce, inset from the rim
+                       k.rpg([[0, -0.20], [-0.18, 0.12], [0.18, 0.12]], "#e8c163", [0.04, 0.08, 0.08]);   // cheese
+                       for (const [x, y] of [[-0.09, 0.04], [0.09, 0.02], [0.00, -0.09]]) k.ci(x, y, 0.048, "#9c2f2f"); },
+  /* burger and a soda — the combo is both halves of the meal */
+  combo:        k => { k.rpg([[-0.36, -0.06], [-0.02, -0.06], [-0.06, -0.24], [-0.32, -0.24]], "#daa55e", [0.05, 0.05, 0.09, 0.09]);
+                       k.rrc(-0.37, -0.05, 0.36, 0.06, PAL.leaf, 0.02);
+                       k.rrc(-0.37, 0.01, 0.36, 0.08, PAL.meatDk, 0.025);
+                       k.rpg([[-0.37, 0.09], [-0.01, 0.09], [-0.04, 0.24], [-0.34, 0.24]], "#daa55e", [0.04, 0.04, 0.08, 0.08]);
+                       for (const [x, y] of [[-0.28, -0.17], [-0.18, -0.21], [-0.09, -0.16]]) k.ci(x, y, 0.022, "#f0e2c0");   // seeds
+                       k.ln(0.26, -0.34, 0.19, -0.14, 0.045, "#d8536a");                                        // straw
+                       k.rpg([[0.06, -0.16], [0.36, -0.16], [0.31, 0.27], [0.11, 0.27]], "#c9553f", [0.02, 0.02, 0.05, 0.05]);
+                       k.rrc(0.05, -0.18, 0.32, 0.05, "#e0e0e0", 0.02);                                          // lid
+                       k.rrc(0.09, 0.00, 0.24, 0.08, "#efe7d2", 0.02); },                                        // the band
+  /* three plated components in a row, all sitting within the rim of the dish
+     rather than drifting off the edge of it */
+  gourmet_platter: k => { SH.plate(k);
+                       k.rpg([[-0.25, 0.14], [-0.22, 0.03], [-0.11, -0.01], [-0.04, 0.08], [-0.08, 0.18], [-0.20, 0.19]],
+                             PAL.meatDk, 0.05);                                                                   // the cut of meat
+                       k.rpg([[-0.22, 0.07], [-0.13, 0.02], [-0.07, 0.08], [-0.15, 0.13]], "#a8443f", 0.04);
+                       k.rpg([[-0.02, 0.10], [0.06, 0.03], [0.15, 0.09], [0.07, 0.17]], "#e0b155", 0.05);          // a roast potato
+                       k.rpg([[0.00, 0.11], [0.05, 0.07], [0.10, 0.10], [0.05, 0.14]], "#f0c87e", 0.03);
+                       k.ci(0.20, 0.10, 0.055, PAL.leaf); k.ci(0.25, 0.15, 0.040, "#6b9c4e");                      // the greens
+                       k.ci(0.16, 0.15, 0.036, "#5f8a3f");
+                       k.ln(-0.14, 0.19, 0.14, 0.18, 0.018, "#c9a24e");                                           // a drizzle across the plate
+                       k.tri([-0.10, 0.00], [-0.04, -0.09], [-0.02, 0.01], PAL.leaf); },                          // one sprig, over the meat
+  burnt:        k => { SH.plate(k); k.pg([[-0.20, 0.12], [-0.10, -0.06], [0.06, 0.02], [0.18, 0.12]], "#2f2a26");
+                       k.ln(-0.06, -0.16, -0.02, -0.30, 0.05, "#6b6660"); },
+  sludge:       k => { SH.bowl(k, "#5e6b4a"); k.ci(0.04, -0.03, 0.05, "#7c8b58"); k.ci(-0.08, 0.00, 0.035, "#48553a"); },
+
+  /* ---------- meat and fish ---------- */
+  /* Cut like a T-bone: a fat round of meat on one side of the bone and a
+     narrower strip on the other, which runs out further than the big side does. */
+  meat:         k => { k.rpg([[-0.30, 0.02], [-0.20, -0.20], [0.02, -0.26], [0.16, -0.14], [0.14, 0.14], [-0.04, 0.26], [-0.24, 0.20]],
+                             PAL.meat, [0.12, 0.12, 0.12, 0.06, 0.06, 0.12, 0.12]);                                   // the big eye
+                       k.rpg([[0.14, -0.15], [0.36, -0.09], [0.38, 0.02], [0.14, 0.11]], PAL.meat, [0.03, 0.09, 0.09, 0.03]);   // the thin strip, reaching further
+                       k.rpg([[0.10, -0.17], [0.19, -0.14], [0.19, 0.11], [0.10, 0.13]], PAL.fat, [0.04, 0.05, 0.05, 0.04]);    // the bone between them
+                       k.rpg([[-0.20, -0.06], [-0.06, -0.13], [0.00, -0.02], [-0.14, 0.05]], "#8e3833", 0.05);                  // grain
+                       k.rpg([[-0.26, 0.06], [-0.16, 0.02], [-0.12, 0.14], [-0.22, 0.17]], PAL.fat, 0.04); },                   // marbling
+  /* the same cut, tilted onto the grill. The char marks are laid on the cut's own
+     axis and kept short, so they sit ON the meat instead of running off it. */
+  roast_meat:   k => { const a = k.ax(-0.26, 0.16, 0.20, -0.20);
+                       k.rpg([[-0.30, -0.02], [-0.16, -0.22], [0.06, -0.26], [0.20, -0.12], [0.16, 0.12], [-0.02, 0.26], [-0.24, 0.16]],
+                             "#8e4a2e", [0.12, 0.12, 0.12, 0.07, 0.07, 0.12, 0.12]);
+                       k.rpg([[0.17, -0.13], [0.34, -0.05], [0.34, 0.04], [0.15, 0.11]], "#8e4a2e", [0.03, 0.09, 0.09, 0.03]);   // the thin side
+                       k.rpg([[0.12, -0.15], [0.21, -0.11], [0.19, 0.12], [0.10, 0.13]], "#c9ae8e", [0.04, 0.05, 0.05, 0.04]);   // the bone
+                       k.rpg([[-0.22, -0.08], [-0.08, -0.17], [-0.01, -0.07], [-0.16, 0.02]], "#a85c38", 0.05);                  // the lit face
+                       for (const s of [-0.13, 0.00, 0.13])                                                    // bars of char, inside the cut
+                         k.ln(...a.at(0.16, s), ...a.at(0.74, s), 0.032, "#3f2a1c"); },
+  meat_skewer:  k => { k.ln(-0.34, 0.30, 0.34, -0.30, 0.045, PAL.woodDk);
+                       for (const [x, y] of [[-0.16, 0.12], [0.02, -0.02], [0.18, -0.16]]) k.pg([[x - 0.10, y], [x, y - 0.10], [x + 0.10, y], [x, y + 0.10]], PAL.meatDk); },
+  /* served, not raw: a herbed joint resting on the plate with its own juices */
+  herb_roast:   k => { SH.plate(k);
+                       k.rpg([[-0.26, 0.10], [-0.20, -0.06], [-0.02, -0.16], [0.18, -0.10], [0.26, 0.04], [0.16, 0.17], [-0.10, 0.19]],
+                             "#8e4a30", [0.10, 0.10, 0.11, 0.11, 0.10, 0.11, 0.11]);
+                       k.rpg([[-0.19, -0.01], [-0.04, -0.11], [0.10, -0.07], [-0.04, 0.03]], "#a85c38", 0.07);       // the lit face
+                       k.rpg([[-0.22, 0.09], [0.20, 0.06], [0.14, 0.16], [-0.10, 0.18]], "#6f3722", 0.07);           // underside, in shadow
+                       for (const [x, y] of [[-0.10, -0.02], [0.06, 0.04], [-0.02, 0.11], [0.13, -0.03]]) k.ci(x, y, 0.036, PAL.leaf);
+                       for (const [x, y] of [[-0.16, 0.05], [0.02, -0.06], [0.10, 0.11]]) k.ci(x, y, 0.02, "#3f5c2a"); },
+  /* the wildcard slot: one cut in front and two ghosted behind it — "whichever
+     you've got" — with a small gold mark in the corner to say it's a stand-in. */
+  anymeat:      k => { k.rpg([[-0.14, -0.24], [0.06, -0.28], [0.20, -0.16], [0.18, 0.06], [0.02, 0.16], [-0.14, 0.06]], "#7d3a36", 0.10);
+                       k.rpg([[-0.22, -0.18], [-0.02, -0.22], [0.10, -0.10], [0.08, 0.12], [-0.08, 0.22], [-0.22, 0.12]], "#8e3b37", 0.10);
+                       k.rpg([[-0.30, -0.10], [-0.12, -0.16], [0.02, -0.04], [0.00, 0.16], [-0.14, 0.26], [-0.30, 0.16]], PAL.meat, 0.10);
+                       k.rpg([[-0.24, -0.02], [-0.12, -0.07], [-0.06, 0.04], [-0.18, 0.10]], PAL.fat, 0.05);
+                       k.rpg([[0.00, -0.06], [0.06, -0.09], [0.04, 0.14], [-0.02, 0.16]], PAL.fat, 0.03);              // the bone edge
+                       for (const [x1, y1, x2, y2] of [                                                        // the hook of a "?", segment by segment
+                         [0.13, -0.31, 0.25, -0.33], [0.25, -0.33, 0.31, -0.25],
+                         [0.31, -0.25, 0.24, -0.18], [0.24, -0.18, 0.22, -0.11]])
+                         k.ln(x1, y1, x2, y2, 0.045, PAL.gold);
+                       k.ci(0.21, -0.03, 0.038, PAL.gold); },
+  fish:         k => SH.fishBody(k, PAL.fish, PAL.fishDk),
+  tropical_fish:k => { SH.fishBody(k, "#e8a33c", "#c05a2e"); k.ln(-0.16, -0.14, -0.10, 0.16, 0.05, "#f4d47a"); },
+  river_titan:  k => { SH.fishBody(k, "#63798c", "#3f5568"); k.ci(0.04, -0.22, 0.05, "#a8c4d8"); k.ci(0.12, -0.28, 0.035, "#a8c4d8"); },
+  /* pale, flaking flesh on top; the dark seared line stays across the back of it */
+  grilled_fish: k => { SH.plate(k);
+                       k.rpg([[-0.28, 0.07], [-0.06, -0.07], [0.16, -0.02], [0.28, 0.09], [0.04, 0.17], [-0.20, 0.16]],
+                             "#e0bc86", [0.05, 0.09, 0.09, 0.05, 0.09, 0.09]);
+                       k.rpg([[-0.22, 0.04], [-0.05, -0.04], [0.12, 0.00], [-0.02, 0.08]], "#f0d8ad", 0.06);   // the lightest flakes
+                       k.ln(-0.15, 0.03, 0.13, 0.07, 0.03, "#7a4f2a");                                        // the dark line along the spine
+                       for (const [x, y] of [[-0.10, 0.09], [0.04, 0.11]]) k.ln(x, y, x + 0.07, y + 0.01, 0.016, "#c9a068");
+                       k.tri([0.20, 0.10], [0.30, 0.16], [0.20, 0.16], PAL.leaf); },
+  /* four goujons squared up to the plate, breaded and sitting in its dish */
+  fish_sticks:  k => { SH.plate(k);
+                       for (const [i, x] of [-0.21, -0.08, 0.05, 0.18].entries()) {
+                         k.rpg([[x, 0.16 - i * 0.005], [x + 0.11, 0.15 - i * 0.005], [x + 0.10, -0.02], [x + 0.01, -0.01]], "#c98d3e", 0.03);
+                         k.rpg([[x + 0.01, 0.08], [x + 0.10, 0.075], [x + 0.10, -0.015], [x + 0.015, -0.005]], "#e0aa5c", 0.025);
+                         for (const [dx, dy] of [[0.03, 0.02], [0.07, 0.07], [0.04, 0.11]]) k.ci(x + dx, dy, 0.014, "#f2cd8e");
+                       }
+                       k.ci(0.00, 0.19, 0.045, "#d8bb5c"); },                                                  // a dab of sauce
+
+  /* ---------- fruit, veg, forage ---------- */
+  fruit:        k => { k.ci(0, 0.06, 0.26, "#c2402f"); k.ci(-0.09, -0.02, 0.07, "#e0806e");
+                       k.ln(0, -0.16, 0.02, -0.32, 0.04, PAL.bark); k.tri([0.02, -0.28], [0.20, -0.34], [0.08, -0.20], PAL.leaf); },
+  snack:        k => { k.ci(-0.10, 0.08, 0.15, "#b8324c"); k.ci(0.12, 0.04, 0.15, "#c94258");
+                       k.ln(-0.08, -0.06, 0.00, -0.30, 0.035, PAL.leaf); k.ln(0.12, -0.10, 0.02, -0.30, 0.035, PAL.leaf); },
+  berry:        k => { for (const [x, y, r] of [[-0.14, 0.08, 0.13], [0.10, 0.12, 0.12], [0.00, -0.06, 0.13]]) k.ci(x, y, r, PAL.berry);
+                       k.ci(-0.16, 0.03, 0.04, "#8a6aa2"); },
+  /* a handful pulled from the row: a carrot, a turnip and a green tucked behind */
+  veg:          k => { k.rpg([[-0.34, -0.10], [-0.22, -0.20], [-0.10, -0.06], [-0.18, 0.06]], PAL.leaf, 0.05);      // greens behind
+                       k.rpg([[-0.28, 0.02], [-0.14, -0.04], [-0.06, 0.14], [-0.18, 0.26], [-0.30, 0.16]], "#e8e0c4", [0.10, 0.08, 0.09, 0.10, 0.10]);
+                       k.rpg([[-0.26, 0.06], [-0.16, 0.02], [-0.12, 0.13], [-0.22, 0.18]], "#f4efdc", 0.06);         // the turnip's lit side
+                       k.rpg([[-0.24, 0.03], [-0.08, 0.09], [-0.14, 0.15]], "#b090b8", 0.04);                        // its purple shoulder
+                       for (const [i, dx] of [-0.02, 0.06, 0.14].entries())                                          // carrot tops
+                         k.ln(0.10 + dx * 0.3, -0.10, dx + 0.02, -0.34 + i * 0.03, 0.035, "#4f7f3e");
+                       k.rpg([[0.04, -0.12], [0.24, -0.10], [0.20, 0.10], [0.12, 0.28], [0.04, 0.08]], "#e07a2c", [0.07, 0.07, 0.05, 0.03, 0.05]);
+                       k.rpg([[0.09, -0.08], [0.19, -0.07], [0.15, 0.08], [0.10, 0.02]], "#f09a4c", 0.05);
+                       for (const y of [-0.02, 0.06, 0.13]) k.ln(0.07 + y * 0.2, y, 0.20 - y * 0.4, y + 0.01, 0.014, "#c2632220"); },
+  /* a sprig: one stem, leaves paired off it in opposing sets, tip still soft */
+  herb:         k => { k.ln(0.02, 0.34, -0.02, -0.20, 0.04, "#4a6b34");
+                       for (const [i, y] of [0.16, 0.02, -0.12].entries()) {
+                         const w = 0.24 - i * 0.05;
+                         for (const s of [-1, 1])
+                           k.rpg([[0, y], [s * w * 0.55, y - 0.10], [s * w, y - 0.13], [s * w * 0.6, y - 0.02]],
+                                 i % 2 ? PAL.leaf : "#5f9349", [0.02, 0.05, 0.04, 0.05]);
+                       }
+                       k.rpg([[-0.01, -0.14], [-0.09, -0.24], [-0.02, -0.34], [0.05, -0.23]], "#6ba351", [0.03, 0.05, 0.03, 0.05]); },
+  flower:       k => { k.ln(0, 0.34, 0, -0.04, 0.04, "#4a6b34");
+                       for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; k.ci(Math.cos(a) * 0.16, -0.10 + Math.sin(a) * 0.16, 0.09, "#f0e08a"); }
+                       k.ci(0, -0.10, 0.08, PAL.amber); },
+  /* a gathered posy: the stems cross low in the hand, the heads fan out clear of
+     each other. Bloom heights are staggered so no two flowers collide. */
+  flowers:      k => { for (const [x, hy] of [[-0.19, -0.06], [0.02, -0.20], [0.20, -0.02]])
+                         k.ln(0.01, 0.36, x, hy + 0.06, 0.035, "#4a6b34");                 // stems, all rising from one point
+                       k.rpg([[-0.06, 0.14], [0.10, 0.12], [0.06, 0.26], [-0.08, 0.26]], "#7f6a42", 0.03);   // the twine binding them
+                       for (const [x, hy, c] of [[-0.19, -0.06, "#d86a8a"], [0.20, -0.02, "#8a7ac0"], [0.02, -0.20, "#f0e08a"]]) {
+                         for (let i = 0; i < 5; i++) {
+                           const a = (i / 5) * Math.PI * 2 + 0.6;
+                           k.el(x + Math.cos(a) * 0.075, hy + Math.sin(a) * 0.075, 0.062, 0.052, c);
+                         }
+                         k.ci(x, hy, 0.045, PAL.amber);
+                       } },
+  /* cut grass tied in the middle — greener stems, dry seed heads at the tips */
+  fiber:        k => { for (const [tp, bt] of [[-0.26, -0.06], [-0.12, -0.03], [0.02, 0.00], [0.16, 0.03], [0.28, 0.06]]) {
+                         k.ln(bt, 0.34, tp, -0.32, 0.055, "#7f9c4a");
+                         k.ln(bt * 0.6, 0.16, tp * 0.85, -0.24, 0.022, "#9cb85e");        // the lit edge of each stem
+                         k.el(tp, -0.29, 0.035, 0.055, "#c2b46a");                        // the seed head
+                       }
+                       k.rpg([[-0.20, 0.02], [0.20, 0.02], [0.20, 0.12], [-0.20, 0.12]], "#8a7434", 0.03); },
+  /* the boll: a dull green case, asymmetric, with an unruly white puff bursting
+     out of it — deliberately not a circle. */
+  cotton:       k => { k.ln(0.02, 0.37, -0.01, 0.06, 0.05, "#6b7546");
+                       for (const [x, y, s, ph] of [[-0.17, 0.09, 0.92, 0.7], [0.16, 0.03, 0.86, 2.1], [-0.02, -0.17, 1.0, 1.4]]) {
+                         k.rpg([[x - 0.17 * s, y + 0.02], [x - 0.08 * s, y - 0.16 * s], [x + 0.06 * s, y - 0.17 * s],
+                                [x + 0.17 * s, y - 0.01], [x + 0.09 * s, y + 0.16 * s], [x - 0.09 * s, y + 0.15 * s]],
+                               "#79864e", [0.05, 0.04, 0.04, 0.05, 0.06, 0.06]);          // the case, lopsided
+                         k.blob(x, y - 0.01, 0.125 * s, 0.115 * s, "#fbfaf4", 5, 0.24, ph);
+                         k.blob(x - 0.035 * s, y - 0.05 * s, 0.055 * s, 0.05 * s, "#ffffff", 4, 0.2, ph + 1);
+                       } },
+
+  /* ---------- drinks ---------- */
+  milk:         k => SH.glassCup(k, PAL.milk),
+  choco_milk:   k => SH.glassCup(k, "#8a5f42", "#f0e0c0"),
+  water:        k => SH.bottle(k, "#a8d4e8"),
+  nutrient:     k => SH.bottle(k, "#8ac06a", "#c05a76"),
+  lemonade:     k => SH.glassCup(k, "#f0dc72", "#d86a8a"),
+  milkshake:    k => { SH.glassCup(k, "#f2d8c4", "#d86a8a"); k.ci(0.00, -0.19, 0.105, PAL.cream);   // the scoop, mostly sunk into the shake
+                       k.ci(0.05, -0.22, 0.035, "#fdf6ea"); k.ci(-0.09, -0.15, 0.03, "#c03a4a"); },
+  trop_shake:   k => { SH.glassCup(k, "#f0a45c", "#5f8a3f"); k.tri([0.18, -0.26], [0.34, -0.34], [0.26, -0.18], PAL.leaf); },
+  coffee:       k => SH.mug(k, PAL.cocoa),
+  mocha:        k => { SH.mug(k, "#4a3226"); k.el(-0.02, -0.21, 0.13, 0.04, PAL.cream); },
+  hot_choc:     k => { SH.mug(k, "#5f3c28", "#e8dcc8"); k.ci(-0.06, -0.22, 0.05, PAL.cream); k.ci(0.06, -0.20, 0.045, PAL.cream); },
+  tea:          k => { SH.mug(k, PAL.tea, "#efe7d2"); k.ln(0.10, -0.24, 0.16, -0.34, 0.03, PAL.twine); },
+  cider:        k => { k.pg([[-0.22, -0.18], [0.22, -0.18], [0.18, 0.32], [-0.18, 0.32]], "#cf9a3c");
+                       k.el(0, -0.18, 0.22, 0.07, "#f2e3c0");
+                       k.pg([[0.22, -0.10], [0.34, -0.06], [0.34, 0.12], [0.22, 0.16]], "#d8d2c2"); },
+
+  /* ---------- tools ---------- */
+  /* Every tool below is laid on an explicit axis with `k.ax`, and its parts are
+     placed against that axis rather than by eye — which is what stops heads,
+     teeth and ferrules from sitting at a slightly different angle to the handle. */
+  hammer:       k => { const a = k.ax(-0.26, 0.36, 0.10, -0.20);
+                       a.bar(0.00, 0.94, 0.05, PAL.wood, 0.035);
+                       a.bar(0.60, 0.74, 0.055, "#5f4326", 0.02);                       // the grip wrap
+                       k.rpg([a.at(0.98, -0.20), a.at(1.14, -0.17), a.at(1.14, 0.09), a.at(0.98, 0.12)], PAL.steel, 0.035);   // the face
+                       k.rpg([a.at(0.98, 0.12), a.at(1.10, 0.10), a.at(1.16, 0.26), a.at(1.02, 0.24)], PAL.steelDk, 0.03);    // the claw/peen tail
+                       k.rpg([a.at(0.90, -0.13), a.at(1.02, -0.13), a.at(1.02, 0.09), a.at(0.90, 0.09)], "#98a1aa", 0.02); }, // the eye it sits on
+  /* blade on one axis, teeth stepped along that same axis so they run with it */
+  saw:          k => { const a = k.ax(-0.20, 0.20, 0.34, -0.16);
+                       k.rpg([a.at(-0.30, -0.12), a.at(-0.06, -0.12), a.at(-0.06, 0.10), a.at(-0.30, 0.10)], PAL.wood, 0.05);   // handle
+                       k.rpg([a.at(-0.24, -0.07), a.at(-0.10, -0.07), a.at(-0.10, 0.05), a.at(-0.24, 0.05)], "#5f4326", 0.03);
+                       k.rpg([a.at(-0.04, -0.11), a.at(1.00, -0.05), a.at(1.00, 0.05), a.at(-0.04, 0.09)], PAL.steel, 0.02);    // blade, tapering
+                       /* The toothed edge runs from s=0.09 at the handle to s=0.05 at the tip
+                          — it NARROWS. Sizing the teeth the other way walked them off the
+                          blade toward the point, so each one is now placed on the edge it
+                          belongs to, interpolated along the same taper as the blade itself. */
+                       const edge = (t) => 0.09 + (0.05 - 0.09) * t;
+                       for (let i = 0; i < 10; i++) {
+                         const t0 = 0.00 + i * 0.098, t1 = t0 + 0.098;
+                         k.tri(a.at(t0, edge(t0)), a.at(t1, edge(t1)), a.at((t0 + t1) / 2, edge(t0) + 0.055), PAL.steelDk);
+                       }
+                       k.rpg([a.at(-0.02, -0.09), a.at(0.30, -0.07), a.at(0.30, 0.00), a.at(-0.02, 0.02)], "#d8dee4", 0.015); },  // a highlight down the spine
+  screwdriver:  k => { const a = k.ax(-0.26, 0.32, 0.32, -0.32);
+                       a.bar(0.00, 0.44, 0.075, "#b8483c", 0.06);                       // handle
+                       for (const t of [0.10, 0.22, 0.34]) a.bar(t, t + 0.055, 0.078, "#9c3a30", 0.02);   // its grip flutes
+                       a.bar(0.44, 0.52, 0.045, PAL.steelDk, 0.01);                     // ferrule
+                       a.bar(0.50, 0.92, 0.026, PAL.steel, 0.005);                      // shank
+                       k.rpg([a.at(0.92, -0.055), a.at(1.00, -0.035), a.at(1.00, 0.035), a.at(0.92, 0.055)], PAL.steelDk, 0.01); },  // the flat tip
+  /* a proper axe head: bit flared and curved, poll squared off behind the eye */
+  hatchet:      k => { const a = k.ax(-0.26, 0.36, 0.08, -0.18);
+                       a.bar(0.00, 1.00, 0.05, PAL.wood, 0.035);
+                       a.bar(0.12, 0.30, 0.056, "#4f3520", 0.02);                       // the dark grip patch
+                       k.rpg([a.at(0.94, -0.05), a.at(1.06, -0.05), a.at(1.06, 0.14), a.at(0.94, 0.14)], PAL.steelDk, 0.02);   // poll
+                       k.rpg([a.at(0.86, -0.06), a.at(1.02, -0.26), a.at(1.16, -0.20), a.at(1.10, 0.02), a.at(0.90, 0.08)],
+                             PAL.steel, [0.02, 0.05, 0.07, 0.07, 0.02]);                // the bit, swept forward
+                       k.rpg([a.at(1.02, -0.25), a.at(1.15, -0.19), a.at(1.09, 0.01)], "#e0e6ec", 0.04); },                    // the sharpened edge
+  broom:        k => { const a = k.ax(0.10, 0.34, -0.14, -0.36);
+                       a.bar(0.16, 1.00, 0.038, PAL.wood, 0.02);
+                       a.bar(0.10, 0.22, 0.075, "#9c8450", 0.02);                       // the binding
+                       k.rpg([a.at(0.16, -0.10), a.at(0.16, 0.10), a.at(-0.14, 0.19), a.at(-0.14, -0.19)], PAL.twine, 0.03);   // the head, flaring out
+                       for (let i = 0; i < 6; i++) {                                    // bristles, splayed along the head
+                         const s = -0.15 + i * 0.06;
+                         k.ln(...a.at(0.12, s * 0.75), ...a.at(-0.18, s * 1.25), 0.022, i % 2 ? "#9c8450" : "#b8a06a");
+                       } },
+  bedroll:      k => { k.rc(-0.30, -0.20, 0.60, 0.40, "#5f7a8c");
+                       k.el(-0.30, 0.00, 0.11, 0.20, "#7f9aac"); k.el(-0.30, 0.00, 0.055, 0.10, "#455c6b");
+                       k.el(0.30, 0.00, 0.11, 0.20, "#4f6a7c");
+                       k.rc(-0.02, -0.21, 0.10, 0.42, "#c2a86a"); },
+  /* a struck flake, tilted onto its long axis: thick heel, feathered cutting edge */
+  sharprock:    k => { const a = k.ax(-0.30, 0.24, 0.30, -0.24);
+                       k.rpg([a.at(0.00, 0.02), a.at(0.22, -0.17), a.at(0.62, -0.19), a.at(1.00, -0.02), a.at(0.66, 0.15), a.at(0.24, 0.18)],
+                             PAL.stone, [0.03, 0.05, 0.05, 0.01, 0.05, 0.05]);
+                       k.rpg([a.at(0.18, -0.13), a.at(0.60, -0.15), a.at(0.94, -0.02), a.at(0.55, 0.02)], "#c2bbb0", [0.03, 0.03, 0.01, 0.03]);
+                       for (const t of [0.30, 0.50, 0.70])                                   // the flake scars along the edge
+                         k.ln(...a.at(t, -0.10), ...a.at(t + 0.06, 0.06), 0.016, PAL.stoneDk); },
+  stoneawl:     k => { const a = k.ax(-0.24, 0.34, 0.18, -0.22);
+                       a.bar(0.00, 0.78, 0.045, PAL.wood, 0.03);
+                       a.bar(0.62, 0.80, 0.055, PAL.twine, 0.02);                             // lashing
+                       k.rpg([a.at(0.74, -0.06), a.at(0.90, -0.05), a.at(1.16, 0.00), a.at(0.88, 0.06), a.at(0.74, 0.06)],
+                             PAL.stone, [0.03, 0.03, 0.005, 0.03, 0.03]);
+                       k.rpg([a.at(0.78, -0.04), a.at(1.12, 0.00), a.at(0.84, 0.02)], "#c2bbb0", 0.02); },
+  stonemaul:    k => { const a = k.ax(-0.26, 0.36, 0.08, -0.16);
+                       a.bar(0.00, 0.96, 0.05, PAL.wood, 0.035);
+                       k.rpg([a.at(0.82, -0.20), a.at(1.10, -0.17), a.at(1.12, 0.16), a.at(0.84, 0.19)], PAL.stone, 0.06);   // the head, square to the haft
+                       k.rpg([a.at(0.86, -0.14), a.at(1.04, -0.12), a.at(1.05, 0.04), a.at(0.87, 0.06)], "#b0a89d", 0.04);
+                       a.bar(0.78, 0.90, 0.10, PAL.twine, 0.02);                              // the binding under it
+                       k.rpg([a.at(1.00, -0.16), a.at(1.10, -0.14), a.at(1.11, 0.14), a.at(1.01, 0.16)], PAL.stoneDk, 0.04); },
+  /* an axe, not a maul: the head is narrow where it's bound to the haft and
+     flares into a wide curved bit, hung off ONE side of the shaft. */
+  stoneaxe:     k => { const a = k.ax(-0.26, 0.36, 0.08, -0.18);
+                       a.bar(0.00, 1.00, 0.048, PAL.wood, 0.035);
+                       k.rpg([a.at(0.74, 0.05), a.at(1.00, 0.03), a.at(1.10, -0.10), a.at(1.06, -0.31),
+                              a.at(0.86, -0.37), a.at(0.68, -0.26), a.at(0.70, -0.05)],
+                             PAL.stone, [0.03, 0.03, 0.04, 0.09, 0.10, 0.09, 0.04]);          // narrow at the haft, fanning to a broad bit
+                       k.rpg([a.at(1.04, -0.28), a.at(0.86, -0.34), a.at(0.72, -0.24), a.at(0.80, -0.19), a.at(0.92, -0.24), a.at(1.00, -0.20)],
+                             "#c8c2b8", [0.08, 0.09, 0.08, 0.05, 0.04, 0.05]);                 // the ground cutting edge
+                       k.rpg([a.at(0.78, -0.02), a.at(0.94, -0.04), a.at(0.90, -0.16), a.at(0.76, -0.12)], "#8f8880", 0.04);   // shadow behind the eye
+                       for (const t of [0.76, 0.90]) a.bar(t, t + 0.05, 0.085, PAL.twine, 0.015); },   // lashed on at two turns
+
+  /* ---------- weapons ---------- */
+  club:         k => { k.ln(-0.26, 0.32, 0.16, -0.24, 0.09, PAL.wood); k.ci(0.20, -0.28, 0.13, PAL.woodDk); },
+  /* one taper from knob to barrel, all on a single axis */
+  bat:          k => { const a = k.ax(-0.28, 0.34, 0.28, -0.32);
+                       k.rpg([a.at(0.00, -0.055), a.at(0.10, -0.035), a.at(0.55, -0.075), a.at(1.00, -0.105),
+                              a.at(1.00, 0.105), a.at(0.55, 0.075), a.at(0.10, 0.035), a.at(0.00, 0.055)],
+                             PAL.wood, [0.03, 0.02, 0.02, 0.05, 0.05, 0.02, 0.02, 0.03]);
+                       a.bar(-0.04, 0.06, 0.075, "#6f4a24", 0.03);                     // the knob
+                       a.bar(0.06, 0.26, 0.05, "#5f4326", 0.02);                       // taped grip
+                       k.rpg([a.at(0.35, -0.055), a.at(0.98, -0.085), a.at(0.98, -0.02), a.at(0.35, -0.01)], "#a8763f", 0.03); },
+  baton:        k => { const a = k.ax(-0.26, 0.32, 0.26, -0.30);
+                       a.bar(0.04, 1.00, 0.052, "#2f3540", 0.035);
+                       a.bar(0.00, 0.10, 0.075, "#4a5566", 0.03);                      // pommel
+                       a.bar(0.10, 0.34, 0.062, "#3d4653", 0.025);                     // the grip
+                       for (const t of [0.14, 0.22, 0.30]) a.bar(t, t + 0.035, 0.066, "#59637333", 0.01);
+                       k.rpg([a.at(0.20, -0.10), a.at(0.30, -0.16), a.at(0.34, -0.10), a.at(0.24, -0.05)], "#4a5566", 0.03);   // the side handle
+                       k.rpg([a.at(0.42, -0.03), a.at(0.98, -0.02), a.at(0.98, 0.02), a.at(0.42, 0.02)], "#4e586633", 0.01); },
+  knife:        k => { k.pg([[-0.06, 0.06], [0.06, -0.02], [0.32, -0.32], [0.34, -0.22], [0.06, 0.12]], PAL.steel);
+                       k.ln(-0.24, 0.28, -0.04, 0.08, 0.10, PAL.woodDk); },
+  slingshot:    k => { k.ln(0, 0.34, 0, -0.02, 0.07, PAL.wood);
+                       k.ln(0, -0.02, -0.20, -0.30, 0.06, PAL.wood); k.ln(0, -0.02, 0.20, -0.30, 0.06, PAL.wood);
+                       k.ln(-0.20, -0.28, 0.20, -0.28, 0.03, "#8a5a4a"); },
+  sling:        k => { k.ln(-0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine); k.ln(0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine);
+                       k.pg([[-0.12, 0.10], [0.12, 0.10], [0.08, 0.28], [-0.08, 0.28]], "#8a6a4a"); k.ci(0, 0.19, 0.05, PAL.stone); },
+  /* a recurve: limbs bellying forward, tips flicking back, grip and arrow rest
+     at the centre, string running tip to tip and nocked at the arrow. */
+  bow:          k => { k.rpg([[0.10, -0.35], [0.22, -0.24], [0.27, -0.08], [0.27, 0.08], [0.22, 0.24], [0.10, 0.35],
+                              [0.16, 0.33], [0.32, 0.14], [0.34, 0.00], [0.32, -0.14], [0.16, -0.33]],
+                             PAL.wood, 0.05);
+                       k.rpg([[0.24, -0.20], [0.30, -0.07], [0.30, 0.07], [0.24, 0.20], [0.27, 0.16], [0.32, 0.00], [0.27, -0.16]], "#a8763f", 0.03);
+                       k.rpg([[0.22, -0.09], [0.34, -0.09], [0.34, 0.09], [0.22, 0.09]], "#5f4326", 0.03);   // the grip
+                       k.rpg([[0.20, -0.03], [0.30, -0.03], [0.30, 0.01], [0.20, 0.01]], "#8a6a3f", 0.01);   // the arrow rest
+                       k.ln(0.10, -0.35, 0.06, 0.00, 0.022, PAL.twine);                                      // string, drawn to the nock
+                       k.ln(0.06, 0.00, 0.10, 0.35, 0.022, PAL.twine);
+                       k.ln(-0.26, 0.00, 0.24, 0.00, 0.028, "#a89060");                                      // the arrow on it
+                       k.tri([-0.26, 0.00], [-0.17, -0.06], [-0.17, 0.06], PAL.linen); },
+  crudebow:     k => { k.pg([[0.02, -0.32], [0.18, -0.06], [0.16, 0.12], [0.04, 0.32], [0.10, 0.28], [0.24, 0.08], [0.24, -0.06], [0.10, -0.28]], "#7f6136");
+                       k.ln(0.02, -0.32, 0.04, 0.32, 0.022, PAL.twine); },
+  /* stock along one axis, prod square across it, bolt lying in the groove */
+  crossbow:     k => { const a = k.ax(-0.34, 0.20, 0.32, -0.10);
+                       a.bar(0.00, 1.00, 0.055, PAL.wood, 0.03);                              // the stock
+                       k.rpg([a.at(0.00, -0.05), a.at(0.16, -0.05), a.at(0.10, 0.20), a.at(-0.02, 0.20)], PAL.woodDk, 0.03);  // the butt
+                       a.bar(0.30, 0.42, 0.085, PAL.woodDk, 0.02);                            // the lock housing
+                       k.rpg([a.at(0.36, 0.06), a.at(0.44, 0.06), a.at(0.42, 0.20), a.at(0.34, 0.19)], PAL.steelDk, 0.02);    // the trigger
+                       k.rpg([a.at(0.74, -0.30), a.at(0.86, -0.28), a.at(0.90, 0.00), a.at(0.86, 0.28), a.at(0.74, 0.30), a.at(0.80, 0.00)],
+                             PAL.woodDk, 0.03);                                               // the prod, square across the stock
+                       k.ln(...a.at(0.80, -0.29), ...a.at(0.38, 0.00), 0.02, PAL.twine);      // string, drawn back to the lock
+                       k.ln(...a.at(0.38, 0.00), ...a.at(0.80, 0.29), 0.02, PAL.twine);
+                       k.ln(...a.at(0.36, 0.00), ...a.at(1.02, 0.00), 0.028, "#a89060");      // the bolt in the groove
+                       k.tri(a.at(1.02, 0.00), a.at(0.90, -0.05), a.at(0.90, 0.05), PAL.steel); },
+  stonespear:   k => { const a = k.ax(-0.28, 0.36, 0.22, -0.30);
+                       a.bar(0.00, 0.82, 0.042, PAL.wood, 0.025);
+                       for (const t of [0.68, 0.78]) a.bar(t, t + 0.045, 0.07, PAL.twine, 0.015);
+                       k.rpg([a.at(0.76, -0.09), a.at(0.90, -0.11), a.at(1.06, 0.00), a.at(0.90, 0.11), a.at(0.76, 0.09)],
+                             PAL.stone, [0.03, 0.04, 0.005, 0.04, 0.03]);
+                       k.rpg([a.at(0.82, -0.06), a.at(1.02, 0.00), a.at(0.82, 0.03)], "#c2bbb0", 0.02); },
+  arrow:        k => { const a = k.ax(-0.30, 0.32, 0.30, -0.32);
+                       a.bar(0.02, 0.88, 0.026, PAL.wood, 0.01);
+                       k.rpg([a.at(0.86, -0.05), a.at(1.00, 0.00), a.at(0.86, 0.05), a.at(0.90, 0.00)], PAL.steel, [0.01, 0.005, 0.01, 0.01]);
+                       for (const s of [-1, 1])                                               // fletching, both sides of the shaft
+                         k.rpg([a.at(0.02, s * 0.02), a.at(0.06, s * 0.10), a.at(0.20, s * 0.09), a.at(0.22, s * 0.02)], PAL.linen, 0.02);
+                       a.bar(0.00, 0.04, 0.035, "#c2a86a", 0.01); },                          // the nock
+  bolt:         k => { const a = k.ax(-0.26, 0.28, 0.26, -0.26);
+                       a.bar(0.06, 0.84, 0.04, PAL.wood, 0.015);
+                       k.rpg([a.at(0.82, -0.07), a.at(1.02, 0.00), a.at(0.82, 0.07), a.at(0.88, 0.00)], PAL.steel, [0.01, 0.005, 0.01, 0.01]);
+                       for (const s of [-1, 1])
+                         k.rpg([a.at(0.06, s * 0.03), a.at(0.08, s * 0.11), a.at(0.20, s * 0.10), a.at(0.22, s * 0.03)], PAL.iron, 0.02); },
+
+  /* ---------- materials, parts, oddments ---------- */
+  /* a split billet lying at an angle, thick enough to read as a log, with the
+     grain darkening along its length and the sawn end turned toward you. */
+  wood:         k => { const a = k.ax(-0.32, 0.20, 0.34, -0.14);
+                       a.bar(0.06, 1.00, 0.155, PAL.wood, 0.045);
+                       for (const [s, c] of [[-0.09, "#9c7040"], [0.02, "#7a5429"], [0.10, "#63431f"]])   // grain, running with the log
+                         k.ln(...a.at(0.10, s), ...a.at(0.97, s), 0.028, c);
+                       k.el(...a.at(0.06), 0.105, 0.155, "#a8763f");                       // the sawn end
+                       k.el(...a.at(0.06), 0.065, 0.098, "#8a6134");
+                       k.el(...a.at(0.06), 0.028, 0.042, PAL.woodDk); },
+  /* a bundle of gathered sticks, each with a stub of a side branch and a broken end */
+  stick:        k => { for (const [x1, y1, x2, y2, c] of [
+                         [-0.30, 0.32, -0.16, -0.30, "#8a6a3f"], [-0.06, 0.34, 0.14, -0.26, "#7a5c34"],
+                         [0.12, 0.30, 0.30, -0.32, "#96764a"]]) {
+                         const a = k.ax(x1, y1, x2, y2);
+                         a.bar(0.00, 1.00, 0.036, c, 0.02);
+                         k.ln(...a.at(0.42, 0.00), ...a.at(0.58, 0.13), 0.022, c);           // a stub of side branch
+                         k.rpg([a.at(0.97, -0.045), a.at(1.03, -0.02), a.at(1.00, 0.045), a.at(0.95, 0.02)], "#c9ab7c", 0.01);   // the broken end
+                       } },
+  rope:         k => { for (const [y, c] of [[0.18, "#a8905a"], [0.06, PAL.rope], [-0.06, "#a8905a"], [-0.18, PAL.rope]]) {
+                         k.el(0, y, 0.30, 0.09, c);
+                         k.el(0, y, 0.13, 0.045, "#7f6a42"); }
+                       k.ln(0.26, -0.22, 0.36, -0.34, 0.045, PAL.rope); },
+  /* offcuts from the forge: angular scrap, plus one rolled ball among them */
+  ore:          k => { k.rpg([[-0.28, 0.14], [-0.20, 0.00], [-0.04, 0.06], [-0.06, 0.20], [-0.20, 0.24]], PAL.iron, 0.025);
+                       k.rpg([[0.04, 0.08], [0.16, 0.02], [0.26, 0.12], [0.18, 0.23], [0.06, 0.20]], "#7d8288", 0.025);
+                       k.rpg([[-0.10, -0.20], [0.06, -0.24], [0.14, -0.10], [0.02, -0.02], [-0.12, -0.06]], PAL.iron, 0.025);
+                       k.rpg([[-0.08, -0.17], [0.02, -0.20], [0.06, -0.12], [-0.06, -0.09]], "#9aa0a6", 0.02);
+                       k.ci(0.21, -0.13, 0.105, "#8a9096");                                 // the one round piece
+                       k.ci(0.18, -0.17, 0.042, "#b4bac0");
+                       k.ci(-0.24, -0.02, 0.05, "#5f646a"); },
+  /* a handful of fixings: a cog, a bolt with its thread and head, a washer and
+     a couple of loose nuts — small parts you'd tip out of a tin */
+  hardware:     k => { const cog = (cx2, cy2, r, teeth, c, cd) => {                     // a proper toothed wheel
+                         for (let i = 0; i < teeth; i++) {
+                           const a = (i / teeth) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+                           k.rpg([[cx2 + ca * r * 0.86 - sa * r * 0.20, cy2 + sa * r * 0.86 + ca * r * 0.20],
+                                  [cx2 + ca * r * 1.24 - sa * r * 0.14, cy2 + sa * r * 1.24 + ca * r * 0.14],
+                                  [cx2 + ca * r * 1.24 + sa * r * 0.14, cy2 + sa * r * 1.24 - ca * r * 0.14],
+                                  [cx2 + ca * r * 0.86 + sa * r * 0.20, cy2 + sa * r * 0.86 - ca * r * 0.20]], c, 0.012);
+                         }
+                         k.ci(cx2, cy2, r, c); k.ci(cx2, cy2, r * 0.62, cd); k.ci(cx2, cy2, r * 0.30, c);
+                       };
+                       cog(-0.16, -0.10, 0.15, 8, PAL.steelDk, "#4a5058");
+                       k.rrc(-0.02, 0.10, 0.30, 0.09, PAL.steel, 0.02);                 // the bolt's shank
+                       for (const x of [0.04, 0.10, 0.16, 0.22]) k.ln(x, 0.10, x, 0.19, 0.016, "#8f979f");   // its thread
+                       k.rpg([[-0.10, 0.06], [-0.02, 0.05], [-0.02, 0.24], [-0.10, 0.23]], PAL.iron, 0.02);  // its head
+                       k.ci(0.19, -0.11, 0.115, "#8a9096"); k.ci(0.19, -0.11, 0.052, "#4a5058");             // a washer
+                       for (const [x, y, r] of [[0.05, -0.20, 0.062], [0.31, 0.03, 0.055]]) {                // loose nuts
+                         const pts = [];
+                         for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + 0.5; pts.push([x + Math.cos(a) * r, y + Math.sin(a) * r]); }
+                         k.rpg(pts, PAL.iron, 0.012); k.ci(x, y, r * 0.42, "#4a5058");
+                       } },
+  /* a length of pipe with flanged collars at both ends and a bolted joint */
+  pipe:         k => { k.rrc(-0.30, -0.09, 0.60, 0.19, PAL.steelDk, 0.03);
+                       k.rrc(-0.30, -0.07, 0.60, 0.06, "#a3abb3", 0.02);                    // the highlight along the top
+                       k.rrc(-0.30, 0.04, 0.60, 0.04, "#5f666d", 0.015);                    // and the shadow below
+                       for (const x of [-0.36, 0.26]) {
+                         k.rrc(x, -0.16, 0.11, 0.33, PAL.steel, 0.025);                     // the flanges
+                         k.rrc(x + 0.015, -0.13, 0.08, 0.10, "#d2d8de", 0.02);
+                       }
+                       k.rrc(-0.05, -0.13, 0.10, 0.27, PAL.steel, 0.02);                    // the joint collar
+                       for (const y of [-0.09, 0.06]) k.ci(0.00, y, 0.028, "#5f666d");      // its bolts
+                       k.el(-0.30, 0.00, 0.035, 0.095, "#727980"); },                       // the bore, seen end-on
+  /* a hose nozzle: threaded collar at the inlet, a knurled grip, a tapering
+     body and a spray head with the jets fanning out of it */
+  nozzle:       k => { k.rrc(-0.38, -0.09, 0.10, 0.18, PAL.steel, 0.02);                        // the inlet collar
+                       for (const y of [-0.07, -0.01, 0.05]) k.ln(-0.38, y, -0.28, y, 0.022, "#8f979f");   // its thread
+                       k.rpg([[-0.29, -0.11], [-0.13, -0.14], [-0.13, 0.14], [-0.29, 0.11]], PAL.steelDk, 0.02);
+                       for (const x of [-0.27, -0.23, -0.19, -0.15]) k.ln(x, -0.13, x, 0.13, 0.018, "#5f666d");   // knurling
+                       k.rpg([[-0.13, -0.14], [0.10, -0.10], [0.10, 0.10], [-0.13, 0.14]], PAL.steelDk, 0.025);   // the body, tapering
+                       k.rpg([[-0.12, -0.11], [0.09, -0.07], [0.09, -0.01], [-0.12, -0.04]], "#a3abb3", 0.02);    // a highlight along it
+                       k.rrc(0.10, -0.13, 0.09, 0.26, PAL.steel, 0.025);                        // the head
+                       k.rrc(0.19, -0.09, 0.06, 0.18, "#8f979f", 0.02);                         // the spray plate
+                       for (const [y, dy] of [[-0.06, -0.05], [0.00, 0.00], [0.06, 0.05]]) {    // the jets, fanning
+                         k.ln(0.25, y, 0.36, y + dy, 0.026, "#a8d4e8");
+                         k.ci(0.38, y + dy * 1.3, 0.022, "#cfe6f4");
+                       }
+                       k.rpg([[-0.06, 0.10], [0.04, 0.12], [0.02, 0.26], [-0.08, 0.24]], "#c05a4a", 0.025); },   // the trigger
+  /* a heating element: one wire switching back on itself in a flat serpentine,
+     glowing hottest at the middle of the run, screwed to a mounting plate. */
+  heatcoil:     k => { k.rrc(-0.34, 0.20, 0.68, 0.13, PAL.steelDk, 0.03);                    // the base plate
+                       for (const x of [-0.28, 0.24]) k.ci(x, 0.265, 0.032, "#9aa3ac");      // its screws
+                       /* one wire, traced as a single connected run so the bends actually
+                          join the verticals instead of floating over them */
+                       const top = -0.26, bot = 0.17, xs = [-0.24, -0.08, 0.08, 0.24];
+                       const path = [[xs[0], bot], [xs[0], top], [xs[1], top], [xs[1], bot],
+                                     [xs[2], bot], [xs[2], top], [xs[3], top], [xs[3], bot]];
+                       for (const [w, cols] of [[0.062, null], [0.030, ["#e2683c", "#f0a04c", "#f4c26a"]]])
+                         for (let i = 0; i < path.length - 1; i++) {
+                           const [x1, y1] = path[i], [x2, y2] = path[i + 1];
+                           k.ln(x1, y1, x2, y2, w, cols ? cols[Math.min(i, 6) % 3] : "#8e3a2c");
+                         }
+                       for (const [x, y] of path) k.ci(x, y, 0.031, "#8e3a2c");                 // round the corners off
+                       k.ci(-0.08, -0.05, 0.036, "#f7d68e"); k.ci(0.08, 0.00, 0.030, "#f7d68e"); },   // where it glows hardest
+  frame:        k => { k.rc(-0.30, -0.28, 0.60, 0.56, PAL.wood); k.rc(-0.22, -0.20, 0.44, 0.40, "#cfe0ea");
+                       k.tri([-0.22, 0.20], [-0.02, -0.08], [0.14, 0.20], PAL.green); },
+  stamp:        k => { k.rc(-0.28, -0.24, 0.56, 0.48, PAL.paper);
+                       k.rc(-0.20, -0.16, 0.40, 0.32, "#c05a4a"); k.ci(0, 0, 0.09, PAL.paper); },
+  paint:        k => { k.rc(-0.32, -0.10, 0.64, 0.30, "#c8bda4");
+                       for (const [i, c] of [[0, "#c0403c"], [1, "#3c6ac0"], [2, "#d8a93c"], [3, "#4a8a46"]])
+                         k.ci(-0.22 + i * 0.15, 0.02, 0.055, c);
+                       k.ln(0.20, -0.12, 0.30, -0.34, 0.035, PAL.wood); },
+  candle:       k => { k.rc(-0.09, -0.14, 0.18, 0.36, PAL.linen); k.rc(-0.16, 0.20, 0.32, 0.10, PAL.steelDk);
+                       k.ln(0, -0.14, 0, -0.20, 0.02, PAL.ink); k.tri([0, -0.36], [-0.07, -0.20], [0.07, -0.20], PAL.flame); },
+  whistle:      k => { k.pg([[-0.34, -0.12], [0.22, -0.09], [0.22, 0.09], [-0.34, 0.12]], "#c9a45e");
+                       k.pg([[-0.34, -0.12], [-0.22, -0.09], [-0.22, 0.09], [-0.34, 0.12]], "#8a6a34");   // mouthpiece
+                       k.pg([[0.22, -0.09], [0.34, -0.16], [0.34, 0.16], [0.22, 0.09]], "#a8853f");        // flared bell
+                       for (const x of [-0.10, 0.02, 0.13]) k.ci(x, 0.00, 0.038, "#5f4520"); },
+  /* Drawn back to front: the far rim, then the shell, the tension cords, the near
+     rim, and only then the drum head — which was previously buried under the shell. */
+  drum:         k => { k.el(0, 0.14, 0.30, 0.11, "#8a3c32");                                 // the bottom rim, behind everything
+                       k.rc(-0.30, -0.12, 0.60, 0.26, "#c05a4a");                            // the shell
+                       k.rpg([[0.12, -0.14], [0.30, -0.14], [0.30, 0.16], [0.12, 0.16]], "#a34738", 0.02);   // its shaded side
+                       for (const x of [-0.20, -0.04, 0.12])                                 // the tensioning cords, in a zigzag
+                         { k.ln(x, -0.10, x + 0.09, 0.12, 0.022, PAL.linen); k.ln(x + 0.09, 0.12, x + 0.17, -0.10, 0.022, PAL.linen); }
+                       k.el(0, 0.14, 0.30, 0.10, "#9c4438");                                 // the near bottom hoop
+                       k.el(0, -0.12, 0.30, 0.11, "#a34738");                                // the top hoop
+                       k.el(0, -0.13, 0.27, 0.095, PAL.linen);                               // the head, on top where it belongs
+                       k.el(-0.08, -0.15, 0.10, 0.035, "#fdfaf2");
+                       for (const s of [-1, 1]) k.ln(s * 0.16, -0.30, s * 0.05, -0.15, 0.028, PAL.wood);   // the beaters
+                       for (const s of [-1, 1]) k.ci(s * 0.17, -0.31, 0.045, PAL.woodDk); },
+  toy:          k => { k.ci(0, -0.16, 0.13, "#c9a45e"); k.rc(-0.14, -0.04, 0.28, 0.22, "#a8763f");
+                       k.ci(-0.10, 0.24, 0.06, PAL.woodDk); k.ci(0.10, 0.24, 0.06, PAL.woodDk); },
+  birdhouse:    k => { k.tri([0, -0.34], [-0.30, -0.04], [0.30, -0.04], "#a8563c");
+                       k.rc(-0.24, -0.04, 0.48, 0.32, PAL.wood); k.ci(0, 0.06, 0.09, "#3a2f24");
+                       k.ln(0, 0.14, 0, 0.30, 0.035, PAL.woodDk); },
+  tie:          k => { k.pg([[-0.26, -0.34], [-0.09, -0.30], [0.09, -0.30], [0.26, -0.34], [0.14, -0.20], [-0.14, -0.20]], "#e8e2d0");  // collar
+                       k.pg([[-0.10, -0.28], [0.10, -0.28], [0.13, -0.14], [-0.13, -0.14]], "#3f3158");                                    // knot
+                       k.pg([[-0.09, -0.12], [0.09, -0.12], [0.15, 0.18], [0.00, 0.34], [-0.15, 0.18]], "#5f4a86");
+                       k.ln(-0.08, 0.00, 0.10, 0.10, 0.032, "#8a76b0"); k.ln(-0.06, 0.14, 0.08, 0.22, 0.032, "#8a76b0"); },
+  ring:         k => { k.ci(0, 0.10, 0.21, "#8a7440"); k.ci(0, 0.10, 0.13, "#2f2a22");
+                       k.tri([0, -0.32], [-0.14, -0.12], [0.14, -0.12], "#a8d0e2");
+                       k.tri([-0.14, -0.12], [0.14, -0.12], [0, 0.02], "#6f9cb4"); },
+  /* a rounded river cobble — worn, not chipped */
+  rock:         k => { k.blob(0.00, 0.02, 0.27, 0.24, PAL.stone, 6, 0.07, 0.5);
+                       k.blob(-0.06, -0.05, 0.15, 0.12, "#b4aca1", 5, 0.10, 1.2);            // where the light sits
+                       k.blob(0.05, 0.14, 0.16, 0.09, PAL.stoneDk, 5, 0.09, 2.4);            // and where it doesn't
+                       k.ci(0.12, -0.08, 0.028, "#b8b0a5"); },
+  /* a box seen from the corner: front face, side face in shadow, lid on top,
+     which is what gives it its depth. */
+  goodie_crate: k => { k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.10, 0.24], [-0.30, 0.30]], PAL.wood, 0.02);        // front
+                       k.rpg([[0.10, -0.16], [0.32, -0.06], [0.32, 0.26], [0.10, 0.24]], "#6f4d29", 0.02);          // side, turned away
+                       k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.32, -0.06], [-0.08, 0.02]], "#a8763f", 0.02);       // lid
+                       k.rpg([[-0.29, 0.04], [0.09, -0.03], [0.09, 0.07], [-0.29, 0.14]], PAL.woodDk, 0.015);       // banding
+                       k.rpg([[0.11, -0.03], [0.31, 0.06], [0.31, 0.15], [0.11, 0.07]], "#54381e", 0.015);
+                       k.rpg([[-0.13, -0.11], [-0.05, -0.13], [-0.05, 0.27], [-0.13, 0.29]], PAL.woodDk, 0.01); },  // the upright slat
+  /* the same box, but built well: tighter boards, gold banding and a clasp */
+  shiny_crate:  k => { k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.10, 0.24], [-0.30, 0.30]], "#a8783e", 0.02);
+                       k.rpg([[0.10, -0.16], [0.32, -0.06], [0.32, 0.26], [0.10, 0.24]], "#835a2b", 0.02);
+                       k.rpg([[-0.30, -0.08], [0.10, -0.16], [0.32, -0.06], [-0.08, 0.02]], "#c99a54", 0.02);
+                       k.rpg([[-0.28, -0.06], [0.08, -0.13], [0.08, -0.07], [-0.28, 0.00]], "#e0b878", 0.01);       // a polished grain line
+                       k.rpg([[-0.29, 0.04], [0.09, -0.03], [0.09, 0.08], [-0.29, 0.15]], PAL.gold, 0.015);         // gilt banding
+                       k.rpg([[0.11, -0.03], [0.31, 0.06], [0.31, 0.16], [0.11, 0.08]], "#b8912e", 0.015);
+                       k.rpg([[-0.29, -0.08], [-0.21, -0.10], [-0.21, 0.29], [-0.29, 0.30]], PAL.gold, 0.01);       // corner straps
+                       k.rpg([[0.02, -0.10], [0.10, -0.12], [0.10, 0.25], [0.02, 0.26]], PAL.gold, 0.01);
+                       k.rrc(-0.14, 0.02, 0.11, 0.11, "#f0d488", 0.02); k.ci(-0.085, 0.075, 0.028, "#8a6a1e"); },   // the clasp
+  /* A hide pegged out flat to cure — read from above, not head-on. The four leg
+     flaps go to the four corners where they belong, the pale underside runs the
+     length of it rather than sitting in the middle like a face, and the tail is
+     offset. Symmetry down the middle is what made the old one look like a bear. */
+  pelt:         k => { for (const [x, y, w, h] of [[-0.30, -0.20, 0.13, 0.10], [0.30, -0.20, 0.13, 0.10],           // the four legs
+                                                  [-0.27, 0.19, 0.12, 0.11], [0.28, 0.17, 0.12, 0.11]])
+                         k.rpg([[x - w, y - h], [x + w, y - h * 0.4], [x + w * 0.8, y + h], [x - w * 0.9, y + h * 0.7]], "#7a5530", 0.05);
+                       k.rpg([[-0.26, -0.14], [-0.06, -0.28], [0.16, -0.24], [0.29, -0.06], [0.26, 0.13],
+                              [0.08, 0.27], [-0.14, 0.24], [-0.28, 0.08]],
+                             "#8a6238", [0.13, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13, 0.13]);
+                       k.rpg([[-0.19, -0.10], [0.02, -0.19], [0.19, -0.13], [0.16, 0.06], [0.00, 0.17], [-0.19, 0.09]],
+                             "#c2a077", 0.11);                                                                      // the pale underside, run off-centre
+                       k.rpg([[-0.13, -0.06], [0.05, -0.13], [0.12, -0.05], [0.02, 0.08], [-0.12, 0.03]], "#d8bc94", 0.09);
+                       k.rpg([[0.24, 0.14], [0.36, 0.24], [0.30, 0.31], [0.20, 0.22]], "#7a5530", 0.05); },          // the tail, off to one side
+  /* a bolt of finished cloth hanging in a wave, not a flat board */
+  finefiber:    k => { k.rpg([[-0.30, -0.28], [0.30, -0.28], [0.30, -0.18], [-0.30, -0.18]], "#a8996f", 0.02);       // the rail
+                       k.rpg([[-0.26, -0.22], [-0.08, -0.24], [0.10, -0.20], [0.28, -0.23],
+                              [0.26, 0.24], [0.08, 0.29], [-0.10, 0.24], [-0.28, 0.28]],
+                             "#efe7d2", [0.04, 0.06, 0.06, 0.04, 0.06, 0.10, 0.10, 0.06]);                          // the sheet, waving
+                       for (const [x, c] of [[-0.17, "#dcd0b2"], [0.01, "#f6f0e0"], [0.19, "#dcd0b2"]])             // folds running down it
+                         k.rpg([[x - 0.05, -0.22], [x + 0.05, -0.21], [x + 0.06, 0.26], [x - 0.04, 0.27]], c, 0.03);
+                       k.rpg([[-0.28, 0.14], [-0.09, 0.10], [0.09, 0.15], [0.28, 0.11], [0.27, 0.19], [0.08, 0.23], [-0.10, 0.18], [-0.28, 0.22]],
+                             "#d8ccae", 0.04); },                                                                    // the shadow in the trough of the wave
+  cloth:        k => { k.pg([[-0.34, 0.06], [-0.34, -0.16], [0.24, -0.30], [0.24, -0.08]], "#6f8fae");
+                       k.pg([[-0.34, 0.06], [0.24, -0.08], [0.24, 0.16], [-0.34, 0.30]], "#5f7d9c");
+                       k.pg([[0.24, -0.30], [0.34, -0.24], [0.34, 0.10], [0.24, 0.16]], "#4f6b88"); },
+
+  /* ---------- medicine ---------- */
+  /* a stoppered bottle of tonic with a labelled cross, and a dose beside it */
+  medicine:     k => { k.rrc(-0.09, -0.36, 0.18, 0.08, "#8a6a4a", 0.02);                    // the cork
+                       k.rpg([[-0.06, -0.29], [0.06, -0.29], [0.06, -0.21], [0.16, -0.11], [0.16, 0.30], [-0.16, 0.30], [-0.16, -0.11], [-0.06, -0.21]],
+                             "#cfe0d4", [0.02, 0.02, 0.02, 0.05, 0.06, 0.06, 0.05, 0.02]);  // the glass
+                       k.rpg([[-0.13, 0.00], [0.13, 0.00], [0.13, 0.27], [-0.13, 0.27]], "#b8404a", [0.02, 0.02, 0.05, 0.05]);   // the tonic in it
+                       k.rrc(-0.13, 0.05, 0.26, 0.15, "#efe7d2", 0.02);                     // the label
+                       k.rrc(-0.025, 0.075, 0.05, 0.11, "#b8404a", 0.008);                  // its cross
+                       k.rrc(-0.075, 0.105, 0.15, 0.05, "#b8404a", 0.008);
+                       k.rpg([[-0.12, -0.16], [-0.04, -0.19], [-0.03, -0.05], [-0.11, -0.02]], "#eaf2ec", 0.02);   // a glint on the shoulder
+                       k.ci(0.25, 0.19, 0.09, "#e8dcc0"); k.ci(0.25, 0.19, 0.045, "#b8404a"); },                   // one pill alongside
+  bandage:      k => { k.pg([[-0.36, 0.16], [-0.20, -0.12], [0.20, -0.24], [0.36, -0.02], [0.20, 0.26], [-0.20, 0.32]], "#efe0c4");
+                       k.pg([[-0.16, -0.10], [0.14, -0.19], [0.19, 0.00], [-0.11, 0.11]], "#dcc79a");      // the pad
+                       for (const [x, y] of [[-0.06, -0.09], [0.04, -0.12], [-0.03, 0.00], [0.07, -0.03]]) k.ci(x, y, 0.024, "#b89a68");
+                       k.ln(-0.34, 0.12, -0.22, 0.28, 0.05, "#e2d0ac"); },
+  salve:        k => { k.rc(-0.20, -0.16, 0.40, 0.40, "#cfe0d4"); k.rc(-0.24, -0.24, 0.48, 0.10, "#8a7a5a");
+                       k.rc(-0.14, -0.02, 0.28, 0.20, "#7f9a5c"); },
+
+  /* ---------- garments (drawn as the piece, not a person wearing it) ---------- */
+  sun_hat:      k => { k.el(0, 0.10, 0.38, 0.14, "#e2c882"); k.el(0, 0.02, 0.18, 0.16, "#efdca4");
+                       k.rc(-0.18, 0.02, 0.36, 0.06, "#c2a05a"); },
+  /* a flat cap: soft crown slouched forward over a stiff peak */
+  cloth_cap:    k => { k.rpg([[-0.30, 0.06], [-0.24, -0.14], [-0.02, -0.24], [0.20, -0.16], [0.28, 0.06]],
+                             "#6f7f8c", [0.08, 0.12, 0.12, 0.12, 0.08]);
+                       k.rpg([[-0.24, -0.10], [-0.03, -0.20], [0.16, -0.13], [0.00, -0.04]], "#84939f", 0.09);   // the lit panel
+                       k.rrc(-0.30, 0.03, 0.58, 0.07, "#53606b", 0.03);                                          // the headband
+                       k.rpg([[-0.30, 0.05], [-0.42, 0.09], [-0.40, 0.17], [-0.26, 0.13]], "#53606b", 0.04); },  // the peak
+  /* knitted, so nothing on it is straight: a soft dome with a rolled brim and the
+     face opening cut round out of it. */
+  wool_hood:    k => { k.rpg([[-0.29, 0.24], [-0.26, -0.12], [-0.14, -0.27], [0.00, -0.31], [0.14, -0.27], [0.26, -0.12], [0.29, 0.24], [0.13, 0.15], [-0.13, 0.15]],
+                             "#a86a5a", [0.13, 0.14, 0.13, 0.13, 0.13, 0.14, 0.13, 0.12, 0.12]);
+                       k.rpg([[-0.25, -0.10], [-0.13, -0.24], [0.00, -0.28], [0.13, -0.24], [0.25, -0.10], [0.20, -0.02], [0.00, -0.08], [-0.20, -0.02]],
+                             "#bd7f6c", 0.11);                                              // the lit crown
+                       k.el(0, 0.01, 0.145, 0.16, "#d8c0a8");                                // the face opening
+                       k.el(0, 0.01, 0.115, 0.13, "#c2a68d");
+                       for (const s of [-1, 1])                                              // the rolled brim, either side
+                         k.rpg([[s * 0.13, 0.11], [s * 0.29, 0.19], [s * 0.28, 0.26], [s * 0.12, 0.18]], "#8f5548", 0.06);
+                       for (const y of [-0.16, -0.05]) k.ln(-0.20, y, 0.20, y - 0.01, 0.018, "#96594c"); },   // two courses of knitting
+  hunter_hat:   k => { k.el(0, 0.14, 0.36, 0.11, "#5f4a34"); k.pg([[-0.18, 0.14], [-0.14, -0.24], [0.14, -0.24], [0.18, 0.14]], "#6f5a3e");
+                       k.rc(-0.19, 0.02, 0.38, 0.07, "#3f3324"); k.tri([0.10, -0.02], [0.28, -0.16], [0.14, -0.14], "#c2a05a"); },
+  guard_helm:   k => { k.pg([[-0.26, 0.16], [-0.22, -0.14], [0.00, -0.30], [0.22, -0.14], [0.26, 0.16]], PAL.steel);
+                       k.rc(-0.05, -0.28, 0.10, 0.40, PAL.steelDk); k.pg([[-0.26, 0.16], [0.26, 0.16], [0.22, 0.24], [-0.22, 0.24]], PAL.steelDk); },
+  summer_tunic: k => { k.pg([[-0.30, -0.16], [-0.12, -0.26], [0.12, -0.26], [0.30, -0.16], [0.22, -0.02], [0.24, 0.28], [-0.24, 0.28], [-0.22, -0.02]], "#8ac0b0");
+                       k.pg([[-0.10, -0.26], [0.10, -0.26], [0.00, -0.12]], "#6fa392"); },
+  work_shirt:   k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.24, 0.02], [0.26, 0.30], [-0.26, 0.30], [-0.24, 0.02]], "#5f7f9c");
+                       k.ln(0, -0.20, 0, 0.30, 0.035, "#4a6880");
+                       for (const y of [-0.06, 0.06, 0.18]) k.ci(0, y, 0.028, "#e8e2d0"); },
+  leather_coat: k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.26, 0.30], [-0.26, 0.30]], "#7a4f2c");
+                       k.pg([[-0.10, -0.24], [0.10, -0.24], [0.06, 0.30], [-0.06, 0.30]], "#5f3c20");
+                       k.rc(-0.28, 0.10, 0.56, 0.07, "#4a2f18"); },
+  winter_jacket:k => { k.pg([[-0.34, -0.12], [-0.12, -0.26], [0.12, -0.26], [0.34, -0.12], [0.28, 0.30], [-0.28, 0.30]], "#3f5f7a");
+                       for (const y of [-0.06, 0.06, 0.18]) k.rc(-0.26, y, 0.52, 0.06, "#527a98");
+                       k.el(0, -0.22, 0.16, 0.07, "#d8c4a8"); },
+  guard_mail:   k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.26, 0.30], [-0.26, 0.30]], PAL.steelDk);
+                       for (let r = 0; r < 4; r++) for (let c2 = 0; c2 < 5; c2++)
+                         k.ci(-0.20 + c2 * 0.10, -0.14 + r * 0.11, 0.033, r % 2 ? PAL.steel : "#9aa3ac"); },
+  light_shorts: k => { k.pg([[-0.26, -0.22], [0.26, -0.22], [0.24, 0.02], [0.06, 0.16], [-0.06, 0.16], [-0.24, 0.02]], "#c9b78a");
+                       k.rc(-0.26, -0.24, 0.52, 0.07, "#a89468"); k.ln(0, -0.10, 0, 0.16, 0.02, "#a89468"); },
+  work_trous:   k => { k.pg([[-0.26, -0.26], [0.26, -0.26], [0.22, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.22, 0.32]], "#4a5f7a");
+                       k.rc(-0.26, -0.28, 0.52, 0.07, "#38495e"); },
+  winter_trous: k => { k.pg([[-0.27, -0.26], [0.27, -0.26], [0.23, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.23, 0.32]], "#3a4a5e");
+                       k.rc(-0.27, -0.28, 0.54, 0.07, "#2c3a4a");
+                       k.rc(-0.20, 0.20, 0.14, 0.06, "#7f9ab0"); k.rc(0.06, 0.20, 0.14, 0.06, "#7f9ab0"); },
+  leather_legs: k => { k.pg([[-0.26, -0.26], [0.26, -0.26], [0.22, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.22, 0.32]], "#6f4728");
+                       k.rc(-0.26, -0.28, 0.52, 0.07, "#4a2f18"); k.rc(-0.22, 0.04, 0.10, 0.08, "#8a5f34"); },
+  guard_greaves:k => { k.pg([[-0.24, -0.24], [-0.04, -0.24], [-0.06, 0.30], [-0.22, 0.30]], PAL.steel);
+                       k.pg([[0.04, -0.24], [0.24, -0.24], [0.22, 0.30], [0.06, 0.30]], PAL.steel);
+                       for (const y of [-0.10, 0.04, 0.18]) { k.rc(-0.24, y, 0.20, 0.05, PAL.steelDk); k.rc(0.04, y, 0.20, 0.05, PAL.steelDk); } },
+
+  /* ---------- the rest of the wardrobe: shared cuts, their own colours ---------- */
+  /* a square of cloth folded to a triangle and knotted — the fold runs across
+     the top, the point hangs at the back, the tails trail off one side */
+  /* worn on the head: cloth over the crown, gathered to a knot at one side,
+     with the folded point hanging behind it */
+  head_scarf:   k => { k.rpg([[-0.27, 0.02], [-0.22, -0.16], [0.00, -0.26], [0.22, -0.16], [0.27, 0.02], [0.16, 0.10], [-0.16, 0.10]],
+                             "#efe7d2", [0.08, 0.12, 0.12, 0.12, 0.08, 0.06, 0.06]);
+                       k.rpg([[-0.21, -0.10], [0.00, -0.21], [0.18, -0.11], [0.00, -0.02]], "#f8f4e8", 0.09);   // where the light sits
+                       k.rrc(-0.27, 0.00, 0.54, 0.07, "#e0d6b8", 0.03);                                         // the folded edge
+                       k.rpg([[0.18, 0.00], [0.30, -0.04], [0.34, 0.06], [0.22, 0.09]], "#dbd0b0", 0.045);      // the knot
+                       k.rpg([[0.27, 0.05], [0.37, 0.12], [0.30, 0.24], [0.21, 0.14]], "#e6dcc2", 0.05);        // the tail hanging from it
+                       k.rpg([[-0.14, 0.08], [0.10, 0.08], [0.00, 0.30]], "#e0d6b8", 0.06); },                  // the point, behind
+  knit_beanie:  k => { k.rpg([[-0.26, 0.06], [-0.22, -0.16], [0.00, -0.28], [0.22, -0.16], [0.26, 0.06]], "#5f7f9c", [0.08, 0.12, 0.12, 0.12, 0.08]);
+                       k.rrc(-0.28, 0.04, 0.56, 0.13, "#44607a", 0.05);                     // the turn-up
+                       for (const x of [-0.16, -0.05, 0.06, 0.17]) k.ln(x, -0.20, x, 0.03, 0.02, "#4e6b85");
+                       k.ci(0, -0.30, 0.075, "#44607a"); },                                  // the bobble
+  /* an ushanka: domed crown, a thick fur band round the brow, flaps tied up */
+  /* domed crown with a shaggy fur band pulled down over the brow, and the ear
+     flaps hanging either side of it rather than floating free */
+  fur_cap:      k => { for (const s of [-1, 1])                                              // flaps first, behind the crown
+                         k.rpg([[s * 0.16, -0.02], [s * 0.30, -0.02], [s * 0.28, 0.20], [s * 0.14, 0.20]], "#5c4028", [0.04, 0.08, 0.09, 0.05]);
+                       k.rpg([[-0.26, 0.00], [-0.22, -0.18], [0.00, -0.29], [0.22, -0.18], [0.26, 0.00]],
+                             "#6b4a2e", [0.08, 0.13, 0.13, 0.13, 0.08]);
+                       k.rpg([[-0.19, -0.12], [0.00, -0.23], [0.17, -0.13], [0.00, -0.04]], "#8a6238", 0.09);   // the lit crown
+                       k.blob(0.00, 0.05, 0.28, 0.10, "#a8815a", 9, 0.22, 0.3);              // the fur band
+                       k.blob(-0.11, 0.03, 0.10, 0.055, "#c2a077", 6, 0.26, 1.4);
+                       k.blob(0.13, 0.06, 0.085, 0.05, "#c2a077", 6, 0.26, 2.6); },
+  linen_shirt:  k => SH.gShirt(k, "#efe7d2", "#cfc3a4"),
+  sun_dress:    k => SH.gDress(k, "#f4dcd8", "#d8b0aa"),
+  airy_vest:    k => SH.gVest(k, "#dbe6e8", "#adc3c8"),
+  flannel:      k => { SH.gShirt(k, "#8a5a5a", "#6a4040");                                   // a check over the shirt blank
+                       for (const x of [-0.20, -0.08, 0.10, 0.20]) k.ln(x, -0.20, x, 0.28, 0.022, "#6a4040");
+                       for (const y of [-0.14, -0.02, 0.10, 0.22]) k.ln(-0.28, y, 0.28, y, 0.022, "#6a4040"); },
+  waistcoat:    k => SH.gVest(k, "#3f5f7a", "#2c465c"),
+  day_dress:    k => SH.gDress(k, "#5f7f9c", "#44607a"),
+  wool_coat:    k => SH.gCoat(k, "#3f4a3a", "#2c3529", true),
+  quilt_vest:   k => SH.gQuilt(k, "#4a3f5f", "#352c45"),
+  /* ---------- the wild: drawn, not borrowed from a font ---------- */
+  beast_hare:   k => { k.rpg([[-0.06, -0.30], [0.02, -0.34], [0.06, -0.16], [-0.02, -0.12]], "#8a7358", 0.03);   // ears, back one first
+                       k.rpg([[0.06, -0.31], [0.14, -0.33], [0.14, -0.14], [0.06, -0.12]], "#a89070", 0.03);
+                       k.rpg([[0.08, -0.29], [0.12, -0.30], [0.12, -0.17], [0.08, -0.16]], "#d8bda0", 0.02);
+                       k.blob(-0.06, 0.06, 0.24, 0.19, "#a89070", 7, 0.09, 0.4);                                 // the crouched body
+                       k.blob(-0.20, 0.10, 0.10, 0.08, "#efe7d2", 5, 0.16, 1.1);                                 // the scut
+                       k.rpg([[0.02, -0.14], [0.18, -0.16], [0.22, 0.02], [0.06, 0.06]], "#b8a084", 0.07);        // head
+                       k.rpg([[0.16, -0.08], [0.24, -0.05], [0.24, 0.02], [0.16, 0.02]], "#c9b498", 0.04);        // muzzle
+                       k.ci(0.14, -0.06, 0.032, "#20262b"); k.ci(0.235, -0.015, 0.018, "#6b4a3a");               // eye, nose
+                       k.rpg([[-0.10, 0.18], [0.06, 0.16], [0.08, 0.26], [-0.10, 0.27]], "#8a7358", 0.05);        // haunch
+                       k.rpg([[0.06, 0.20], [0.20, 0.19], [0.20, 0.26], [0.06, 0.26]], "#a89070", 0.03); },       // forelegs
+  beast_stag:   k => { for (const s of [-1, 1]) {                                                                 // antlers
+                         k.ln(0.02 + s * 0.05, -0.20, 0.02 + s * 0.12, -0.40, 0.032, "#c2a878");
+                         k.ln(0.02 + s * 0.09, -0.30, 0.02 + s * 0.20, -0.34, 0.026, "#c2a878");
+                         k.ln(0.02 + s * 0.11, -0.36, 0.02 + s * 0.19, -0.44, 0.026, "#c2a878");
+                       }
+                       k.rpg([[-0.30, -0.02], [-0.06, -0.10], [0.14, -0.06], [0.16, 0.10], [-0.08, 0.16], [-0.30, 0.10]],
+                             "#6d4a2c", [0.09, 0.09, 0.07, 0.07, 0.09, 0.09]);                                    // body
+                       k.rpg([[-0.24, -0.04], [-0.06, -0.09], [0.06, -0.05], [-0.10, 0.02]], "#83593a", 0.06);    // its lit back
+                       k.ln(0.06, -0.04, 0.04, -0.22, 0.075, "#6d4a2c");                                          // neck
+                       k.rpg([[-0.04, -0.30], [0.10, -0.28], [0.16, -0.14], [0.00, -0.14]], "#7a5330", [0.06, 0.06, 0.05, 0.05]);
+                       k.rpg([[0.10, -0.24], [0.20, -0.20], [0.18, -0.13], [0.09, -0.15]], "#8a6238", 0.04);      // muzzle
+                       k.ci(0.05, -0.23, 0.03, "#20262b"); k.ci(0.185, -0.17, 0.018, "#3a2a20");
+                       for (const [x, sk] of [[-0.22, 0.02], [-0.10, -0.01], [0.04, 0.01], [0.12, -0.02]])        // legs
+                         k.ln(x, 0.10, x + sk, 0.34, 0.036, "#5c3e24");
+                       k.rpg([[-0.30, -0.01], [-0.36, -0.12], [-0.29, 0.06]], "#efe7d2", 0.03); },                // tail
+
+  /* ---------- civic upgrades ---------- */
+  up_lamps:     k => { k.rrc(-0.09, 0.24, 0.18, 0.09, "#4a4a44", 0.02);                                           // base
+                       k.ln(0, 0.26, 0, -0.10, 0.045, "#5f5f56");                                                 // post
+                       k.rpg([[-0.15, -0.10], [0.15, -0.10], [0.10, -0.26], [-0.10, -0.26]], "#e8c46a", [0.03, 0.03, 0.04, 0.04]);
+                       k.rpg([[-0.10, -0.13], [0.10, -0.13], [0.07, -0.23], [-0.07, -0.23]], "#fbe9a8", 0.03);    // the lit glass
+                       k.rrc(-0.13, -0.31, 0.26, 0.06, "#4a4a44", 0.02);                                          // the cap
+                       for (const s of [-1, 1]) k.ln(s * 0.04, -0.34, s * 0.16, -0.30, 0.02, "#e8c46a"); },       // the glow
+  up_roads:     k => { k.rpg([[-0.20, -0.30], [0.20, -0.30], [0.34, 0.30], [-0.34, 0.30]], "#5f5f5a", 0.02);      // the road, in perspective
+                       k.rpg([[-0.19, -0.30], [-0.15, -0.30], [-0.27, 0.30], [-0.33, 0.30]], "#a8a49a", 0.01);    // kerbs
+                       k.rpg([[0.15, -0.30], [0.19, -0.30], [0.33, 0.30], [0.27, 0.30]], "#a8a49a", 0.01);
+                       for (const [y, h, w] of [[-0.24, 0.09, 0.020], [-0.06, 0.12, 0.028], [0.14, 0.15, 0.038]])
+                         k.rrc(-w, y, w * 2, h, "#efe7d2", 0.008); },                                             // centre dashes
+  up_clinic:    k => { k.rpg([[-0.28, -0.06], [0.00, -0.30], [0.28, -0.06], [0.28, 0.28], [-0.28, 0.28]], "#e8e2d4", [0.03, 0.05, 0.03, 0.04, 0.04]);
+                       k.rpg([[-0.28, -0.06], [0.00, -0.30], [0.28, -0.06], [0.00, -0.14]], "#c9c2b2", 0.04);     // the roof
+                       k.rrc(-0.05, -0.02, 0.10, 0.24, "#c04a4a", 0.02);                                          // the cross
+                       k.rrc(-0.12, 0.05, 0.24, 0.10, "#c04a4a", 0.02); },
+
+  /* ---------- campaign promises ---------- */
+  pl_taxcut:    k => { k.rrc(-0.32, -0.30, 0.06, 0.58, "#8a8478", 0.02);                                          // the axes
+                       k.rrc(-0.32, 0.22, 0.62, 0.06, "#8a8478", 0.02);
+                       for (const [i, h] of [0.34, 0.24, 0.15, 0.08].entries())
+                         k.rrc(-0.20 + i * 0.13, 0.22 - h, 0.09, h, "#7fa9c4", 0.015);                            // bars, falling
+                       k.ln(-0.22, -0.16, 0.20, 0.06, 0.038, "#4e8a4e");                                          // the trend line
+                       k.rpg([[0.22, 0.08], [0.10, 0.06], [0.20, -0.04]], "#4e8a4e", 0.02); },                    // its arrowhead
+  pl_build:     k => { k.rrc(-0.30, 0.22, 0.60, 0.08, "#8a8478", 0.02);                                           // ground
+                       k.rrc(-0.26, -0.06, 0.24, 0.28, "#c9a45e", 0.02);                                          // a built storey
+                       k.rrc(-0.22, 0.00, 0.07, 0.08, "#7a6a4a", 0.01); k.rrc(-0.11, 0.00, 0.07, 0.08, "#7a6a4a", 0.01);
+                       k.rrc(-0.26, -0.14, 0.24, 0.08, "#e0bb78", 0.02);                                          // the one going up
+                       k.ln(0.10, 0.22, 0.10, -0.30, 0.04, "#c05a4a");                                            // the crane
+                       k.ln(0.10, -0.28, 0.32, -0.28, 0.04, "#c05a4a");
+                       k.ln(0.30, -0.26, 0.30, -0.12, 0.018, "#5f5f56");
+                       k.rrc(0.24, -0.12, 0.12, 0.10, "#8a6a3f", 0.02); },                                        // the load
+  pl_safety:    k => { k.rpg([[0, -0.32], [0.28, -0.20], [0.26, 0.06], [0, 0.32], [-0.26, 0.06], [-0.28, -0.20]],
+                             "#5f7f9c", [0.04, 0.05, 0.05, 0.05, 0.05, 0.05]);
+                       k.rpg([[0, -0.25], [0.21, -0.16], [0.20, 0.04], [0, 0.24], [-0.20, 0.04], [-0.21, -0.16]],
+                             "#7fa4c4", [0.04, 0.05, 0.05, 0.05, 0.05, 0.05]);
+                       k.ln(-0.11, -0.02, -0.02, 0.10, 0.045, "#efe7d2");                                         // the tick
+                       k.ln(-0.03, 0.10, 0.13, -0.12, 0.045, "#efe7d2"); },
+  pl_charity:   k => { k.rrc(-0.30, -0.10, 0.60, 0.16, "#c05a76", 0.02);                                          // the lid
+                       k.rrc(-0.25, 0.06, 0.50, 0.24, "#d86a8a", 0.02);                                           // the box
+                       k.rrc(-0.06, -0.12, 0.12, 0.42, "#f0dc72", 0.015);                                         // ribbon
+                       k.rrc(-0.31, -0.06, 0.62, 0.06, "#f0dc72", 0.015);
+                       for (const s of [-1, 1])                                                                   // the bow
+                         k.rpg([[0, -0.12], [s * 0.16, -0.24], [s * 0.20, -0.13], [s * 0.05, -0.09]], "#f0dc72", 0.04); },
+  pl_clean:     k => { k.blob(0.02, 0.02, 0.24, 0.17, "#f4f1e8", 7, 0.10, 0.5);                                   // the body
+                       k.rpg([[-0.16, -0.04], [0.10, -0.12], [0.16, 0.02], [-0.10, 0.10]], "#e2ddd0", 0.06);      // the wing
+                       k.rpg([[0.18, -0.06], [0.32, -0.10], [0.34, 0.02], [0.20, 0.06]], "#f8f6ef", 0.05);        // head
+                       k.ci(0.27, -0.04, 0.022, "#3a352c");
+                       k.tri([0.33, -0.02], [0.40, 0.00], [0.33, 0.03], "#d8a93c");                               // beak
+                       k.rpg([[-0.22, 0.00], [-0.34, -0.08], [-0.30, 0.10], [-0.18, 0.08]], "#e2ddd0", 0.05);     // tail
+                       k.rpg([[0.02, 0.14], [0.14, 0.12], [0.10, 0.22]], "#8aa06a", 0.02); },                     // the olive sprig
+
+  linen_skirt:  k => SH.gSkirt(k, "#efe7d2", "#cfc3a4"),
+  canvas_skirt: k => SH.gSkirt(k, "#7a8a5a", "#5c6b3f"),
+  wool_skirt:   k => SH.gSkirt(k, "#5f3f4a", "#452c34"),
+  crop_trous:   k => SH.gTrous(k, "#f2e2cc", "#d4bb98", 0.10),
+  corduroys:    k => { SH.gTrous(k, "#8a6a4a", "#6a4e33");                                   // the wale, running down
+                       for (const x of [-0.18, -0.12, 0.12, 0.18]) k.ln(x, -0.18, x, 0.28, 0.016, "#6a4e33"); },
+  padded_trous: k => { SH.gTrous(k, "#3a3f52", "#282c3b");
+                       for (const y of [-0.12, 0.00, 0.12, 0.24]) { k.rrc(-0.22, y, 0.19, 0.045, "#282c3b", 0.02); k.rrc(0.03, y, 0.19, 0.045, "#282c3b", 0.02); } },
+};
+
+/* Furniture already had proper art — it just lived in drawFurnitureArt, which
+   paints from a tile's top-left rather than in icon space. Rather than redraw a
+   dozen pieces, register each one as an icon that calls straight through. They
+   are deliberately NOT in the studio: it carries the icon kit, not this painter,
+   so it could list them but never let you edit them. */
+for (const fid of Object.keys(FURNITURE))
+  ICON_ART["furn_" + fid] = k => k.host((c, x, y, T) => drawFurnitureArt(c, fid, x, y, T));
+
+/* Draw any object at (cx,cy) with T as its full width. Used both for the little
+   icons in lists and for things lying on the ground in the world. */
+function drawItemIcon(ctx, id, cx, cy, T) {
+  const art = ICON_ART[id];
+  const k = iconKit(ctx, cx, cy, T);
+  if (art) { art(k); return true; }
+  k.rc(-0.30, -0.24, 0.60, 0.50, "#8c8577");        // the missing-art crate: loud on purpose
+  k.rc(-0.24, -0.18, 0.48, 0.38, "#b0a89a");
+  return false;
+}
+
+/* Icons appear by the hundred in an inventory or a shop list, and a live canvas
+   per row is a waste. Each (id,size) is painted once into an offscreen canvas
+   and kept as a data URL, so the second Bread costs an <img> and nothing more. */
+const ICON_CACHE = new Map();
+function itemIconURL(id, px = 22) {
+  const dpr = Math.min(3, Math.max(1, Math.round(window.devicePixelRatio || 1)));
+  const key = `${id}@${px}@${dpr}`;
+  const hit = ICON_CACHE.get(key);
+  if (hit) return hit;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = px * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  drawItemIcon(ctx, id, px / 2, px / 2, px);
+  const url = cv.toDataURL();
+  ICON_CACHE.set(key, url);
+  return url;
+}
+
+/* The icon slot used everywhere in the UI. Keeps the item's name as the alt and
+   the tooltip, so the art never costs you the ability to tell what a thing is. */
+const ItemIcon = ({ id, size = 22, style = null }) => {
+  const nm = (ITEMS[id] || GARMENTS[id] || {}).name || id;
+  return (
+    <img src={itemIconURL(id, size)} width={size} height={size} alt={nm} title={nm} draggable={false}
+      style={{ display: "inline-block", verticalAlign: "middle", flex: "0 0 auto", ...(style || {}) }} />
+  );
+};
+
+/* =====================================================================
+   Clothing does not stack, so it cannot be listed like flour. A row per
+   KIND folds open into the individual pieces you own, each with its own
+   condition — the only honest way to show three work shirts at 92%, at
+   40%, and torn through. Actions apply to the piece you picked, never to
+   "one of those".
+   ===================================================================== */
+const condWord = (pc) => pc.t ? "torn through" : `${pieceCondition(pc)}%`;
+const condTint = (pc) => pc.t ? "#a05252" : pieceCondition(pc) < 30 ? "#b07a3a" : "#6b8f5e";
+const ClothingRows = ({ pieces, wornSet, fs, empty, action }) => {
+  const [open, setOpen] = useState({});
+  const kinds = {};
+  for (const pc of pieces) (kinds[pc.g] = kinds[pc.g] || []).push(pc);
+  const ids = Object.keys(kinds).filter(id => GARMENTS[id])
+    .sort((a, b) => GARMENTS[a].name.localeCompare(GARMENTS[b].name));
+  if (!ids.length) return <div style={{ ...S.folkCard, opacity: 0.7 }}>{empty}</div>;
+  return <>{ids.map(id => {
+    const G = GARMENTS[id];
+    const list = kinds[id].slice().sort((a, b) => (a.t - b.t) || (a.w - b.w));   // soundest first
+    const shown = open[id];
+    const best = list[0], sound = list.filter(p => !p.t).length, holed = list.length - sound;
+    // the body is a flex column, so without flex:0 0 auto these rows get
+    // squashed and clip their own second line
+    return (
+      <div key={id} style={{ ...S.folkCard, padding: 0, overflow: "hidden", flex: "0 0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", cursor: list.length ? "pointer" : "default" }}
+          onClick={() => setOpen(o => ({ ...o, [id]: !o[id] }))}>
+          <ItemIcon id={id} size={20} />
+          <span style={{ flex: 1, fontSize: fs - 1, minWidth: 0 }}>
+            <b>{G.name}</b> <span style={{ opacity: 0.6 }}>×{list.length}</span>
+            <br />
+            <span style={{ opacity: 0.65, fontSize: fs - 3 }}>
+              {G.slot} · {G.wear} · best <span style={{ color: condTint(best) }}>{condWord(best)}</span>
+              {holed > 0 && <span style={{ color: "#a05252" }}> · {holed} torn</span>}
+            </span>
+          </span>
+          <span style={{ opacity: 0.5, fontSize: fs + 2, transform: shown ? "rotate(90deg)" : "none", transition: "transform .12s" }}>›</span>
+        </div>
+        {shown && <div style={{ borderTop: "1px solid #0001", background: "#0000000a" }}>
+          {list.map((pc, i) => {
+            const on = wornSet?.has(pc.u);
+            return (
+              <div key={pc.u} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 6px 34px" }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, flex: "0 0 auto",
+                  background: colourway(id, pc.c)[0], border: "1px solid #0003" }} />
+                <span style={{ flex: 1, fontSize: fs - 2, minWidth: 0 }}>
+                  #{i + 1} · <span style={{ color: condTint(pc) }}>{condWord(pc)}</span>
+                  {on && <span style={{ opacity: 0.7 }}> · worn</span>}
+                </span>
+                {action?.(pc, on)}
+              </div>
+            );
+          })}
+        </div>}
+      </div>
+    );
+  })}</>;
+};
+
 let USER_API_KEY = "";
 const setUserApiKey = (k) => { USER_API_KEY = (k || "").trim(); };
 
@@ -3155,11 +4416,11 @@ const invLine = (ent) => {
 // drink, and medicine counts, so the director can nudge the under-provisioned to stock up.
 /* Stage 17: what someone has on, and whether it actually suits the day — read by every brain */
 const wearLine = (ent, felt) => {
-  const worn = (ent.worn || []).map(id => `${GARMENTS[id].name}${ent.wornTorn?.[id] ? " (TORN)" : ""}`);
+  const worn = wornPieces(ent).map(pc => `${GARMENTS[pc.g].name}${pc.t ? " (TORN)" : ""}`);
   const st = tempStress(felt);
   const verdict = st.cold ? "and they are COLD in it" : st.hot ? "and they are OVERHEATING in it" : "and it suits the weather";
   const fav = ent.favorite && GARMENTS[ent.favorite] ? `; favourite: ${GARMENTS[ent.favorite].name}` : "";
-  const owns = (ent.wardrobe || []).length ? `. Wardrobe: ${ent.wardrobe.map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}` : "";
+  const owns = kitOf(ent).length ? `. Wardrobe: ${ownedIds(ent).map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}` : "";
   return `${worn.length ? worn.join(", ") : "little more than rags"} — ${verdict}${fav}${owns}`;
 };
 const provisionLine = (ent) => {
@@ -3890,8 +5151,8 @@ export default function Alderbrook() {
       hygiene: 65 + (i * 5) % 30, health: 100, alive: true, wanted: 0,
       // Stage 17/21: dressed from the very first morning, out of a wardrobe they actually own —
       // a set for the heat, one for the cold, everyday clothes between, and a favourite.
-      ...(() => { const w = startingWardrobe(def); return { wardrobe: w.wardrobe, favorite: w.favorite,
-        worn: dressForSeason({ ...def, ...w }, seasonOf(1), SEASONS[seasonOf(1)].base), wornTorn: {}, wornWear: {} }; })(),
+      ...(() => { const w = startingWardrobe(def); return { kit: w.kit, favorite: w.favorite,
+        worn: dressForSeason({ ...def, ...w }, seasonOf(1), SEASONS[seasonOf(1)].base) }; })(),
       legs: [], path: [], goal: null, activity: "starting the day", hidden: false,
       bubble: null, lastGreet: -999, mood: "neutral",
       evicted: false, vagrantWarned: false,             // Stage 3: rent debt + the officer's one free pass
@@ -3935,12 +5196,16 @@ export default function Alderbrook() {
       time: CFG.START_HOUR * 60, day: 1,
       player: { scene: "t:alderbrook", x: bld("home_p").door.x, y: bld("home_p").door.y, home: "home_p",   // home was never set — furniture stations checked p.home and always failed
         hunger: 85, thirst: 85, energy: 95, hygiene: 90, health: 100, alive: true,
-        coins: CFG.START_COINS, inv: { bread: 1, water: 1, cloth_cap: 1, summer_tunic: 1, light_shorts: 1, wool_hood: 1, winter_jacket: 1 }, fame: 0, renown: 0,
+        coins: CFG.START_COINS, inv: { bread: 1, water: 1 }, fame: 0, renown: 0,
         /* Stage 21: you arrive with a packed bag, not one shirt — everyday clothes on your back,
-           and something for the heat and the cold folded in the pack. */
-        worn: ["work_shirt", "work_trous"], wornTorn: {}, wornWear: {},
-        wardrobe: ["work_shirt", "work_trous", "cloth_cap", "summer_tunic", "light_shorts", "wool_hood", "winter_jacket"],
-        favorite: "work_shirt",
+           and something for the heat and the cold folded in the pack. Clothes live in the kit,
+           never in `inv`: each piece is its own thing with its own wear. */
+        ...(() => {
+          const kit = ["work_shirt", "work_trous", "cloth_cap", "linen_shirt", "summer_tunic", "light_shorts",
+                       "crop_trous", "wool_hood", "winter_jacket", "winter_trous"].map((g, i) => newPiece(g, 6151 + i * 4093));
+          const on = [kit[0].u, kit[1].u];
+          return { kit, worn: on, favorite: "work_shirt" };
+        })(),
         wanted: 0, bedrest: false, incap: null, dying: null, sick: null, hospitalBill: 0,
         evicted: false, vagrantWarned: false,           // Stage 3
         name: "",                                       // Stage 10: what you call yourself — blank until you say
@@ -4016,6 +5281,7 @@ export default function Alderbrook() {
       taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
       campaign: sim.campaign, pledges: sim.pledges, press: sim.press, debate: sim.debate,
       season: sim.season, weather: sim.weather,   // Stage 16: the year and the sky
+      party: sim.party || null,                   // a booked do survives a reload — you paid for the catering
       apiUsage: { calls: API_USAGE.calls, inTok: API_USAGE.inTok, outTok: API_USAGE.outTok, feat: API_USAGE.feat },
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
@@ -4024,8 +5290,7 @@ export default function Alderbrook() {
         hygiene: n.hygiene, health: n.health, alive: n.alive, wanted: n.wanted,
         coins: n.coins, inv: n.inv, fame: n.fame, renown: n.renown, sick: n.sick, skills: n.skills,
         expertise: n.expertise, domainXp: n.domainXp,
-        worn: n.worn, wornTorn: n.wornTorn, wornWear: n.wornWear,   // Stage 17: the wardrobe travels with the save
-        wardrobe: n.wardrobe, favorite: n.favorite,                 // Stage 21: what they own, and what they love
+        worn: n.worn, kit: n.kit, favorite: n.favorite,             // every piece they own, each with its own wear
         furniture: n.furniture, stored: n.stored, chest: n.chest,
         occupation: n.occupation, work: n.work,
         home: n.home, evicted: !!n.evicted, vagrantWarned: !!n.vagrantWarned,
@@ -4074,6 +5339,10 @@ export default function Alderbrook() {
     sim.approval = { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start, ...(data.approval || {}) };
     sim.tradeQueue = data.tradeQueue || [];
     sim.foragedAt = data.foragedAt || {};
+    /* A party outlived nothing: it was never written to the save, so booking one and
+       reloading (autosave runs every 45s) lost the do AND the catering you paid for,
+       while the invited still had you down as hosting. It persists now. */
+    sim.party = data.party || null;
     // the meter is cumulative across sessions — a save carries what it has already spent
     if (data.apiUsage) {
       API_USAGE.calls = data.apiUsage.calls || 0;
@@ -4083,12 +5352,10 @@ export default function Alderbrook() {
     }
     sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
     sim.weather = data.weather || { kind: "clear", day: sim.day };
-    // Stage 17: pre-wardrobe saves get dressed on the way in
-    for (const n of sim.npcs) {
-      if (!n.wardrobe?.length) { const w = startingWardrobe(n); n.wardrobe = w.wardrobe; n.favorite = n.favorite || w.favorite; }
-      n.worn = n.worn?.length ? n.worn : dressForSeason(n, sim.season, outdoorTemp(sim));
-      n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
-    }
+    /* NOTE: the wardrobe conversion CANNOT run here — the player and the NPCs
+       have not had their saved data copied onto them yet at this point, so it
+       would convert the fresh new-game entities and then be overwritten. It
+       runs at the very end of this function instead. */
     // the wild reloads as it was standing: position and wounds, no memory of who it was chasing
     sim.beasts = (data.beasts || []).filter(b => BEAST_SPECIES[b.sp])
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
@@ -4157,6 +5424,14 @@ export default function Alderbrook() {
       if (!n.work) n.work = freshWork;
       if (!n.knownGossip) n.knownGossip = [];
       if (n.work?.bId && n.work.station) n.work.station = validStation(n.work.bId, n.work.station);
+    }
+    /* LAST, once everyone actually carries their saved data: turn old-shape
+       wardrobes into individual pieces, hand a kit to anyone who somehow has
+       none, and dress anybody who came in with nothing on. */
+    for (const ent of [sim.player, ...sim.npcs]) {
+      migrateWardrobe(ent);
+      if (!kitOf(ent).length) { const w = startingWardrobe(ent); ent.kit = w.kit; ent.favorite = ent.favorite || w.favorite; }
+      if (!(ent.worn || []).length) ent.worn = dressForSeason(ent, sim.season, outdoorTemp(sim));
     }
     syncPlacements(sim, worldRef.current);               // stand owned furniture up in its rooms (auto-slot legacy saves)
   };
@@ -5169,14 +6444,13 @@ export default function Alderbrook() {
     ent.health = clamp(ent.health - soaked, 0, 100);
     // taking hits is hard on what you're wearing — that's how good kit ends up torn
     if (tough > 0 && Math.random() < 0.34) {
-      const hit = (ent.worn || []).filter(id => !ent.wornTorn?.[id] && (GARMENTS[id]?.tough || 0) > 0);
+      const hit = wornPieces(ent).filter(pc => !pc.t && (GARMENTS[pc.g]?.tough || 0) > 0);
       if (hit.length) {
-        const id = rand(hit);
-        ent.wornWear = ent.wornWear || {};
-        ent.wornWear[id] = (ent.wornWear[id] || 0) + amount * 1.6;
-        if (ent.wornWear[id] >= (GARMENTS[id]?.dur || 100)) {
-          (ent.wornTorn = ent.wornTorn || {})[id] = true;
-          if (!ent.id) showToast(`🧵 Your ${GARMENTS[id].name} is torn apart by the blow.`);
+        const pc = rand(hit);
+        pc.w += amount * 1.6;
+        if (pc.w >= pieceMax(pc) && !pc.t) {
+          pc.t = true;
+          if (!ent.id) showToast(`🧵 Your ${GARMENTS[pc.g].name} is torn apart by the blow.`);
         }
       }
     }
@@ -6818,22 +8092,27 @@ export default function Alderbrook() {
       if (!tt.served && (!stn || dist(npc, stn) < 2.4)) {
         tt.served = true;
         const felt = feltTemp(sim, npc);
-        const torn = (npc.worn || []).filter(id => npc.wornTorn[id]);
+        const torn = kitOf(npc).filter(pc => pc.t);      // everything they own that's holed, not just what's on
         let spent = 0, note = "";
-        for (const id of torn) {                        // mending first — it's what they came for
+        for (const pc of torn) {                         // mending first — it's what they came for
           if (npc.coins < CFG.TAILOR.patchFee) break;
           npc.coins -= CFG.TAILOR.patchFee; spent += CFG.TAILOR.patchFee;
-          delete npc.wornTorn[id]; npc.wornWear[id] = (GARMENTS[id].dur || 100) * 0.35;
-          note = `had their ${GARMENTS[id].name.toLowerCase()} patched`;
+          pc.t = false; pc.w = pieceMax(pc) * 0.35;
+          note = `had their ${GARMENTS[pc.g].name.toLowerCase()} patched`;
         }
         if (!torn.length) {                              // nothing torn — then it's the weather they came about
           const band = felt <= 6 ? "winter" : felt >= 24 ? "summer" : "medium";
-          const want = garmentsOfBand(band).find(id => GARMENTS[id].slot === "torso") || null;
+          /* something they don't already own, so a shopping trip actually widens
+             the wardrobe instead of buying a fourth identical shirt */
+          const have = new Set(ownedIds(npc));
+          const rack = garmentsOfBand(band).filter(id => GARMENTS[id].slot === "torso");
+          const want = rack.find(id => !have.has(id)) || rack[0] || null;
           if (want && npc.coins >= (ITEMS[want]?.price || 99)) {
             npc.coins -= ITEMS[want].price; spent += ITEMS[want].price;
             takeStock(sim, TAILOR_BID, want);            // off the rack if there's one on it
-            const old = wornInSlot(npc, "torso");
-            npc.worn = [...(npc.worn || []).filter(x => x !== old), want];
+            const pc = newPiece(want, hash32(npc.id + want + sim.day));
+            npc.kit = [...kitOf(npc), pc];
+            wearPiece(npc, pc.u);
             note = `bought a ${GARMENTS[want].name.toLowerCase()}`;
           }
         }
@@ -7036,24 +8315,27 @@ export default function Alderbrook() {
      paid for it), because a torn coat in a snowstorm is a problem they'd actually solve. */
   const applyWearChoice = (sim, n, plan) => {
     if (!plan || !n.alive) return;
-    n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
-    if (!n.wardrobe?.length) { const w = startingWardrobe(n); n.wardrobe = w.wardrobe; n.favorite = n.favorite || w.favorite; }
+    n.worn = n.worn || [];
+    if (!kitOf(n).length) { const w = startingWardrobe(n); n.kit = w.kit; n.favorite = n.favorite || w.favorite; }
     // Stage 21: the day may have changed what they love — but only to something they own
-    if (plan.favourite && n.wardrobe.includes(plan.favourite) && plan.favourite !== n.favorite) {
+    if (plan.favourite && ownedIds(n).includes(plan.favourite) && plan.favourite !== n.favorite) {
       n.favorite = plan.favourite;
       n.memories = [...n.memories, `Grown fond of my ${GARMENTS[plan.favourite].name.toLowerCase()}`].slice(-CFG.MAX_MEMORIES);
     }
     const want = plan.wear;
     if (want && want !== "keep") {
-      if (want === "leathers") n.worn = ["hunter_hat", "leather_coat", "leather_legs"];
-      else if (["summer", "medium", "winter"].includes(want) && !n.enforcer) {
+      if (want === "leathers") {
+        const set = ["hunter_hat", "leather_coat", "leather_legs"]
+          .map(g => kitOf(n).find(k => k.g === g && !k.t) || kitOf(n).find(k => k.g === g)).filter(Boolean);
+        if (set.length) n.worn = set.map(k => k.u);
+      } else if (["summer", "medium", "winter"].includes(want) && !n.enforcer) {
         // dress out of their OWN wardrobe at that weight, favourite first when it qualifies
         const temp = want === "winter" ? 0 : want === "summer" ? 28 : 16;
         n.worn = dressForSeason(n, sim.season, temp);
       }
     }
     if (plan.shop) {   // they went and had the torn things replaced
-      for (const id of [...n.worn]) if (n.wornTorn[id]) { delete n.wornTorn[id]; n.wornWear[id] = 0; }
+      for (const pc of kitOf(n)) if (pc.t) { pc.t = false; pc.w = 0; }
       if (n.coins >= 6) n.coins -= 6;
     }
   };
@@ -7821,12 +9103,14 @@ export default function Alderbrook() {
         const t9 = outdoorTemp(sim);
         for (const n of sim.npcs) {
           if (!n.alive) continue;
-          n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
-          /* Stage 19: you re-layer what you OWN for the weather — but torn pieces stay torn.
-             A hole doesn't mend itself overnight; that's what the walk to Ferndale is for. */
-          const torn = (n.worn || []).filter(id => n.wornTorn[id]);
+          n.worn = n.worn || [];
+          migrateWardrobe(n);   // anything gifted or bought yesterday joins the wardrobe properly
+          if (!kitOf(n).length) { const w = startingWardrobe(n); n.kit = w.kit; n.favorite = n.favorite || w.favorite; }
+          /* Stage 19: you re-layer what you OWN for the weather. Dressing already
+             prefers the soundest piece of its kind, so a hole only stays on the
+             body when it's the only thing they have — that's the walk to Ferndale. */
           const want = dressForSeason(n, sim.season, t9);
-          if (want.join() !== n.worn.join()) n.worn = [...new Set([...want, ...torn])].slice(0, 4);
+          if (want.length && want.join() !== n.worn.join()) n.worn = want;
         }
       }
       if (wasSeason !== sim.season) {
@@ -8594,19 +9878,24 @@ export default function Alderbrook() {
     /* a sleepover needs a bed for every guest. The host supplies them, and they're SPENT —
        a sleeping bag is a real thing you hand someone, not a permission flag. */
     const homeId = thrower.id ? thrower.home : "home_p";
+    let bedrolls = 0;
     if (K.overnight) {
       const have = thrower.inv?.bedroll || 0;
       if (have < guests.length) return { ok: false, cost, needBedrolls: guests.length - have, guests: guests.length };
+      bedrolls = guests.length;
       thrower.inv.bedroll -= guests.length;
       if (thrower.inv.bedroll <= 0) delete thrower.inv.bedroll;
     }
     fineCoins(thrower, cost);
     const late = (sim.time / 60) % 24 >= (K.overnight ? 22 : CFG.PARTY.lateCutoffH);   // too late to cater today
+    // cost and bedrolls are kept so calling it off early can hand them back
     sim.party = { kind, throwerId: throwerKey, town, day: late ? sim.day + 1 : sim.day,
-      dinner, dessert, drink, distributed: false, homeId,
+      dinner, dessert, drink, distributed: false, homeId, cost, bedrolls,
       guestIds: guests.map(g => g.id),
       decor: K.decor && homeId ? makeDecor(sim, world, homeId) : null };
-    sim.buzz = { text: `${thrower.id ? thrower.name : "The player"} is throwing a party at the ${TOWN_DEFS[town].name} plaza ${late ? "TOMORROW night" : "tonight"}!`, day: sim.day };
+    // a house do or a sleepover happens at the host's place, not out on the plaza
+    const venue = (K.at || "plaza") === "home" ? `${thrower.id ? `${thrower.name}'s place` : "their place"}` : `the ${TOWN_DEFS[town].name} plaza`;
+    sim.buzz = { text: `${thrower.id ? thrower.name : "The player"} is throwing a party at ${venue} ${late ? "TOMORROW" : "today"}!`, day: sim.day };
     sim.dayLog = [...sim.dayLog, `${thrower.id ? thrower.name : playerLabel()} announced a party (${ITEMS[dinner].name}, ${ITEMS[dessert].name})`].slice(-12);
     for (const n of sim.npcs) {
       if (!n.alive || n.jailedUntil || n.town === town) continue;
@@ -8766,19 +10055,22 @@ export default function Alderbrook() {
         p.hunger = clamp(p.hunger - CFG.DECAY.hunger * dtHours * stress.hunger, 0, 100);
         p.thirst = clamp(p.thirst - CFG.DECAY.thirst * dtHours * stress.thirst, 0, 100);
         p.energy = clamp(p.energy - CFG.DECAY.energy * dtHours * (dx || dy ? 1.4 : 1) * stress.energy, 0, 100);
-        p.hygiene = clamp(p.hygiene - CFG.HYGIENE.decay * dtHours, 0, 100);
+        /* Torn clothes get filthy fast. Every hole is dirt straight onto skin and
+           one less layer between you and the weather, so each torn piece you have
+           on multiplies how quickly you grubby up. Three holes and you cannot stay
+           presentable at all — which is exactly the pressure to go and get mended. */
+        p.hygiene = clamp(p.hygiene - CFG.HYGIENE.decay * dtHours * tornGrime(p), 0, 100);
         // Stage 17: clothes wear. Walking, working and weather all rub at them; when a piece is
         // used up it TEARS — it keeps you no warmer than a rag and gives no protection at all.
         {
           const wet = (CFG.WEATHER.kinds[sim.weather?.kind] || {}).wet || 0;
           const rub = dtHours * (1 + (dx || dy ? 0.7 : 0) + wet * 0.8);
-          p.wornWear = p.wornWear || {}; p.wornTorn = p.wornTorn || {};
-          for (const id of (p.worn || [])) {
-            if (p.wornTorn[id]) continue;
-            p.wornWear[id] = (p.wornWear[id] || 0) + rub;
-            if (p.wornWear[id] >= (GARMENTS[id]?.dur || 100)) {
-              p.wornTorn[id] = true;
-              sfx.alert(); showToast(`🧵 Your ${GARMENTS[id].name} has torn through — a tailor could patch it.`);
+          for (const pc of wornPieces(p)) {
+            if (pc.t) continue;
+            pc.w += rub;
+            if (pc.w >= pieceMax(pc)) {
+              pc.t = true;
+              sfx.alert(); showToast(`🧵 Your ${GARMENTS[pc.g].name} has torn through — a tailor could patch it.`);
             }
           }
           p.energy = Math.min(p.energy, maxEnergyOf(p));   // armour you're carrying caps what you've got in you
@@ -9011,7 +10303,7 @@ export default function Alderbrook() {
           npc.hunger = clamp(npc.hunger - CFG.DECAY.hunger * CFG.NPC_DECAY_SCALE * dtHours * ns.hunger, 0, 100);
           npc.thirst = clamp(npc.thirst - CFG.DECAY.thirst * CFG.NPC_DECAY_SCALE * dtHours * ns.thirst, 0, 100);
           npc.energy = clamp(npc.energy - CFG.DECAY.energy * CFG.NPC_DECAY_SCALE * dtHours * ns.energy, 0, 100);
-          npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
+          npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours * tornGrime(npc), 0, 100);
           // Stage 3.5: survival damage — same rules as the player, nobody is exempt
           if (npc.jailedUntil) { npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor); npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor); }
           /* WARD SAFETY NET: the hospital feeds its patients too. Without this a bedrest NPC's
@@ -9794,6 +11086,26 @@ export default function Alderbrook() {
     repEvent(sim, t, -2, 0, `${npc.name} publicly humiliated ${named}`);
   };
 
+  /* Stage 13 fix — a party belongs to ONE place. Every kind already declares where
+     it happens (plaza do at the plaza, house do and sleepover at your own place), but
+     the action list used to ignore that and stack all three inside your house, so you
+     walked in and found three overlapping ways to throw a party you couldn't cancel.
+     Now each spot offers only the kinds that live there, and once yours is on the
+     books the same spot offers the way to call it off. Open, and close. */
+  const partyOptions = (out, where) => {
+    const sim = simRef.current;
+    const kinds = Object.entries(CFG.PARTY_KINDS).filter(([, K]) => (K.at || "plaza") === where);
+    if (sim.party) {
+      // only the host can call it off, and only from the spot the do belongs to
+      if (sim.party.throwerId !== "player") return;
+      const K = CFG.PARTY_KINDS[sim.party.kind] || CFG.PARTY_KINDS.plaza;
+      if ((K.at || "plaza") !== where) return;
+      out.push({ id: "partyclose", label: `✖️ Call off your ${K.label.toLowerCase()}` });
+      return;
+    }
+    for (const [k, K] of kinds) out.push({ id: "party", label: `${K.emoji} ${K.label}`, partyKind: k });
+  };
+
   /* =================== CONTEXT ACTIONS =================== */
   const computeActions = (sim, world) => {
     const p = sim.player, out = [];
@@ -9902,6 +11214,7 @@ export default function Alderbrook() {
       // Stage 15: the campaign trail — a rally in the plaza, once a day, while a vote is close
       if (near(town.spots.plaza, 2.2) && campaignSeason(sim) && sim.campaign?.rallyDay !== sim.day)
         out.push({ id: "rally", label: `📣 Hold a campaign rally (${CFG.CAMPAIGN.rallyCost}c)` });
+      if (near(town.spots.plaza, 2.2)) partyOptions(out, "plaza");   // a plaza do is thrown FROM the plaza
       if (near(town.drink, 1.8)) out.push({ id: "drink", label: `💧 Drink (${town.drink.label})` });
       if (near(town.busStop, 1.8)) out.push({ id: "travel", label: "🚌 Mo's Bus — routes & fares" });
       // Stage 3: anyone CAN rough it; only the locked-out or exhausted are offered it
@@ -9961,10 +11274,7 @@ export default function Alderbrook() {
         if (bestStore(p)) out.push({ id: "storage", label: `🔒 Home storage (${p.stored}c stored)` });
         if (p.furniture.includes("chest")) out.push({ id: "chest", label: "🧰 Open storage chest" });
       }
-      if (bId === "home_p" && !sim.party) {   // Stage 13: three different kinds of do, three different evenings
-        for (const [k, K] of Object.entries(CFG.PARTY_KINDS))
-          out.push({ id: "party", label: `${K.emoji} ${K.label}`, partyKind: k });
-      }
+      if (bId === "home_p") partyOptions(out, "home");   // Stage 13: your own place — the house do and the sleepover
       if (bId === "inn" && at("rentbed")) out.push({ id: "rentbed", label: `🛏️ Rent a bed (${CFG.INN_BED}c)` });
       if (bId === "hospital" && at("treat") && p.health < 70)
         out.push({ id: "treat", label: `🩺 Treat wounds (${Math.ceil(CFG.HOSPITAL.walkIn * diff().billMult)}c)` });
@@ -10240,6 +11550,25 @@ export default function Alderbrook() {
       case "storage": setStoragePanel(true); break;   // Stage 4: deposit/withdraw cash
       case "chest": setChestPanel(true); break;        // Stage 4: item storage
       case "party": setPartyPanel({ kind: a.partyKind || "plaza", chosen: [], dinner: PARTY_MENU.dinner[0], dessert: PARTY_MENU.dessert[0], drink: PARTY_MENU.drink[0] }); break;
+      case "partyclose": {   // calling it off — catering back if nobody's arrived, word gets round either way
+        const pt = sim.party;
+        if (!pt || pt.throwerId !== "player") break;
+        const K = CFG.PARTY_KINDS[pt.kind] || CFG.PARTY_KINDS.plaza;
+        const hr = (sim.time / 60) % 24;
+        const started = pt.day < sim.day || (pt.day === sim.day && hr >= K.hour);
+        if (!started) {
+          p.coins += pt.cost || 0;                       // the caterer hadn't started
+          if (K.overnight && pt.bedrolls) p.inv.bedroll = (p.inv.bedroll || 0) + pt.bedrolls;
+        }
+        for (const n of sim.npcs) if (n.visitPlan?.party && n.visitPlan.targetId === "player") n.visitPlan = null;
+        sim.party = null;
+        sim.buzz = { text: `${playerLabel()} has called off the ${K.label.toLowerCase()}.`, day: sim.day };
+        sim.dayLog = [...sim.dayLog, `${playerLabel()} called off their ${K.label.toLowerCase()}`].slice(-12);
+        showToast(started
+          ? `✖️ You wind the ${K.label.toLowerCase()} down early. Word gets round.`
+          : `✖️ Called off. ${pt.cost || 0}c of catering back${K.overnight && pt.bedrolls ? ` and ${pt.bedrolls} sleeping bag${pt.bedrolls === 1 ? "" : "s"}` : ""}.`);
+        bump(); break;
+      }
       case "caseboard": setCaseBoard(true); break;
       case "interview": {
         const bossN = keeperOf(sim, p.scene.slice(2));
@@ -10526,7 +11855,7 @@ export default function Alderbrook() {
         break;
       }
       case "rally": { holdRally(); break; }   // Stage 15: the stump speech
-      case "tailorbench": { setTailorPanel({ tab: "make" }); break; }   // Stage 17: make, mend, and get dressed
+      case "tailorbench": { migrateWardrobe(simRef.current.player); setTailorPanel({ tab: "make" }); break; }   // Stage 17: make, mend, and get dressed
       case "takeorder": {
         const items = Array.from({ length: 2 + Math.floor(Math.random() * 2) }, () => rand(["🍔", "🍟", "🌭", "🥤"]));
         sim.foodOrder = { items, cooked: 0, stage: "cook" };
@@ -10897,26 +12226,29 @@ export default function Alderbrook() {
   };
   const useItem = (itemId) => {
     const p = simRef.current.player, it = ITEMS[itemId];
-    if (itemId === "goodie_crate") {   // Stage 6: open for 3 random items
-      if (!(p.inv.goodie_crate > 0)) return;
-      p.inv.goodie_crate -= 1; if (p.inv.goodie_crate <= 0) delete p.inv.goodie_crate;
+    if (itemId === "goodie_crate" || itemId === "shiny_crate") {   // Stage 6: open for random items
+      const shiny = itemId === "shiny_crate";
+      if (!(p.inv[itemId] > 0)) return;
+      p.inv[itemId] -= 1; if (p.inv[itemId] <= 0) delete p.inv[itemId];
       const pool = Object.keys(ITEMS).filter(id => ITEMS[id].price > 0 && ITEMS[id].cat !== "misc" && !ITEMS[id].contraband && id !== "sludge" && id !== "burnt");
-      /* price-weighted, gently: cheap tat stays common, and something dear is a story. */
-      const wOf = (id) => 1 / Math.pow(ITEMS[id].price, CFG.CRATE.priceWeight);
+      /* price-weighted, gently: cheap tat stays common, and something dear is a story.
+         The gilded crate flattens that curve and draws one extra. */
+      const exp = shiny ? CFG.CRATE.shinyWeight : CFG.CRATE.priceWeight;
+      const wOf = (id) => 1 / Math.pow(ITEMS[id].price, exp);
       const total = pool.reduce((sum, id) => sum + wOf(id), 0);
       const drawOne = () => { let r = Math.random() * total; for (const id of pool) { if ((r -= wOf(id)) <= 0) return id; } return pool[pool.length - 1]; };
       const got = [];
       let best = null;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < (shiny ? CFG.CRATE.shinyDraws : 3); i++) {
         const g = drawOne();
         p.inv[g] = (p.inv[g] || 0) + 1; got.push(ITEMS[g].emoji);
         if (!best || ITEMS[g].price > ITEMS[best].price) best = g;
       }
-      sfx.chime(); showToast(`🎲 Crate opened: ${got.join(" ")}!`);
+      sfx.chime(); showToast(`${shiny ? "🎁 Gilded crate" : "🎲 Crate"} opened: ${got.join(" ")}!`);
       if (ITEMS[best].price >= CFG.CRATE.braggableAt) {   // the pull worth telling someone about
         sfx.coin();
         showToast(`✨ ${ITEMS[best].emoji} ${ITEMS[best].name} — worth ${ITEMS[best].price}c. That's a FIND.`);
-        sim.dayLog = [...sim.dayLog, `${playerLabel()} pulled ${ITEMS[best].name} out of a goodie crate`].slice(-12);
+        sim.dayLog = [...sim.dayLog, `${playerLabel()} pulled ${ITEMS[best].name} out of a ${shiny ? "gilded" : "goodie"} crate`].slice(-12);
       }
       bump(); return;
     }
@@ -12109,10 +13441,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       coins: Math.floor(n.coins), inv: invLine(n), tier: fameTier(n.fame, n.renown),
       health: healthDesc(n.health), wanted: n.wanted, mayor: !!n.mayor,
       // Stage 19: what they've got on, and whether the sky is beating them up in it
-      wearing: (n.worn || []).map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${n.wornTorn?.[id] ? " (torn)" : ""}`).join(", ") || "little to speak of",
+      wearing: wornPieces(n).map(pc => `${GARMENTS[pc.g].emoji} ${GARMENTS[pc.g].name}${pc.t ? " (torn)" : ""}`).join(", ") || "little to speak of",
       felt: feltTemp(sim, n),
       favorite: n.favorite && GARMENTS[n.favorite] ? `${GARMENTS[n.favorite].emoji} ${GARMENTS[n.favorite].name}` : null,
-      wardrobeN: (n.wardrobe || []).length,
+      wardrobeN: kitOf(n).length,
       toYou: n.relationships.player || "neutral",
       memories: [...n.memories], likes: n.likes, dislikes: n.dislikes,
       rels: Object.entries(n.relationships).filter(([id]) => id !== "player")
@@ -12423,37 +13755,86 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const swing = phase * 0.085;
     const stoop = L.stoop;
 
-    const head = wornInSlot(ref, "head"), torso = wornInSlot(ref, "torso"), legs = wornInSlot(ref, "legs");
-    const torn = (id) => id && ref.wornTorn?.[id];
-    const shirtC = torso ? garmentColor(torso, L) : L.shirt;
-    const trousC = legs ? garmentColor(legs, L) : L.trous;
+    /* what they actually have on, as PIECES — each one carries its own colourway,
+       its own pattern and its own tear, so two people in work shirts look different
+       and one person's second shirt looks different from their first. */
+    const headP = wornPieceIn(ref, "head"), torsoP = wornPieceIn(ref, "torso"), legsP = wornPieceIn(ref, "legs");
+    const head = headP?.g, torso = torsoP?.g, legs = legsP?.g;
+    const cutOf = (p) => p && GARMENTS[p.g]?.cut;
+    const tCut = cutOf(torsoP), lCut = cutOf(legsP);
+    const [shirtC, shirtA] = torsoP ? colourway(torso, torsoP.c) : [L.shirt, L.accent];
+    const [trousC, trousA] = legsP ? colourway(legs, legsP.c) : [L.trous, L.accent];
+    const tPat = torsoP ? CLOTH_PATTERNS[torsoP.p % CLOTH_PATTERNS.length] : L.pattern;
+    /* a dress runs on down over the legs, so it paints them too */
+    const gown = GARMENTS[torso]?.covers === "legs";
+    const legC = gown ? shirtC : trousC, legA = gown ? shirtA : trousA;
 
     /* ---- legs (back to front: they sit under the torso) ---- */
-    R(-0.155, 0.10 + stoop, 0.13, 0.30 + swing, trousC);
-    R(0.025, 0.10 + stoop, 0.13, 0.30 - swing, trousC);
+    if (lCut === "skirt" && !gown) {                            // a skirt hangs instead of trouser legs
+      R(-0.20, 0.08 + stoop, 0.40, 0.06, trousC);
+      R(-0.235, 0.14 + stoop, 0.47, 0.20, trousC);
+      if (trousA) R(-0.235, 0.30 + stoop, 0.47, 0.04, trousA);
+      R(-0.135, 0.34 + stoop, 0.10, 0.06 + swing, L.skin);      // bare shins below the hem
+      R(0.035, 0.34 + stoop, 0.10, 0.06 - swing, L.skin);
+    } else {
+      const legLen = (lCut === "shorts" && !gown) ? 0.17 : 0.30;
+      R(-0.155, 0.10 + stoop, 0.13, legLen + swing, legC);
+      R(0.025, 0.10 + stoop, 0.13, legLen - swing, legC);
+      if (legLen < 0.28) {                                      // shorts: the rest of the leg is skin
+        R(-0.145, 0.10 + legLen + stoop, 0.11, 0.30 - legLen + swing, L.skin);
+        R(0.035, 0.10 + legLen + stoop, 0.11, 0.30 - legLen - swing, L.skin);
+      }
+      if (lCut === "quiltlegs" && legA) for (const y of [0.14, 0.24, 0.34])   // padded seams across
+        { R(-0.155, y + stoop, 0.13, 0.03, legA); R(0.025, y + stoop, 0.13, 0.03, legA); }
+      if (lCut === "greaves") { R(-0.16, 0.16 + stoop, 0.14, 0.04, "#a4acb8"); R(0.02, 0.16 + stoop, 0.14, 0.04, "#a4acb8"); }
+    }
     R(-0.165, 0.385 + stoop, 0.15, 0.055, "#3a3128");           // boots
     R(0.015, 0.385 + stoop, 0.15, 0.055, "#3a3128");
-    /* ---- arms, swung opposite the legs ---- */
-    const armC = torso ? shirtC : L.skin;
-    R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, 0.30, armC);
-    R(0.155, -0.11 + stoop + swing * 0.5, 0.10, 0.30, armC);
+    /* ---- arms, swung opposite the legs. Sleeve length is the cut's business ---- */
+    const sleeveless = tCut === "vest" || tCut === "quilt" || tCut === "tunic";
+    const armC = torso ? (sleeveless ? L.skin : shirtC) : L.skin;
+    const sleeve = !torso ? 0 : sleeveless ? 0 : tCut === "longcoat" ? 0.30 : tCut === "dress" ? 0.12 : 0.22;
+    R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, 0.30, L.skin);
+    R(0.155, -0.11 + stoop + swing * 0.5, 0.10, 0.30, L.skin);
+    if (sleeve > 0) {
+      R(-0.255, -0.11 + stoop - swing * 0.5, 0.10, sleeve, armC);
+      R(0.155, -0.11 + stoop + swing * 0.5, 0.10, sleeve, armC);
+    }
     R(-0.255, 0.17 + stoop - swing * 0.5, 0.10, 0.055, L.skin);  // hands
     R(0.155, 0.17 + stoop + swing * 0.5, 0.10, 0.055, L.skin);
     /* ---- torso ---- */
-    R(-0.175, -0.14 + stoop, 0.35, 0.27, shirtC);
-    /* the simple patterns: a stripe, a waistband, or an honest patch */
-    if (L.pattern === "stripe") { R(-0.175, -0.055 + stoop, 0.35, 0.045, L.accent); R(-0.175, 0.035 + stoop, 0.35, 0.045, L.accent); }
-    else if (L.pattern === "band") R(-0.175, 0.075 + stoop, 0.35, 0.055, L.accent);
-    else if (L.pattern === "patch") R(0.055, -0.10 + stoop, 0.075, 0.075, L.accent);
+    if (gown) {                                                  // the skirt of a dress, under the bodice
+      R(-0.225, 0.06 + stoop, 0.45, 0.22, shirtC);
+      if (shirtA) R(-0.225, 0.24 + stoop, 0.45, 0.04, shirtA);
+    }
+    const bodyTop = -0.14 + stoop, bodyH = tCut === "longcoat" ? 0.34 : 0.27;
+    R(-0.175, bodyTop, 0.35, bodyH, shirtC);
+    if (tCut === "vest" || tCut === "quilt") {                    // a vest sits over a shirt, not instead of one
+      R(-0.175, bodyTop, 0.35, bodyH, L.shirt);
+      R(-0.175, bodyTop, 0.11, bodyH, shirtC); R(0.065, bodyTop, 0.11, bodyH, shirtC);
+      R(-0.175, bodyTop, 0.35, 0.05, shirtC);
+    }
+    /* the simple patterns: a stripe, a waistband, a check, or an honest patch */
+    if (tPat === "stripe") { R(-0.175, -0.055 + stoop, 0.35, 0.04, shirtA); R(-0.175, 0.035 + stoop, 0.35, 0.04, shirtA); }
+    else if (tPat === "band") R(-0.175, 0.075 + stoop, 0.35, 0.055, shirtA);
+    else if (tPat === "patch") R(0.055, -0.10 + stoop, 0.075, 0.075, shirtA);
+    else if (tPat === "check") {
+      for (const x of [-0.175, -0.06, 0.055]) R(x, bodyTop, 0.03, bodyH, shirtA);
+      for (const y of [-0.09, 0.00, 0.09]) R(-0.175, y + stoop, 0.35, 0.025, shirtA);
+    }
+    if (tCut === "quilt" && shirtA) for (const y of [-0.10, -0.01, 0.08])      // padded channels
+      { R(-0.175, y + stoop, 0.11, 0.03, shirtA); R(0.065, y + stoop, 0.11, 0.03, shirtA); }
+    if (tCut === "shirt") { R(-0.015, bodyTop, 0.03, bodyH, shirtA);           // placket and buttons
+      for (const y of [-0.08, 0.00, 0.08]) R(-0.005, y + stoop, 0.015, 0.02, "#efe7d2"); }
+    if (tCut === "coat" || tCut === "longcoat") R(-0.02, bodyTop, 0.04, bodyH, shirtA);   // the front seam
+    if (tCut === "dress" && shirtA) R(-0.175, 0.04 + stoop, 0.35, 0.035, shirtA);          // the waist
     /* torn clothing SHOWS — a ragged notch of skin through the weave */
-    if (torn(torso)) { R(0.035, -0.02 + stoop, 0.06, 0.10, L.skin); R(-0.12, 0.05 + stoop, 0.05, 0.07, L.skin); }
-    if (torn(legs)) R(-0.11, 0.24 + stoop, 0.05, 0.08, L.skin);
+    if (torsoP?.t) { R(0.035, -0.02 + stoop, 0.06, 0.10, L.skin); R(-0.12, 0.05 + stoop, 0.05, 0.07, L.skin); }
+    if (legsP?.t) R(-0.11, 0.24 + stoop, 0.05, 0.08, L.skin);
     /* armour reads as plate over the shirt, not instead of it */
-    if (torso && GARMENTS[torso]?.guard && !torn(torso)) {
-      R(-0.175, -0.14 + stoop, 0.35, 0.06, "#8f97a3");
-      R(-0.06, -0.14 + stoop, 0.12, 0.27, "#a4acb8");
-    } else if (torso === "leather_coat" && !torn(torso)) {
-      R(-0.02, -0.14 + stoop, 0.04, 0.27, "#3b2a1c");           // the coat's front seam
+    if (tCut === "mail" && !torsoP?.t) {
+      R(-0.175, bodyTop, 0.35, 0.06, "#8f97a3");
+      R(-0.06, bodyTop, 0.12, 0.27, "#a4acb8");
     }
     /* ---- head ---- */
     const hy = -0.30 + stoop, hr = 0.145 * L.headMul;
@@ -12466,25 +13847,34 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     R(-hr * 0.52, hy + hr * 0.45, 0.045, 0.05, "#2a2620");
     R(hr * 0.14, hy + hr * 0.45, 0.045, 0.05, "#2a2620");
     /* ---- headwear over the lot ---- */
-    if (head && !torn(head)) {
-      const G = GARMENTS[head], hc = garmentColor(head, L);
-      if (G.guard) { R(-hr - 0.02, hy - hr * 0.75, hr * 2 + 0.04, 0.11, "#a4acb8"); R(-0.02, hy - hr * 0.4, 0.04, 0.12, "#8f97a3"); }
-      else if (head === "sun_hat") { R(-0.26, hy - hr * 0.28, 0.52, 0.045, hc); R(-hr * 0.8, hy - hr * 0.85, hr * 1.6, 0.09, hc); }
-      else if (head === "hunter_hat") { R(-0.22, hy - hr * 0.3, 0.44, 0.05, hc); R(-hr * 0.75, hy - hr * 0.95, hr * 1.5, 0.10, hc); R(hr * 0.4, hy - hr * 0.95, 0.05, 0.16, L.accent); }
-      else if (head === "wool_hood") { R(-hr - 0.025, hy - hr * 0.8, hr * 2 + 0.05, 0.14, hc); R(-hr - 0.03, hy + hr * 0.5, hr * 2 + 0.06, 0.06, hc); }
-      else { R(-hr - 0.015, hy - hr * 0.72, hr * 2 + 0.03, 0.10, hc); R(-hr - 0.06, hy - hr * 0.05, hr * 0.9, 0.035, hc); }   // cloth cap + peak
+    if (headP && !headP.t) {
+      const [hc, ha] = colourway(head, headP.c);
+      switch (GARMENTS[head]?.cut) {
+        case "helm":                                                    // Watch plate
+          R(-hr - 0.02, hy - hr * 0.75, hr * 2 + 0.04, 0.11, "#a4acb8"); R(-0.02, hy - hr * 0.4, 0.04, 0.12, "#8f97a3"); break;
+        case "brim":                                                    // wide straw brim
+          R(-0.26, hy - hr * 0.28, 0.52, 0.045, hc); R(-hr * 0.8, hy - hr * 0.85, hr * 1.6, 0.09, hc);
+          R(-hr * 0.8, hy - hr * 0.34, hr * 1.6, 0.03, ha); break;
+        case "kerchief":                                                // tied back, with the knot showing
+          R(-hr - 0.01, hy - hr * 0.68, hr * 2 + 0.02, 0.10, hc);
+          R(hr * 0.55, hy - hr * 0.2, 0.06, 0.10, hc); break;
+        case "hunter":
+          R(-0.22, hy - hr * 0.3, 0.44, 0.05, hc); R(-hr * 0.75, hy - hr * 0.95, hr * 1.5, 0.10, hc);
+          R(hr * 0.4, hy - hr * 0.95, 0.05, 0.16, ha); break;
+        case "hood":                                                    // covers the crown and wraps the neck
+          R(-hr - 0.025, hy - hr * 0.8, hr * 2 + 0.05, 0.14, hc); R(-hr - 0.03, hy + hr * 0.5, hr * 2 + 0.06, 0.06, hc); break;
+        case "furcap":                                                  // a band of fur under a crown
+          R(-hr - 0.02, hy - hr * 0.85, hr * 2 + 0.04, 0.09, hc);
+          R(-hr - 0.03, hy - hr * 0.3, hr * 2 + 0.06, 0.055, ha); break;
+        case "beanie":                                                  // pulled right down, with a turn-up
+          R(-hr - 0.01, hy - hr * 0.85, hr * 2 + 0.02, 0.14, hc);
+          R(-hr - 0.02, hy - hr * 0.05, hr * 2 + 0.04, 0.045, ha); break;
+        default:                                                        // a cap with its peak
+          R(-hr - 0.015, hy - hr * 0.72, hr * 2 + 0.03, 0.10, hc); R(-hr - 0.06, hy - hr * 0.05, hr * 0.9, 0.035, ha);
+      }
     }
     /* the player keeps their blue band so you can always find yourself */
     if (e.kind === "player" && !head) R(-hr, hy - hr * 0.62, hr * 2, 0.05, "#2e6fe0");
-  };
-  /* a garment's colour: its own if it has one, otherwise the wearer's palette */
-  const garmentColor = (id, L) => {
-    const G = GARMENTS[id]; if (!G) return L.shirt;
-    if (G.guard) return "#7f8794";
-    if (id.startsWith("leather") || id === "hunter_hat") return "#6b4a2e";
-    if (G.wear === "winter") return L.accent;
-    if (G.wear === "summer") return "#e8e0cc";
-    return L.shirt;
   };
 
   const drawEntity = (ctx, e, T, px, py) => {
@@ -12493,12 +13883,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       const S9 = BEAST_SPECIES[e.sp];
       ctx.fillStyle = "rgba(0,0,0,0.22)";
       ctx.beginPath(); ctx.ellipse(cx, cy + T * 0.3, T * 0.3, T * 0.11, 0, 0, 7); ctx.fill();
-      /* fillStyle alpha MULTIPLIES a colour-emoji glyph — leaving the shadow's 0.22 in place
-         painted every animal at a fifth opacity. They looked like ghosts. Reset to solid first. */
-      ctx.fillStyle = "#000";
-      ctx.font = `${Math.floor(T * 0.85)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(S9.emoji, cx, cy);
-      ctx.textBaseline = "alphabetic";
+      /* the wild is drawn like everything else now, not borrowed from the system font */
+      drawItemIcon(ctx, `beast_${e.sp}`, cx, cy, T * 0.95);
       if (e.ref.health < S9.hp) {   // hurt game shows it — you can tell what's nearly down
         const w = T * 0.62, frac = clamp(e.ref.health / S9.hp, 0, 1);
         ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(cx - w / 2, cy - T * 0.52, w, T * 0.09);
@@ -12652,7 +14038,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         {hud?.sick && <div style={{ ...S.clockChip, color: "#7fae5f" }}>🤒 {hud.sick}</div>}
         {hud?.wanted > 0 && <div style={{ ...S.clockChip, color: "#e0a832" }}>{"★".repeat(Math.min(5, hud.wanted))}</div>}
         <div style={S.clockChip}>🪙 {hud?.coins ?? 0}</div>
-        <button style={S.iconBtn} onClick={() => setInvOpen(true)}>🎒</button>
+        <button style={S.iconBtn} onClick={() => { migrateWardrobe(simRef.current.player); setInvOpen(true); }}>🎒</button>
         <button style={S.iconBtn} onClick={() => { setSpeakText(""); setSpeakOpen(true); }}>💬</button>
         <button style={S.iconBtn} onClick={openFolk}>👥</button>
         <button style={S.iconBtn} onClick={() => setSettingsOpen(true)}>⚙️</button>
@@ -13210,7 +14596,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 const can = cookPanel?.chef ? true : canCookRecipe(player.inv, r);
                 return (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10, opacity: can ? 1 : 0.55 }}>
-                    <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                    <ItemIcon id={id} size={22} />
                     <span style={{ flex: 1 }}>
                       <b>{r.label}</b>
                       <div style={{ fontSize: fs - 2, opacity: 0.7 }}>
@@ -13367,9 +14753,10 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   <div style={{ ...S.folkCard }}>
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>📜 Your promises, judged</div>
                     {r.pledgeVerdict.rows.map(row => (
-                      <div key={row.id} style={{ fontSize: fs - 1, display: "flex", gap: 6 }}>
+                      <div key={row.id} style={{ fontSize: fs - 1, display: "flex", gap: 6, alignItems: "center" }}>
                         <span>{row.kept ? "✅" : "❌"}</span>
-                        <span style={{ flex: 1 }}>{row.emoji} {row.blurb} <span style={{ opacity: 0.6 }}>· {row.progress}</span></span>
+                        <ItemIcon id={`pl_${row.id}`} size={18} />
+                        <span style={{ flex: 1 }}>{row.blurb} <span style={{ opacity: 0.6 }}>· {row.progress}</span></span>
                       </div>
                     ))}
                     <div style={{ fontSize: fs - 3, opacity: 0.7, marginTop: 4 }}>
@@ -13524,7 +14911,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           if (G.guard) return G.slot === "torso" ? "expert" : "hard";
           return G.tier === "hard" ? "hard" : G.tier === "medium" ? "simple" : "easy";
         };
-        const beginSew = (id, kind) => {
+        const beginSew = (id, kind, uid = null) => {
           const G = GARMENTS[id];
           if (kind === "make" && G.guard && !mayWearGuardKit(p2)) { showToast("The Watch's pattern isn't yours to cut — earn the valley's trust first."); return; }
           const cost = kind === "patch"
@@ -13539,16 +14926,19 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             ? ({ expert: "hard", hard: "simple", simple: "easy", easy: "easy" })[sewTierFor(id)]
             : sewTierFor(id);
           const T9 = CFG.SEWING.tiers[tierKey];
-          setTailorPanel({ tab, sewing: { id, kind, tierKey, cfg: T9, spent: cost, misses: sewingMisses(T9.misses, lvl) } });
+          setTailorPanel({ tab, sewing: { id, kind, uid, tierKey, cfg: T9, spent: cost, misses: sewingMisses(T9.misses, lvl) } });
         };
         const sewDone = () => {
           const S9 = tailorPanel.sewing; if (!S9) return;
           const G = GARMENTS[S9.id];
           if (S9.kind === "patch") {
-            delete p2.wornTorn[S9.id]; p2.wornWear[S9.id] = (G.dur || 100) * 0.35;   // a patch doesn't make it new
+            /* mends THAT piece — the exact one you brought to the bench, not
+               every shirt of its kind you happen to own */
+            const pc = pieceOf(p2, S9.uid) || kitOf(p2).find(k => k.g === S9.id && k.t);
+            if (pc) { pc.t = false; pc.w = pieceMax(pc) * 0.35; }                     // a patch doesn't make it new
             sfx.pop(); showToast(`🧵 ${G.name} patched — good as most.`);
           } else {
-            p2.inv[S9.id] = (p2.inv[S9.id] || 0) + 1;
+            p2.kit = [...kitOf(p2), newPiece(S9.id)];                                 // a new piece, its own colourway and wear
             sfx.purchase(); showToast(`${G.emoji} ${G.name} finished — cut, sewn and ready to wear.`);
           }
           const before9 = skillLevel(p2, "tailoring");
@@ -13569,21 +14959,17 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           showToast(`✂️ The ${G.name.toLowerCase()} is ruined. Scrapped for ${back.join(" ") || "nothing worth keeping"}.`);
           setTailorPanel({ tab }); bump();
         };
-        const wearIt = (id) => {
-          const G = GARMENTS[id];
+        /* Wearing is now about a PIECE, not a kind of thing: you put on that
+           particular jacket, and the one it replaces goes back in the wardrobe
+           carrying its own wear rather than dissolving into a stack. */
+        const wearIt = (uid) => {
+          const pc = pieceOf(p2, uid); if (!pc) return;
+          const G = GARMENTS[pc.g];
           if (G.guard && !mayWearGuardKit(p2)) { showToast("That's Watch issue. They'd want a word."); return; }
-          if (!(have(id) > 0)) return;
-          const cur = wornInSlot(p2, G.slot);
-          if (cur) { p2.inv[cur] = (p2.inv[cur] || 0) + 1; p2.worn = p2.worn.filter(x => x !== cur); }   // back in the pack
-          p2.inv[id]--; if (p2.inv[id] <= 0) delete p2.inv[id];
-          p2.worn = [...p2.worn, id];
+          wearPiece(p2, uid);
           sfx.pop(); showToast(`${G.emoji} ${G.name} on.`); bump();
         };
-        const takeOff = (id) => {
-          p2.worn = p2.worn.filter(x => x !== id);
-          p2.inv[id] = (p2.inv[id] || 0) + 1;
-          bump();
-        };
+        const takeOff = (uid) => { p2.worn = (p2.worn || []).filter(x => x !== uid); bump(); };
         const felt = feltTemp(sim2, p2), st = tempStress(felt);
         return (
           <div style={S.chatOverlay} onClick={() => setTailorPanel(null)}>
@@ -13612,7 +14998,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
               })() : (
               <div style={S.chatBody}>
                 <div style={{ ...S.folkCard, fontSize: fs - 1 }}>
-                  Wearing: <b>{(p2.worn || []).length ? p2.worn.map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${p2.wornTorn?.[id] ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
+                  Wearing: <b>{wornPieces(p2).length ? wornPieces(p2).map(pc => `${GARMENTS[pc.g].emoji} ${GARMENTS[pc.g].name}${pc.t ? " (torn)" : ""}`).join(" · ") : "not much"}</b><br />
                   Toughness <b>+{toughnessOf(p2)}</b> · Endurance <b>{enduranceOf(p2)}</b> (max energy {maxEnergyOf(p2)})<br />
                   <span style={{ color: st.cold ? "#7fb4e0" : st.hot ? "#e08a52" : "#8aa87a" }}>
                     You feel {felt}° — {tempWord(felt)}{st.cold ? " · you're burning food to stay warm" : st.hot ? " · you're losing water fast" : " · comfortable"}
@@ -13629,7 +15015,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>🧶 Materials</div>
                   {Object.entries(TAILOR_MATS).map(([id, R]) => (
                     <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 20 }}>{R.emoji}</span>
+                      <ItemIcon id={id} size={20} />
                       <span style={{ flex: 1, fontSize: fs - 1 }}><b>{R.name}</b> ×{R.out}<br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>{matLine(R.mats)}</span></span>
                       <button style={{ ...S.smallBtn, opacity: canMake(R.mats) ? 1 : 0.4 }} disabled={!canMake(R.mats)} onClick={() => makeMat(id)}>Spin</button>
                     </div>
@@ -13644,7 +15030,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         const locked = G.guard && !mayWearGuardKit(p2);
                         return (
                           <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, opacity: locked ? 0.5 : 1 }}>
-                            <span style={{ fontSize: 20 }}>{G.emoji}</span>
+                            <ItemIcon id={id} size={20} />
                             <span style={{ flex: 1, fontSize: fs - 1 }}>
                               <b>{G.name}</b>{G.guard && " 🛡️"}<br />
                               <span style={{ opacity: 0.65, fontSize: fs - 3 }}>
@@ -13661,45 +15047,28 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 </>}
 
                 {tab === "wear" && <>
-                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 6 }}>On you</div>
-                  {(p2.worn || []).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing but what you stand up in.</div>}
-                  {(p2.worn || []).map(id => (
-                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 20 }}>{GARMENTS[id].emoji}</span>
-                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b>{p2.wornTorn?.[id] && <span style={{ color: "#a05252" }}> · torn</span>}
-                        <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>{GARMENTS[id].slot} · {Math.round(100 - Math.min(100, (p2.wornWear?.[id] || 0) / (GARMENTS[id].dur || 100) * 100))}% condition</span></span>
-                      <button style={S.smallBtn} onClick={() => takeOff(id)}>Take off</button>
-                    </div>
-                  ))}
-                  <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 8 }}>In your pack</div>
-                  {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>No spare clothes.</div>}
-                  {Object.keys(p2.inv).filter(id => GARMENTS[id] && p2.inv[id] > 0).map(id => (
-                    <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 20 }}>{GARMENTS[id].emoji}</span>
-                      <span style={{ flex: 1, fontSize: fs - 1 }}><b>{GARMENTS[id].name}</b> ×{p2.inv[id]}
-                        <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>warmth {GARMENTS[id].warmth > 0 ? `+${GARMENTS[id].warmth}` : GARMENTS[id].warmth} · tough +{GARMENTS[id].tough} · endur {GARMENTS[id].endur}</span></span>
-                      <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => wearIt(id)}>Wear</button>
-                    </div>
-                  ))}
+                  <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
+                    Every piece is its own — open a row to see each one you own and how much life is left in it.
+                  </div>
+                  <ClothingRows pieces={kitOf(p2)} wornSet={new Set(p2.worn || [])} fs={fs}
+                    empty="Nothing but what you stand up in."
+                    action={(pc, on) => on
+                      ? <button style={S.smallBtn} onClick={() => takeOff(pc.u)}>Take off</button>
+                      : <button style={{ ...S.smallBtn, background: "#4a6a5a" }} onClick={() => wearIt(pc.u)}>Wear</button>} />
                 </>}
 
                 {tab === "mend" && <>
                   <div style={{ fontSize: fs - 2, opacity: 0.7, marginTop: 6 }}>
-                    A torn piece keeps you barely warm and stops nothing. Patching costs a fraction of sewing new — and your Tailoring ({skillTierName(p2, "tailoring")}) decides how forgiving the work is.
+                    A torn piece keeps you barely warm, stops nothing, and gets you filthy far quicker. Patching costs a fraction of sewing new — and your Tailoring ({skillTierName(p2, "tailoring")}) decides how forgiving the work is.
                   </div>
-                  {(p2.worn || []).filter(id => p2.wornTorn?.[id]).length === 0 && <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing you're wearing is torn.</div>}
-                  {(p2.worn || []).filter(id => p2.wornTorn?.[id]).map(id => {
-                    const G = GARMENTS[id];
-                    const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
-                    return (
-                      <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 20 }}>{G.emoji}</span>
-                        <span style={{ flex: 1, fontSize: fs - 1 }}><b>{G.name}</b> <span style={{ color: "#a05252" }}>· torn</span>
-                          <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>patch with {matLine(cost)}</span></span>
-                        <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)} onClick={() => beginSew(id, "patch")}>Patch</button>
-                      </div>
-                    );
-                  })}
+                  <ClothingRows pieces={kitOf(p2).filter(pc => pc.t)} wornSet={new Set(p2.worn || [])} fs={fs}
+                    empty="Nothing you own is torn."
+                    action={(pc) => {
+                      const G = GARMENTS[pc.g];
+                      const cost = Object.fromEntries(Object.entries(G.mats).map(([m, q]) => [m, Math.max(1, Math.round(q * PATCH_FRACTION))]));
+                      return <button style={{ ...S.smallBtn, opacity: canMake(cost) ? 1 : 0.4 }} disabled={!canMake(cost)}
+                        title={`patch with ${matLine(cost)}`} onClick={() => beginSew(pc.g, "patch", pc.u)}>Patch</button>;
+                    }} />
                 </>}
               </div>
               )}
@@ -13744,7 +15113,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   const on = picked.includes(id);
                   return (
                     <div key={id} onClick={() => toggle(id)} style={{ ...S.folkCard, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, outline: on ? "2px solid #5a8a4a" : "none", opacity: on || picked.length < need ? 1 : 0.5 }}>
-                      <span style={{ fontSize: 20 }}>{P.emoji}</span>
+                      <ItemIcon id={`pl_${id}`} size={22} />
                       <span style={{ flex: 1 }}><b>{P.name}</b><br /><span style={{ fontSize: fs - 3, opacity: 0.7 }}>{P.blurb}</span></span>
                       <span style={{ fontSize: 18 }}>{on ? "☑️" : "⬜"}</span>
                     </div>
@@ -13886,7 +15255,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         const inbound = stockInbound(sim2, bId, id);
                         return (
                           <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ fontSize: 18 }}>{ITEMS[id].emoji}</span>
+                            <ItemIcon id={id} size={18} />
                             <span style={{ flex: 1, fontSize: fs - 1 }}><b>{ITEMS[id].name}</b><span style={{ opacity: 0.6, fontSize: fs - 3 }}> · base {ITEMS[id].price}c · {st} in stock</span></span>
                             <button style={S.smallBtn} onClick={() => playerSetPrice(sim2, bId, id, -1)}>−</button>
                             <b style={{ minWidth: 28, textAlign: "center" }}>{menu[id] ?? ITEMS[id].price}c</b>
@@ -13907,7 +15276,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                           <div style={{ fontSize: fs - 2, opacity: 0.7, marginBottom: 4 }}>Add to menu:</div>
                           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                             {pool.map(id => (
-                              <button key={id} style={{ ...S.smallBtn }} title={`${ITEMS[id].name} · base ${ITEMS[id].price}c`} onClick={() => playerMenuAdd(sim2, bId, id)}>{ITEMS[id].emoji} {ITEMS[id].name}</button>
+                              <button key={id} style={{ ...S.smallBtn }} title={`${ITEMS[id].name} · base ${ITEMS[id].price}c`} onClick={() => playerMenuAdd(sim2, bId, id)}><ItemIcon id={id} size={16} /> {ITEMS[id].name}</button>
                             ))}
                           </div>
                         </div>
@@ -13983,7 +15352,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                               cursor: slot ? "pointer" : "default",
                               background: ch === "#" ? "#4a4436" : here ? "#d8c9a8" : slot ? "#8fae76" : "#e8dfc9",
                               boxShadow: slot ? "inset 0 0 0 2px #5a7a3a" : "none" }}>
-                            {here ? FURNITURE[here]?.emoji : slot ? "＋" : glyphEmoji[ch] || ""}
+                            {here ? <ItemIcon id={`furn_${here}`} size={22} /> : slot ? "＋" : glyphEmoji[ch] || ""}
                           </div>
                         );
                       }))}
@@ -14180,7 +15549,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                         const owned = !!sim2.townUpgrades?.[t]?.[id];
                         return (
                           <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, opacity: owned ? 0.5 : 1, marginBottom: 4 }}>
-                            <span style={{ flex: 1, fontSize: fs - 1 }}>{u.emoji} <b>{u.name}</b> · {u.cost}c <span style={{ opacity: 0.6 }}>· {u.blurb}</span></span>
+                            <ItemIcon id={`up_${id}`} size={20} />
+                            <span style={{ flex: 1, fontSize: fs - 1 }}><b>{u.name}</b> · {u.cost}c <span style={{ opacity: 0.6 }}>· {u.blurb}</span></span>
                             {owned ? <span style={{ fontSize: fs - 2, opacity: 0.6 }}>done</span>
                               : <button style={{ ...S.smallBtn, opacity: (sim2.treasury[t] || 0) >= u.cost ? 1 : 0.4 }} disabled={(sim2.treasury[t] || 0) < u.cost} onClick={() => fund(id)}>Fund</button>}
                           </div>
@@ -14213,7 +15583,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
           <div style={S.chatOverlay} onClick={() => setStoragePanel(false)}>
             <div style={{ ...S.chatPanel, maxWidth: 380, padding: 20 }} onClick={e => e.stopPropagation()}>
               <div style={{ ...S.chatHeader, background: "#3a4a5a" }}>
-                <span style={{ fontWeight: 700 }}>{FURNITURE[store]?.emoji} {FURNITURE[store]?.name} · {player.stored}/{cap}c</span>
+                <span style={{ fontWeight: 700 }}><ItemIcon id={`furn_${store}`} size={18} /> {FURNITURE[store]?.name} · {player.stored}/{cap}c</span>
                 <button style={S.closeBtn} onClick={() => setStoragePanel(false)}>✕</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
@@ -14249,7 +15619,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div style={{ fontWeight: 700, opacity: 0.7 }}>In the chest:</div>
                 {Object.entries(player.chest || {}).filter(([, n]) => n > 0).map(([id, n]) => (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 20 }}>{ITEMS[id]?.emoji}</span>
+                    <ItemIcon id={id} size={20} />
                     <span style={{ flex: 1 }}><b>{ITEMS[id]?.name}</b> ×{n}</span>
                     <button style={S.smallBtn} onClick={() => chestMove(id, false)}>Take</button>
                   </div>
@@ -14257,7 +15627,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <div style={{ fontWeight: 700, opacity: 0.7, marginTop: 6 }}>Carrying:</div>
                 {carried.map(id => (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, background: "#f0eade" }}>
-                    <span style={{ fontSize: 20 }}>{ITEMS[id]?.emoji}</span>
+                    <ItemIcon id={id} size={20} />
                     <span style={{ flex: 1 }}><b>{ITEMS[id]?.name}</b> ×{player.inv[id]}</span>
                     <button style={{ ...S.smallBtn, opacity: slotsUsed < cap ? 1 : 0.4 }} onClick={() => chestMove(id, true)}>Store</button>
                   </div>
@@ -14332,7 +15702,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <div style={{ ...S.chatPanel, maxWidth: 440, padding: 22 }}>
               <div style={{ ...S.chatHeader, background: "#2a2f38" }}>
                 <span style={{ fontWeight: 700 }}>⛓️ {bld(jailScreen.bId).name} — {player.jailedUntil === Infinity ? "Holding Cell · LIFE" : `Holding Cell · ${Math.max(0, Math.ceil(((player.jailedUntil || 0) - absMin) / 60))}h left`}</span>
-                <button style={S.closeBtn} title="Your pack" onClick={() => setInvOpen(true)}>🎒</button>
+                <button style={S.closeBtn} title="Your pack" onClick={() => { migrateWardrobe(simRef.current.player); setInvOpen(true); }}>🎒</button>
               </div>
               <div style={{ ...S.chatBody, gap: 10 }}>
                 {(() => {
@@ -14608,11 +15978,26 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     }}>Resign</button>
                 )}
               </div>
+              {/* Clothing is kept apart from the stacking goods, because it doesn't
+                  stack: each piece has its own wear, so each gets its own line. */}
+              {kitOf(player).length > 0 && <>
+                <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 4 }}>👕 Wardrobe</div>
+                <ClothingRows pieces={kitOf(player)} wornSet={new Set(player.worn || [])} fs={fs}
+                  empty="No clothes to your name."
+                  action={(pc, on) => on
+                    ? <button style={S.smallBtn} onClick={() => { player.worn = (player.worn || []).filter(u => u !== pc.u); bump(); }}>Take off</button>
+                    : <button style={{ ...S.smallBtn, background: "#4a6a5a" }}
+                        onClick={() => {
+                          if (GARMENTS[pc.g].guard && !mayWearGuardKit(player)) { showToast("That's Watch issue. They'd want a word."); return; }
+                          wearPiece(player, pc.u); sfx.pop(); showToast(`${GARMENTS[pc.g].emoji} ${GARMENTS[pc.g].name} on.`); bump();
+                        }}>Wear</button>} />
+                <div style={{ fontWeight: 700, opacity: 0.75, marginTop: 8 }}>🎒 Carried</div>
+              </>}
               {Object.entries(player.inv).filter(([, c]) => c > 0).length === 0 &&
-                <div style={{ ...S.folkCard, opacity: 0.7 }}>Empty. The mart in Mossford stocks nearly everything.</div>}
+                <div style={{ ...S.folkCard, opacity: 0.7 }}>Nothing carried. The mart in Mossford stocks nearly everything.</div>}
               {Object.entries(player.inv).filter(([, c]) => c > 0).map(([id, c]) => (
                 <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                  <ItemIcon id={id} size={22} />
                   <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> ×{c}</span>
                   {(ITEMS[id].eat || ITEMS[id].heal || ITEMS[id].cure || ITEMS[id].use) && <button style={S.smallBtn} onClick={() => useItem(id)}>{ITEMS[id].use === "goodie" ? "Open" : "Use"}</button>}
                   {ITEMS[id].dmg && <span style={{ fontSize: fs - 2, opacity: 0.6 }}>dmg {ITEMS[id].dmg[0]}–{ITEMS[id].dmg[1]}{ITEMS[id].lethal ? " ⚠" : ""}{ITEMS[id].range ? ` · range ${ITEMS[id].range}` : ""}</span>}
@@ -14656,7 +16041,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   const n = simRef.current.stock[shopPanel.bId]?.[id] ?? 0;
                   return (
                     <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, opacity: n > 0 ? 1 : 0.45 }}>
-                      <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                      <ItemIcon id={id} size={22} />
                       <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> · {priceOf(simRef.current, shopPanel.bId, id)}c
                         <span style={{ fontSize: fs - 3, opacity: 0.6 }}> · {n > 0 ? `${n} in stock` : "SOLD OUT — delivery pending"}</span>
                       </span>
@@ -14675,7 +16060,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                       const desc = f.store ? `holds ${f.store}c` : f.slots ? `${f.slots} storage slots` : f.dining ? "+5 to home meals" : f.grants ? `home ${f.grants}` : f.restEase ? "restful sleep" : f.upkeep ? `+${f.upkeep}c/wk` : "";
                       return (
                         <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, background: "#f3eee6", opacity: owned ? 0.5 : 1 }}>
-                          <span style={{ fontSize: 22 }}>{f.emoji}</span>
+                          <ItemIcon id={`furn_${id}`} size={22} />
                           <span style={{ flex: 1 }}><b>{f.name}</b> · {f.price}c<span style={{ fontSize: fs - 3, opacity: 0.6 }}> · {desc}{f.upkeep && !f.store ? "" : ""}</span></span>
                           {owned ? <span style={{ fontSize: fs - 2, opacity: 0.6 }}>owned</span>
                             : <button style={{ ...S.smallBtn, opacity: player.coins >= f.price ? 1 : 0.4 }} onClick={() => buyFurniture(shopPanel.bId, id)}>Buy</button>}
@@ -14689,7 +16074,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                     <div style={{ fontWeight: 700, opacity: 0.7, marginTop: 4 }}>They'll buy:</div>
                     {Object.keys(SELLABLE).filter(id => player.inv[id] > 0).map(id => (
                       <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 8, background: "#eef6ee" }}>
-                        <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
+                        <ItemIcon id={id} size={22} />
                         <span style={{ flex: 1 }}><b>{ITEMS[id].name}</b> ×{player.inv[id]} · sells {SELLABLE[id]}c</span>
                         <button style={S.smallBtn} onClick={() => sellItem(shopPanel.bId, id)}>Sell one</button>
                       </div>
@@ -14727,7 +16112,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   {Object.entries(player.inv).filter(([, c]) => c > 0).length === 0 && <div style={{ opacity: 0.6 }}>Nothing to give.</div>}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {Object.entries(player.inv).filter(([, c]) => c > 0).map(([id, c]) => (
-                      <button key={id} style={S.smallBtn} onClick={() => giftItem(npc.id, id)}>{ITEMS[id].emoji} {ITEMS[id].name} ×{c}</button>
+                      <button key={id} style={S.smallBtn} onClick={() => giftItem(npc.id, id)}><ItemIcon id={id} size={16} /> {ITEMS[id].name} ×{c}</button>
                     ))}
                   </div>
                 </div>
@@ -14796,7 +16181,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {opts.map(id => (
                 <button key={id} style={{ ...S.diffBtn, ...(partyPanel[kind] === id ? S.diffBtnOn : {}) }}
-                  onClick={() => setPartyPanel(pp => ({ ...pp, [kind]: id }))}>{ITEMS[id].emoji} {ITEMS[id].name}</button>
+                  onClick={() => setPartyPanel(pp => ({ ...pp, [kind]: id }))}><ItemIcon id={id} size={16} /> {ITEMS[id].name}</button>
               ))}
             </div>
           </div>

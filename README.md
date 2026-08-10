@@ -71,11 +71,58 @@ extra configuration.
 - **⚙️ Settings → 💾 Save file** exports/imports a full save as JSON, which works
   anywhere and moves between devices.
 
+## Drawing the icons
+
+Every object in the game is drawn as flat vertex art rather than an emoji, from
+recipes in the `ICON_ART` table in `index.tsx` — items, garments, the two wild
+species, the civic upgrades and the campaign promises, 152 in all. Furniture is
+drawn too, by the older `drawFurnitureArt` painter, and reuses that art as its
+icon through the kit's `host` bridge.
+
+To draw your own, open **`tools/icon-studio.html`** in a browser. No build step
+and no server: it carries its own copy of the drawing kit, renders every object
+live, and redraws on **Ctrl/Cmd+Enter**. Anything with no recipe shows up red,
+syntax errors appear in a banner instead of failing silently, and clicking a
+tile jumps the editor to that recipe. When you like it, hit **Copy ICON_ART**
+and paste over the `ICON_ART` block in `index.tsx`. (Furniture is deliberately
+absent — the studio carries the icon kit, not that painter, so it could list
+those pieces but never let you edit them.)
+
+A recipe is one function per object, given a kit `k`:
+
+```js
+bread: k => SH.loaf(k),                                  // reuse a shared shape
+ore:   k => { for (const [x, y, r] of [[-0.14, 0.10, 0.13], [0.12, 0.12, 0.11]])
+                k.pg([[x - r, y], [x, y - r], [x + r, y], [x, y + r]], PAL.iron); },
+```
+
+- Coordinates run about **−0.45…0.45** from the centre, so one recipe draws at
+  any size: 18px in an inventory row or a whole tile on the ground.
+- `k` gives you `pg(points, fill)`, `rc(x, y, w, h, fill)`, `ci(x, y, r, fill)`,
+  `el(x, y, rx, ry, fill)`, `ln(x1, y1, x2, y2, width, fill)` and
+  `tri(a, b, c, fill)`. Drawing order is back to front.
+- **`rpg(points, fill, r)`** is the polygon with its corners eased off. `r` is
+  one number, or an array giving a radius per vertex — `0` keeps that corner
+  sharp, which is how a fish stays pointed at the snout and tail while its
+  flanks go soft. Most things want this rather than `pg`.
+- **`blob(x, y, rx, ry, fill, bumps, wobble, phase)`** is a circle pushed in and
+  out around its rim, for dough, cotton bolls and river cobbles.
+- **`ax(x1, y1, x2, y2)`** lays a tool on an axis: `at(t, s)` is a fraction `t`
+  from butt to tip, offset `s` across it, and `bar(t0, t1, w, fill, r)` draws
+  along it. Use it for anything with a handle — it's what keeps a hammer head
+  square to its own haft instead of a few degrees off.
+- **`rot(deg)`** returns a mapper, so `pts.map(k.rot(-13))` tilts a whole shape.
+- `SH` holds the shared assemblies (`plate`, `bowl`, `mug`, `bottle`,
+  `glassCup`, `fishBody`, `loaf`, `haft`, `sack`, `gem`) plus the garment blanks
+  (`gShirt`, `gDress`, `gVest`, `gCoat`, `gQuilt`, `gTrous`, `gSkirt`, `gHat`),
+  and `PAL` the named colours. Using them is what keeps 152 objects related.
+
 ## Project layout
 
 | Path | What it is |
 | --- | --- |
 | `index.tsx` | The entire game (one big React component). |
+| `tools/icon-studio.html` | Standalone live editor for the item art (see above). |
 | `src/main.tsx` | Entry point: mounts the game, shims `window.storage` to `localStorage`. |
 | `index.html` | Vite HTML entry. |
 | `vite.config.ts` | Build config (relative base for Pages). |
