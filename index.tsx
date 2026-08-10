@@ -4016,6 +4016,7 @@ export default function Alderbrook() {
       taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
       campaign: sim.campaign, pledges: sim.pledges, press: sim.press, debate: sim.debate,
       season: sim.season, weather: sim.weather,   // Stage 16: the year and the sky
+      party: sim.party || null,                   // a booked do survives a reload — you paid for the catering
       apiUsage: { calls: API_USAGE.calls, inTok: API_USAGE.inTok, outTok: API_USAGE.outTok, feat: API_USAGE.feat },
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
@@ -4074,6 +4075,10 @@ export default function Alderbrook() {
     sim.approval = { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start, ...(data.approval || {}) };
     sim.tradeQueue = data.tradeQueue || [];
     sim.foragedAt = data.foragedAt || {};
+    /* A party outlived nothing: it was never written to the save, so booking one and
+       reloading (autosave runs every 45s) lost the do AND the catering you paid for,
+       while the invited still had you down as hosting. It persists now. */
+    sim.party = data.party || null;
     // the meter is cumulative across sessions — a save carries what it has already spent
     if (data.apiUsage) {
       API_USAGE.calls = data.apiUsage.calls || 0;
@@ -8594,19 +8599,24 @@ export default function Alderbrook() {
     /* a sleepover needs a bed for every guest. The host supplies them, and they're SPENT —
        a sleeping bag is a real thing you hand someone, not a permission flag. */
     const homeId = thrower.id ? thrower.home : "home_p";
+    let bedrolls = 0;
     if (K.overnight) {
       const have = thrower.inv?.bedroll || 0;
       if (have < guests.length) return { ok: false, cost, needBedrolls: guests.length - have, guests: guests.length };
+      bedrolls = guests.length;
       thrower.inv.bedroll -= guests.length;
       if (thrower.inv.bedroll <= 0) delete thrower.inv.bedroll;
     }
     fineCoins(thrower, cost);
     const late = (sim.time / 60) % 24 >= (K.overnight ? 22 : CFG.PARTY.lateCutoffH);   // too late to cater today
+    // cost and bedrolls are kept so calling it off early can hand them back
     sim.party = { kind, throwerId: throwerKey, town, day: late ? sim.day + 1 : sim.day,
-      dinner, dessert, drink, distributed: false, homeId,
+      dinner, dessert, drink, distributed: false, homeId, cost, bedrolls,
       guestIds: guests.map(g => g.id),
       decor: K.decor && homeId ? makeDecor(sim, world, homeId) : null };
-    sim.buzz = { text: `${thrower.id ? thrower.name : "The player"} is throwing a party at the ${TOWN_DEFS[town].name} plaza ${late ? "TOMORROW night" : "tonight"}!`, day: sim.day };
+    // a house do or a sleepover happens at the host's place, not out on the plaza
+    const venue = (K.at || "plaza") === "home" ? `${thrower.id ? `${thrower.name}'s place` : "their place"}` : `the ${TOWN_DEFS[town].name} plaza`;
+    sim.buzz = { text: `${thrower.id ? thrower.name : "The player"} is throwing a party at ${venue} ${late ? "TOMORROW" : "today"}!`, day: sim.day };
     sim.dayLog = [...sim.dayLog, `${thrower.id ? thrower.name : playerLabel()} announced a party (${ITEMS[dinner].name}, ${ITEMS[dessert].name})`].slice(-12);
     for (const n of sim.npcs) {
       if (!n.alive || n.jailedUntil || n.town === town) continue;
@@ -9794,6 +9804,26 @@ export default function Alderbrook() {
     repEvent(sim, t, -2, 0, `${npc.name} publicly humiliated ${named}`);
   };
 
+  /* Stage 13 fix — a party belongs to ONE place. Every kind already declares where
+     it happens (plaza do at the plaza, house do and sleepover at your own place), but
+     the action list used to ignore that and stack all three inside your house, so you
+     walked in and found three overlapping ways to throw a party you couldn't cancel.
+     Now each spot offers only the kinds that live there, and once yours is on the
+     books the same spot offers the way to call it off. Open, and close. */
+  const partyOptions = (out, where) => {
+    const sim = simRef.current;
+    const kinds = Object.entries(CFG.PARTY_KINDS).filter(([, K]) => (K.at || "plaza") === where);
+    if (sim.party) {
+      // only the host can call it off, and only from the spot the do belongs to
+      if (sim.party.throwerId !== "player") return;
+      const K = CFG.PARTY_KINDS[sim.party.kind] || CFG.PARTY_KINDS.plaza;
+      if ((K.at || "plaza") !== where) return;
+      out.push({ id: "partyclose", label: `✖️ Call off your ${K.label.toLowerCase()}` });
+      return;
+    }
+    for (const [k, K] of kinds) out.push({ id: "party", label: `${K.emoji} ${K.label}`, partyKind: k });
+  };
+
   /* =================== CONTEXT ACTIONS =================== */
   const computeActions = (sim, world) => {
     const p = sim.player, out = [];
@@ -9902,6 +9932,7 @@ export default function Alderbrook() {
       // Stage 15: the campaign trail — a rally in the plaza, once a day, while a vote is close
       if (near(town.spots.plaza, 2.2) && campaignSeason(sim) && sim.campaign?.rallyDay !== sim.day)
         out.push({ id: "rally", label: `📣 Hold a campaign rally (${CFG.CAMPAIGN.rallyCost}c)` });
+      if (near(town.spots.plaza, 2.2)) partyOptions(out, "plaza");   // a plaza do is thrown FROM the plaza
       if (near(town.drink, 1.8)) out.push({ id: "drink", label: `💧 Drink (${town.drink.label})` });
       if (near(town.busStop, 1.8)) out.push({ id: "travel", label: "🚌 Mo's Bus — routes & fares" });
       // Stage 3: anyone CAN rough it; only the locked-out or exhausted are offered it
@@ -9961,10 +9992,7 @@ export default function Alderbrook() {
         if (bestStore(p)) out.push({ id: "storage", label: `🔒 Home storage (${p.stored}c stored)` });
         if (p.furniture.includes("chest")) out.push({ id: "chest", label: "🧰 Open storage chest" });
       }
-      if (bId === "home_p" && !sim.party) {   // Stage 13: three different kinds of do, three different evenings
-        for (const [k, K] of Object.entries(CFG.PARTY_KINDS))
-          out.push({ id: "party", label: `${K.emoji} ${K.label}`, partyKind: k });
-      }
+      if (bId === "home_p") partyOptions(out, "home");   // Stage 13: your own place — the house do and the sleepover
       if (bId === "inn" && at("rentbed")) out.push({ id: "rentbed", label: `🛏️ Rent a bed (${CFG.INN_BED}c)` });
       if (bId === "hospital" && at("treat") && p.health < 70)
         out.push({ id: "treat", label: `🩺 Treat wounds (${Math.ceil(CFG.HOSPITAL.walkIn * diff().billMult)}c)` });
@@ -10240,6 +10268,25 @@ export default function Alderbrook() {
       case "storage": setStoragePanel(true); break;   // Stage 4: deposit/withdraw cash
       case "chest": setChestPanel(true); break;        // Stage 4: item storage
       case "party": setPartyPanel({ kind: a.partyKind || "plaza", chosen: [], dinner: PARTY_MENU.dinner[0], dessert: PARTY_MENU.dessert[0], drink: PARTY_MENU.drink[0] }); break;
+      case "partyclose": {   // calling it off — catering back if nobody's arrived, word gets round either way
+        const pt = sim.party;
+        if (!pt || pt.throwerId !== "player") break;
+        const K = CFG.PARTY_KINDS[pt.kind] || CFG.PARTY_KINDS.plaza;
+        const hr = (sim.time / 60) % 24;
+        const started = pt.day < sim.day || (pt.day === sim.day && hr >= K.hour);
+        if (!started) {
+          p.coins += pt.cost || 0;                       // the caterer hadn't started
+          if (K.overnight && pt.bedrolls) p.inv.bedroll = (p.inv.bedroll || 0) + pt.bedrolls;
+        }
+        for (const n of sim.npcs) if (n.visitPlan?.party && n.visitPlan.targetId === "player") n.visitPlan = null;
+        sim.party = null;
+        sim.buzz = { text: `${playerLabel()} has called off the ${K.label.toLowerCase()}.`, day: sim.day };
+        sim.dayLog = [...sim.dayLog, `${playerLabel()} called off their ${K.label.toLowerCase()}`].slice(-12);
+        showToast(started
+          ? `✖️ You wind the ${K.label.toLowerCase()} down early. Word gets round.`
+          : `✖️ Called off. ${pt.cost || 0}c of catering back${K.overnight && pt.bedrolls ? ` and ${pt.bedrolls} sleeping bag${pt.bedrolls === 1 ? "" : "s"}` : ""}.`);
+        bump(); break;
+      }
       case "caseboard": setCaseBoard(true); break;
       case "interview": {
         const bossN = keeperOf(sim, p.scene.slice(2));
