@@ -1,0 +1,334 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Alderbrook Icon Studio</title>
+<style>
+  :root { --bg:#f3eee1; --ink:#2f2a22; --card:#fff; --line:#d8d0be; --accent:#5a7f4a; }
+  * { box-sizing:border-box }
+  body { margin:0; font:14px/1.45 ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--ink);
+         display:grid; grid-template-columns:minmax(380px,44%) 1fr; height:100vh; }
+  @media (max-width:900px){ body{ grid-template-columns:1fr; grid-template-rows:50vh 50vh } }
+  .pane { display:flex; flex-direction:column; min-width:0; min-height:0 }
+  header { padding:10px 14px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  h1 { font-size:15px; margin:0 auto 0 0; font-weight:700 }
+  button { font:inherit; padding:5px 11px; border:1px solid var(--line); background:var(--card);
+           border-radius:7px; cursor:pointer } button:hover{ background:#eee8d8 }
+  button.go { background:var(--accent); color:#fff; border-color:#48693c }
+  #code { flex:1; width:100%; border:0; padding:12px 14px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
+          background:#fbf8f0; color:#2f2a22; resize:none; outline:none; tab-size:2 }
+  #right { overflow:auto; padding:12px; background:var(--bg) }
+  #err { display:none; margin:0; padding:10px 14px; background:#7d2f2c; color:#fff;
+         font:12px/1.4 ui-monospace,monospace; white-space:pre-wrap }
+  #err.on { display:block }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px }
+  .cell { background:var(--card); border:1px solid var(--line); border-radius:9px; padding:6px 4px; text-align:center; cursor:pointer }
+  .cell.miss { background:#f6e4e2; border-color:#c08a86 }
+  .cell.hit  { outline:2px solid var(--accent) }
+  .cell canvas { display:block; margin:0 auto; image-rendering:auto }
+  .cell span { display:block; font-size:10px; margin-top:3px; opacity:.75; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  #filter { font:inherit; padding:5px 9px; border:1px solid var(--line); border-radius:7px; min-width:130px }
+  .note { padding:8px 14px; font-size:12px; opacity:.72; border-bottom:1px solid var(--line) }
+  .swatch { display:inline-block; width:9px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:3px }
+</style>
+
+<div class="pane">
+  <header>
+    <h1>Icon Studio</h1>
+    <button class="go" id="run">Redraw (Ctrl+↵)</button>
+    <button id="copy">Copy ICON_ART</button>
+    <button id="reset">Reset</button>
+  </header>
+  <div class="note">
+    Edit any recipe and redraw &mdash; nothing to rebuild. Coordinates run about
+    <b>&minus;0.45&hellip;0.45</b> from the centre; <b>k</b> gives you
+    <b>pg</b>(points,fill) &middot; <b>rc</b>(x,y,w,h,fill) &middot; <b>ci</b>(x,y,r,fill) &middot;
+    <b>el</b>(x,y,rx,ry,fill) &middot; <b>ln</b>(x1,y1,x2,y2,width,fill) &middot; <b>tri</b>(a,b,c,fill).
+    Shared pieces live on <b>SH</b> (plate, bowl, mug, bottle, glassCup, fishBody, loaf, haft, sack, gem)
+    and named colours on <b>PAL</b>. Drawing order is back to front.
+  </div>
+  <pre id="err"></pre>
+  <textarea id="code" spellcheck="false"></textarea>
+</div>
+
+<div class="pane">
+  <header>
+    <input id="filter" placeholder="filter by name or id&hellip;">
+    <span id="count" style="font-size:12px;opacity:.7"></span>
+    <span style="margin-left:auto;font-size:12px;opacity:.7">size</span>
+    <input id="size" type="range" min="24" max="128" value="72" style="width:110px">
+  </header>
+  <div id="right"><div class="grid" id="grid"></div></div>
+</div>
+
+<script>
+const poly = (ctx, cx, cy, T, pts, fill) => {
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  pts.forEach(([dx, dy], i) => { const x = cx + dx * T, y = cy + dy * T; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.closePath(); ctx.fill();
+};
+const PAL = {
+  wood: "#8a6134", woodDk: "#63431f", bark: "#54402a",
+  steel: "#b9c0c8", steelDk: "#7c858e", iron: "#6f7378",
+  stone: "#9a9187", stoneDk: "#6f685f", rope: "#c2a86a", twine: "#b9a06a",
+  cloth: "#d8cdb4", linen: "#eae2cc", leaf: "#4f7f3e", leafDk: "#355c2b",
+  crust: "#c68b45", crumb: "#f0dcae", dough: "#e8d7b0",
+  meat: "#a8443f", meatDk: "#7d2f2c", fat: "#e6c3ae",
+  plate: "#efeadc", rim: "#cbc2ae", glass: "#cfe3ee", milk: "#f7f4ec",
+  cocoa: "#5a3c2a", tea: "#8fa863", berry: "#5b3a72", rose: "#c05a76",
+  gold: "#d8a93c", amber: "#c98a2e", fish: "#7fa9c4", fishDk: "#4d7791",
+  flame: "#e08a3c", green: "#6b8f5e", cream: "#f4e7c8", choc: "#4a2f22",
+  ink: "#3a352c", paper: "#efe7d2", pink: "#e2879b", purple: "#6f4a86",
+};
+
+/* the kit: every primitive draws in icon space, closing over the canvas */
+function iconKit(ctx, cx, cy, T) {
+  const pg = (pts, fill) => poly(ctx, cx, cy, T, pts, fill);
+  const rc = (x, y, w, h, f) => pg([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], f);
+  const el = (x, y, rx, ry, f, n = 14) => {
+    const pts = [];
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; pts.push([x + Math.cos(a) * rx, y + Math.sin(a) * ry]); }
+    pg(pts, f);
+  };
+  const ci = (x, y, r, f, n = 14) => el(x, y, r, r, f, n);
+  const ln = (x1, y1, x2, y2, w, f) => {              // a thick segment, as a quad
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / L) * (w / 2), ny = (dx / L) * (w / 2);
+    pg([[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]], f);
+  };
+  const tri = (a, b, c, f) => pg([a, b, c], f);
+  return { pg, rc, el, ci, ln, tri };
+}
+
+/* shared assemblies — the reason this stays a family */
+const SH = {
+  plate: (k, food = null) => {                         // a dish, seen slightly from above
+    k.el(0, 0.20, 0.40, 0.13, PAL.rim);
+    k.el(0, 0.17, 0.34, 0.10, PAL.plate);
+    if (food) food(k);
+  },
+  bowl: (k, fill) => {
+    k.pg([[-0.32, -0.02], [0.32, -0.02], [0.22, 0.26], [-0.22, 0.26]], PAL.rim);
+    k.el(0, -0.02, 0.32, 0.09, PAL.plate);
+    k.el(0, -0.01, 0.26, 0.07, fill);
+  },
+  bottle: (k, liquid, cap = PAL.steelDk) => {
+    k.rc(-0.09, -0.38, 0.18, 0.09, cap);
+    k.pg([[-0.06, -0.30], [0.06, -0.30], [0.06, -0.20], [0.16, -0.08], [0.16, 0.32], [-0.16, 0.32], [-0.16, -0.08], [-0.06, -0.20]], PAL.glass);
+    k.pg([[-0.13, 0.02], [0.13, 0.02], [0.13, 0.29], [-0.13, 0.29]], liquid);
+  },
+  mug: (k, brew, body = PAL.linen) => {
+    k.pg([[-0.24, -0.20], [0.20, -0.20], [0.16, 0.28], [-0.20, 0.28]], body);
+    k.el(-0.02, -0.20, 0.22, 0.07, brew);
+    k.pg([[0.20, -0.12], [0.34, -0.08], [0.34, 0.10], [0.20, 0.14], [0.20, 0.06], [0.27, 0.03], [0.27, -0.03], [0.20, -0.05]], body);
+  },
+  glassCup: (k, drink, straw = null) => {
+    k.pg([[-0.20, -0.26], [0.20, -0.26], [0.15, 0.30], [-0.15, 0.30]], PAL.glass);
+    k.pg([[-0.17, -0.16], [0.17, -0.16], [0.13, 0.27], [-0.13, 0.27]], drink);
+    if (straw) k.ln(0.06, -0.36, -0.02, -0.12, 0.06, straw);
+  },
+  fishBody: (k, body, dk) => {
+    k.pg([[-0.34, 0.00], [-0.10, -0.20], [0.16, -0.14], [0.30, 0.00], [0.16, 0.14], [-0.10, 0.20]], body);
+    k.tri([0.30, 0.00], [0.44, -0.14], [0.44, 0.14], dk);       // tail
+    k.tri([-0.04, -0.19], [0.08, -0.32], [0.12, -0.16], dk);    // dorsal
+    k.ci(-0.20, -0.02, 0.045, "#20262b");
+  },
+  haft: (k, c = PAL.wood) => k.ln(-0.26, 0.36, 0.10, -0.16, 0.10, c),
+  loaf: (k, top = PAL.crust, cut = PAL.crumb) => {
+    k.pg([[-0.36, 0.20], [-0.34, -0.02], [-0.22, -0.16], [0.00, -0.20], [0.22, -0.16], [0.34, -0.02], [0.36, 0.20]], top);
+    k.pg([[-0.36, 0.12], [0.36, 0.12], [0.34, 0.20], [-0.34, 0.20]], "#a8703a");
+    for (const x of [-0.16, 0.00, 0.16]) k.ln(x - 0.05, -0.10, x + 0.05, 0.02, 0.045, cut);
+  },
+  gem: (k, c, dk) => { k.tri([0, -0.26], [-0.22, 0.02], [0.22, 0.02], c); k.tri([-0.22, 0.02], [0.22, 0.02], [0, 0.28], dk); },
+  sack: (k, c, tie = PAL.twine) => {
+    k.pg([[-0.26, 0.32], [-0.30, -0.06], [-0.12, -0.22], [0.12, -0.22], [0.30, -0.06], [0.26, 0.32]], c);
+    k.rc(-0.14, -0.26, 0.28, 0.07, tie);
+  },
+  pouchLeaf: (k, c = PAL.leaf) => {
+    k.pg([[0.00, -0.30], [0.22, -0.06], [0.00, 0.28], [-0.22, -0.06]], c);
+    k.ln(0.00, -0.26, 0.00, 0.24, 0.035, PAL.leafDk);
+  },
+};
+
+/* the objects the game actually has, so a missing or misnamed recipe shows up red */
+const NAMES = {
+"bread": "Bread",
+"meal": "Hot Meal",
+"snack": "Snack",
+"milk": "Milk",
+"fruit": "Fresh Fruit",
+"combo": "Crispy Combo",
+"stew": "Stew",
+"mystery_stew": "Mystery Stew",
+"chocolate": "Chocolate",
+"water": "Bottled Water",
+"coffee": "Coffee",
+"cider": "Cider",
+"tea": "Herbal Tea",
+"choco_milk": "Chocolate Milk",
+"hot_choc": "Hot Chocolate",
+"milkshake": "Milkshake",
+"lemonade": "Lemonade",
+"mocha": "Mocha",
+"trop_shake": "Tropical Shake",
+"nutrient": "Nutrient Drink",
+"fish": "Raw Fish",
+"tropical_fish": "Tropical Fish",
+"river_titan": "River Titan",
+"goodie_crate": "Goodie Crate",
+"fish_stew": "Hearty Fish Stew",
+"anymeat": "Any Meat",
+"berry": "Wild Berries",
+"flower": "Wildflowers",
+"cotton": "Raw Cotton",
+"pelt": "Pelt",
+"finefiber": "Fine Fibre",
+"cloth": "Bolt of Cloth",
+"flour": "Flour",
+"sugar": "Sugar",
+"dough": "Dough",
+"veg": "Vegetables",
+"meat": "Meat Cut",
+"roast_meat": "Fire-Roast Cuts",
+"meat_skewer": "Meat Skewers",
+"game_pie": "Game Pie",
+"grilled_fish": "Grilled Fish",
+"veg_soup": "Veggie Soup",
+"hearty_stew": "Hearty Stew",
+"fresh_bread": "Fresh Bread",
+"cookies": "Cookie",
+"salad": "Garden Salad",
+"candy_apple": "Candy Apple",
+"fish_sticks": "Fish Sticks",
+"noodles": "Noodles",
+"cake": "Layer Cake",
+"pie": "Berry Pie",
+"taco": "Taco",
+"sushi": "Sushi",
+"croissant": "Croissant",
+"bland_salad": "Bland Salad",
+"herb_roast": "Herb-Crusted Roast",
+"wild_stew": "Forager's Stew",
+"herb_tart": "Savory Herb Tart",
+"gourmet_platter": "Gourmet Platter",
+"burnt": "Burnt Mess",
+"sludge": "Sludge",
+"flowers": "Flowers",
+"rock": "Round Rock",
+"saw": "Saw",
+"hammer": "Hammer",
+"screwdriver": "Screwdriver",
+"hatchet": "Hatchet",
+"wood": "Cut Wood",
+"bedroll": "Sleeping Bag",
+"stick": "Sticks",
+"rope": "Coil of Rope",
+"sharprock": "Sharp Flint",
+"stoneawl": "Stone Awl",
+"stonemaul": "Stone Maul",
+"stoneaxe": "Stone Axe",
+"ore": "Iron Bits",
+"toy": "Wooden Toy",
+"bat": "Club Bat",
+"hardware": "Hardware Parts",
+"birdhouse": "Birdhouse",
+"frame": "Picture Frame",
+"whistle": "Reed Whistle",
+"drum": "Toy Drum",
+"pipe": "Pipe",
+"heatcoil": "Heat Coil",
+"nozzle": "Nozzle",
+"tie": "Silk Tie",
+"paint": "Paint Set",
+"stamp": "Rare Stamp",
+"candle": "Candle",
+"broom": "Broom",
+"pizza": "Pizza",
+"medicine": "Medicine",
+"bandage": "Bandage",
+"salve": "Herbal Salve",
+"club": "Walking Club",
+"knife": "Boning Knife",
+"slingshot": "Slingshot",
+"bow": "Hunting Bow",
+"stonespear": "Stone Spear",
+"sling": "Cord Sling",
+"crudebow": "Bent-Stave Bow",
+"crossbow": "Crossbow",
+"arrow": "Arrow",
+"bolt": "Crossbow Bolt",
+"fiber": "Grass Bundle",
+"herb": "Wild Herb",
+"ring": "Tarnished Ring",
+"baton": "Watch Baton",
+"sun_hat": "Straw Sun Hat",
+"summer_tunic": "Summer Tunic",
+"light_shorts": "Light Shorts",
+"cloth_cap": "Cloth Cap",
+"work_shirt": "Work Shirt",
+"work_trous": "Work Trousers",
+"wool_hood": "Wool Hood",
+"winter_jacket": "Winter Jacket",
+"winter_trous": "Lined Trousers",
+"hunter_hat": "Hunter's Hat",
+"leather_coat": "Leather Jacket",
+"leather_legs": "Leather Leggings",
+"guard_helm": "Watch Helm",
+"guard_mail": "Watch Hauberk",
+"guard_greaves": "Watch Greaves"
+};
+
+const DEFAULT_ART = "const ICON_ART = {\n  /* ---------- bread, baking, sweets ---------- */\n  bread:        k => SH.loaf(k),\n  fresh_bread:  k => { k.pg([[-0.38, 0.14], [-0.30, -0.10], [0.30, -0.16], [0.38, 0.08], [0.30, 0.22], [-0.30, 0.26]], \"#d59a4e\");\n                       for (const x of [-0.18, -0.02, 0.14]) k.ln(x, -0.10, x + 0.06, 0.16, 0.045, PAL.crumb); },\n  croissant:    k => { k.pg([[-0.36, 0.22], [-0.30, -0.06], [-0.10, -0.20], [0.10, -0.20], [0.30, -0.06], [0.36, 0.22], [0.20, 0.14], [0.00, 0.06], [-0.20, 0.14]], \"#dda85a\");\n                       for (const x of [-0.16, 0.00, 0.16]) k.ln(x, -0.14, x, 0.10, 0.05, \"#c08e42\");\n                       k.ci(-0.28, 0.14, 0.07, \"#e8c07a\"); k.ci(0.28, 0.14, 0.07, \"#e8c07a\"); },\n  cookies:      k => { k.ci(0, 0.04, 0.30, \"#c9944e\"); for (const [x, y] of [[-0.10, -0.06], [0.10, 0.00], [-0.02, 0.14], [0.14, -0.12]]) k.ci(x, y, 0.045, PAL.choc); },\n  cake:         k => { k.rc(-0.30, -0.02, 0.60, 0.14, PAL.cream); k.rc(-0.26, 0.12, 0.52, 0.14, \"#e6b07a\");\n                       k.pg([[-0.30, -0.02], [0.30, -0.02], [0.24, -0.12], [-0.24, -0.12]], PAL.rose); k.ci(0, -0.18, 0.06, \"#c0344f\"); },\n  pie:          k => { k.el(0, 0.10, 0.36, 0.16, \"#cf9550\"); k.el(0, 0.04, 0.30, 0.13, PAL.berry);\n                       k.ln(-0.22, 0.00, 0.22, 0.10, 0.05, \"#cf9550\"); k.ln(-0.20, 0.12, 0.24, -0.02, 0.05, \"#cf9550\"); },\n  herb_tart:    k => { k.el(0, 0.10, 0.36, 0.16, \"#c99a58\"); k.el(0, 0.05, 0.29, 0.12, \"#6d8c46\");\n                       for (const [x, y] of [[-0.12, 0.02], [0.10, 0.08], [0.00, 0.12]]) k.ci(x, y, 0.045, PAL.leaf); },\n  game_pie:     k => { k.el(0, 0.10, 0.36, 0.16, \"#b5813f\"); k.el(0, 0.04, 0.29, 0.12, PAL.meatDk);\n                       k.tri([-0.10, -0.02], [0.00, -0.14], [0.10, -0.02], \"#d8ab62\"); },\n  candy_apple:  k => { k.ln(0, -0.14, 0, 0.36, 0.05, PAL.wood); k.ci(0, -0.10, 0.24, \"#c03a4a\"); k.ci(-0.08, -0.18, 0.06, \"#e88a92\"); },\n  chocolate:    k => { k.rc(-0.28, -0.20, 0.56, 0.42, PAL.choc);\n                       for (const x of [-0.28, -0.10, 0.08]) k.rc(x + 0.02, -0.18, 0.14, 0.18, \"#63402c\"); },\n  sugar:        k => { SH.sack(k, PAL.linen); k.rc(-0.10, -0.02, 0.20, 0.14, \"#fff\"); },\n  flour:        k => { SH.sack(k, \"#e6dcc2\"); k.pg([[-0.10, 0.04], [0.00, -0.08], [0.10, 0.04], [0.00, 0.14]], \"#c8b98f\"); },\n  dough:        k => { SH.bowl(k, PAL.dough); k.ci(0.02, -0.02, 0.13, \"#f0e2bd\"); },\n\n  /* ---------- meals in a bowl or on a plate ---------- */\n  meal:         k => SH.bowl(k, \"#c07a3a\"),\n  stew:         k => { SH.bowl(k, \"#a4652f\"); k.ci(-0.08, -0.02, 0.05, PAL.meat); k.ci(0.08, 0.01, 0.045, \"#d59a3e\"); },\n  mystery_stew: k => { SH.bowl(k, \"#5f6b47\"); k.ci(0.04, -0.02, 0.05, \"#8ea84e\"); k.ci(-0.09, 0.00, 0.035, \"#7b5a86\"); },\n  wild_stew:    k => { SH.bowl(k, \"#8b7a3c\"); k.ci(-0.07, -0.02, 0.045, PAL.leaf); k.ci(0.08, 0.00, 0.04, \"#b8863c\"); },\n  hearty_stew:  k => { SH.bowl(k, \"#9c5730\"); k.ci(-0.08, -0.02, 0.05, PAL.meatDk); k.ci(0.07, 0.01, 0.045, \"#cf9a45\"); },\n  fish_stew:    k => { SH.bowl(k, \"#7d94a2\"); k.tri([0.00, -0.06], [0.14, 0.00], [0.00, 0.06], PAL.fish); },\n  veg_soup:     k => { SH.bowl(k, \"#c2762f\"); k.ci(-0.07, -0.02, 0.04, PAL.leaf); k.ci(0.07, 0.00, 0.04, \"#e08a3c\"); },\n  noodles:      k => { SH.bowl(k, \"#e0cf9a\"); for (const x of [-0.12, 0.00, 0.12]) k.ln(x, -0.06, x + 0.04, 0.06, 0.035, \"#f2e3b4\");\n                       k.ci(0.10, -0.03, 0.04, PAL.leaf); },\n  salad:        k => { SH.bowl(k, \"#5f8a3f\"); k.ci(-0.08, -0.02, 0.05, \"#7fae4e\"); k.ci(0.08, 0.00, 0.045, \"#c0463c\"); },\n  bland_salad:  k => { SH.bowl(k, \"#8aa06a\"); k.ci(0.02, -0.02, 0.05, \"#a8bb84\"); },\n  sushi:        k => { k.rc(-0.34, -0.04, 0.28, 0.26, PAL.linen);                       // nigiri: rice bed\n                       k.pg([[-0.36, -0.10], [-0.04, -0.16], [-0.04, -0.02], [-0.36, 0.02]], \"#e07a6a\");   // the fish over it\n                       k.rc(-0.24, -0.06, 0.07, 0.28, \"#2f3a33\");                        // its nori band\n                       k.rc(0.06, -0.06, 0.28, 0.28, \"#2f3a33\");                          // maki roll\n                       k.el(0.20, 0.08, 0.11, 0.11, PAL.linen); k.ci(0.20, 0.08, 0.05, \"#c0463c\"); },\n  taco:         k => { k.pg([[-0.34, 0.20], [-0.20, -0.16], [0.20, -0.16], [0.34, 0.20]], \"#e0b155\");\n                       k.pg([[-0.22, 0.02], [0.22, 0.02], [0.16, -0.10], [-0.16, -0.10]], PAL.meatDk);\n                       k.ln(-0.20, -0.02, 0.20, -0.04, 0.05, PAL.leaf); },\n  pizza:        k => { k.tri([0, -0.34], [-0.30, 0.28], [0.30, 0.28], \"#e2b45e\");\n                       k.tri([0, -0.24], [-0.24, 0.24], [0.24, 0.24], \"#d9603c\");\n                       for (const [x, y] of [[-0.10, 0.10], [0.10, 0.06], [0.00, -0.06]]) k.ci(x, y, 0.05, \"#9c2f2f\"); },\n  combo:        k => { k.pg([[-0.32, -0.10], [0.32, -0.10], [0.24, -0.26], [-0.24, -0.26]], \"#daa55e\");\n                       k.rc(-0.32, -0.08, 0.64, 0.08, PAL.leaf); k.rc(-0.32, 0.00, 0.64, 0.10, PAL.meatDk);\n                       k.pg([[-0.32, 0.10], [0.32, 0.10], [0.26, 0.28], [-0.26, 0.28]], \"#daa55e\"); },\n  gourmet_platter: k => { SH.plate(k); k.pg([[-0.22, 0.10], [-0.06, -0.06], [0.10, 0.10]], PAL.meatDk);\n                       k.ci(0.14, 0.06, 0.06, PAL.leaf); k.ci(-0.02, 0.12, 0.05, PAL.gold); },\n  burnt:        k => { SH.plate(k); k.pg([[-0.20, 0.12], [-0.10, -0.06], [0.06, 0.02], [0.18, 0.12]], \"#2f2a26\");\n                       k.ln(-0.06, -0.16, -0.02, -0.30, 0.05, \"#6b6660\"); },\n  sludge:       k => { SH.bowl(k, \"#5e6b4a\"); k.ci(0.04, -0.03, 0.05, \"#7c8b58\"); k.ci(-0.08, 0.00, 0.035, \"#48553a\"); },\n\n  /* ---------- meat and fish ---------- */\n  meat:         k => { k.pg([[-0.30, 0.06], [-0.18, -0.20], [0.14, -0.24], [0.32, -0.02], [0.20, 0.22], [-0.16, 0.24]], PAL.meat);\n                       k.pg([[-0.06, -0.10], [0.10, -0.14], [0.16, 0.02], [0.00, 0.08]], PAL.fat); },\n  roast_meat:   k => { k.pg([[-0.14, -0.24], [0.16, -0.18], [0.30, 0.06], [0.10, 0.26], [-0.16, 0.18]], \"#9c5334\");\n                       k.ln(-0.14, -0.22, -0.34, 0.24, 0.09, \"#e8ddc6\"); },\n  meat_skewer:  k => { k.ln(-0.34, 0.30, 0.34, -0.30, 0.045, PAL.woodDk);\n                       for (const [x, y] of [[-0.16, 0.12], [0.02, -0.02], [0.18, -0.16]]) k.pg([[x - 0.10, y], [x, y - 0.10], [x + 0.10, y], [x, y + 0.10]], PAL.meatDk); },\n  herb_roast:   k => { k.pg([[-0.16, -0.22], [0.18, -0.16], [0.30, 0.08], [0.08, 0.26], [-0.18, 0.16]], \"#8e4a30\");\n                       for (const [x, y] of [[-0.04, -0.10], [0.10, 0.02], [-0.06, 0.10]]) k.ci(x, y, 0.04, PAL.leaf); },\n  anymeat:      k => { k.pg([[-0.28, 0.04], [-0.16, -0.20], [0.14, -0.22], [0.30, 0.00], [0.18, 0.22], [-0.14, 0.22]], PAL.meat);\n                       k.ln(-0.06, -0.14, -0.06, 0.10, 0.05, PAL.fat); k.ci(0.10, 0.06, 0.05, PAL.fat);\n                       k.ln(0.20, -0.26, 0.20, -0.12, 0.05, PAL.gold); k.ci(0.20, -0.04, 0.035, PAL.gold); },   // the wildcard's question mark\n  fish:         k => SH.fishBody(k, PAL.fish, PAL.fishDk),\n  tropical_fish:k => { SH.fishBody(k, \"#e8a33c\", \"#c05a2e\"); k.ln(-0.16, -0.14, -0.10, 0.16, 0.05, \"#f4d47a\"); },\n  river_titan:  k => { SH.fishBody(k, \"#63798c\", \"#3f5568\"); k.ci(0.04, -0.22, 0.05, \"#a8c4d8\"); k.ci(0.12, -0.28, 0.035, \"#a8c4d8\"); },\n  grilled_fish: k => { SH.plate(k); k.pg([[-0.26, 0.08], [-0.06, -0.06], [0.18, 0.02], [0.26, 0.10], [0.02, 0.16], [-0.20, 0.16]], \"#c08a54\");\n                       k.ln(-0.14, 0.04, 0.12, 0.08, 0.03, \"#8a5c34\"); },\n  fish_sticks:  k => { SH.plate(k); for (const x of [-0.18, -0.02, 0.14]) k.rc(x, -0.06, 0.11, 0.22, \"#d9a455\"); },\n\n  /* ---------- fruit, veg, forage ---------- */\n  fruit:        k => { k.ci(0, 0.06, 0.26, \"#c2402f\"); k.ci(-0.09, -0.02, 0.07, \"#e0806e\");\n                       k.ln(0, -0.16, 0.02, -0.32, 0.04, PAL.bark); k.tri([0.02, -0.28], [0.20, -0.34], [0.08, -0.20], PAL.leaf); },\n  snack:        k => { k.ci(-0.10, 0.08, 0.15, \"#b8324c\"); k.ci(0.12, 0.04, 0.15, \"#c94258\");\n                       k.ln(-0.08, -0.06, 0.00, -0.30, 0.035, PAL.leaf); k.ln(0.12, -0.10, 0.02, -0.30, 0.035, PAL.leaf); },\n  berry:        k => { for (const [x, y, r] of [[-0.14, 0.08, 0.13], [0.10, 0.12, 0.12], [0.00, -0.06, 0.13]]) k.ci(x, y, r, PAL.berry);\n                       k.ci(-0.16, 0.03, 0.04, \"#8a6aa2\"); },\n  veg:          k => { k.pg([[0.02, 0.34], [-0.14, -0.08], [0.14, -0.08]], \"#e07a2c\");\n                       k.tri([-0.10, -0.10], [0.00, -0.34], [0.10, -0.10], PAL.leaf); },\n  herb:         k => { k.ln(0, 0.32, 0, -0.16, 0.045, \"#4a6b34\");\n                       for (const s of [-1, 1]) { k.tri([0, -0.02], [s * 0.24, -0.14], [0, -0.20], PAL.leaf); k.tri([0, 0.14], [s * 0.20, 0.04], [0, -0.02], PAL.leaf); } },\n  flower:       k => { k.ln(0, 0.34, 0, -0.04, 0.04, \"#4a6b34\");\n                       for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; k.ci(Math.cos(a) * 0.16, -0.10 + Math.sin(a) * 0.16, 0.09, \"#f0e08a\"); }\n                       k.ci(0, -0.10, 0.08, PAL.amber); },\n  flowers:      k => { for (const [x, c] of [[-0.16, \"#d86a8a\"], [0.00, \"#f0e08a\"], [0.16, \"#8a7ac0\"]]) {\n                         k.ln(x, 0.34, x * 0.5, -0.06, 0.04, \"#4a6b34\");\n                         k.ci(x * 0.5, -0.12, 0.11, c); k.ci(x * 0.5, -0.12, 0.045, PAL.amber); } },\n  fiber:        k => { for (const [tp, bt] of [[-0.26, -0.06], [-0.12, -0.03], [0.02, 0.00], [0.16, 0.03], [0.28, 0.06]])\n                         k.ln(bt, 0.34, tp, -0.32, 0.055, \"#b8aa5c\");\n                       k.rc(-0.20, 0.02, 0.40, 0.10, \"#8a7434\"); },\n  cotton:       k => { k.ln(0.00, 0.36, 0.00, 0.02, 0.05, \"#6b7546\");\n                       for (const [x, y] of [[-0.16, 0.06], [0.15, 0.02], [-0.01, -0.16]]) {\n                         k.pg([[x - 0.16, y], [x, y - 0.18], [x + 0.16, y], [x, y + 0.16]], \"#7f8a52\");   // the boll case\n                         k.pg([[x - 0.11, y], [x, y - 0.13], [x + 0.11, y], [x, y + 0.11]], \"#fbfaf4\"); } },\n\n  /* ---------- drinks ---------- */\n  milk:         k => SH.glassCup(k, PAL.milk),\n  choco_milk:   k => SH.glassCup(k, \"#8a5f42\", \"#f0e0c0\"),\n  water:        k => SH.bottle(k, \"#a8d4e8\"),\n  nutrient:     k => SH.bottle(k, \"#8ac06a\", \"#c05a76\"),\n  lemonade:     k => SH.glassCup(k, \"#f0dc72\", \"#d86a8a\"),\n  milkshake:    k => { SH.glassCup(k, \"#f2d8c4\", \"#d86a8a\"); k.ci(0.00, -0.24, 0.10, PAL.cream); },\n  trop_shake:   k => { SH.glassCup(k, \"#f0a45c\", \"#5f8a3f\"); k.tri([0.18, -0.26], [0.34, -0.34], [0.26, -0.18], PAL.leaf); },\n  coffee:       k => SH.mug(k, PAL.cocoa),\n  mocha:        k => { SH.mug(k, \"#4a3226\"); k.el(-0.02, -0.21, 0.13, 0.04, PAL.cream); },\n  hot_choc:     k => { SH.mug(k, \"#5f3c28\", \"#e8dcc8\"); k.ci(-0.06, -0.22, 0.05, PAL.cream); k.ci(0.06, -0.20, 0.045, PAL.cream); },\n  tea:          k => { SH.mug(k, PAL.tea, \"#efe7d2\"); k.ln(0.10, -0.24, 0.16, -0.34, 0.03, PAL.twine); },\n  cider:        k => { k.pg([[-0.22, -0.18], [0.22, -0.18], [0.18, 0.32], [-0.18, 0.32]], \"#cf9a3c\");\n                       k.el(0, -0.18, 0.22, 0.07, \"#f2e3c0\");\n                       k.pg([[0.22, -0.10], [0.34, -0.06], [0.34, 0.12], [0.22, 0.16]], \"#d8d2c2\"); },\n\n  /* ---------- tools ---------- */\n  hammer:       k => { SH.haft(k); k.pg([[0.00, -0.30], [0.26, -0.22], [0.22, -0.06], [-0.04, -0.14]], PAL.steel);\n                       k.pg([[0.00, -0.30], [0.06, -0.32], [0.02, -0.10], [-0.04, -0.14]], PAL.steelDk); },\n  saw:          k => { k.pg([[-0.34, 0.18], [-0.20, 0.06], [0.30, -0.18], [0.34, -0.08], [-0.16, 0.18]], PAL.steel);\n                       for (let i = 0; i < 7; i++) k.tri([-0.14 + i * 0.07, 0.18], [-0.10 + i * 0.07, 0.26], [-0.06 + i * 0.07, 0.18], PAL.steelDk);\n                       k.rc(-0.40, 0.06, 0.14, 0.16, PAL.wood); },\n  screwdriver:  k => { k.ln(0.06, -0.06, 0.30, -0.32, 0.06, PAL.steel); k.ln(-0.24, 0.30, 0.06, -0.02, 0.13, \"#b8483c\");\n                       k.pg([[0.28, -0.30], [0.36, -0.36], [0.32, -0.24]], PAL.steelDk); },\n  hatchet:      k => { SH.haft(k); k.pg([[0.02, -0.28], [0.28, -0.34], [0.34, -0.12], [0.08, -0.08]], PAL.steel);\n                       k.pg([[0.28, -0.34], [0.34, -0.12], [0.24, -0.14], [0.22, -0.30]], PAL.steelDk); },\n  broom:        k => { k.ln(-0.16, -0.36, 0.06, 0.06, 0.06, PAL.wood);\n                       k.pg([[-0.06, 0.02], [0.20, 0.10], [0.28, 0.34], [-0.02, 0.30]], PAL.twine);\n                       for (const t of [0.02, 0.10, 0.18]) k.ln(t - 0.02, 0.12, t + 0.02, 0.32, 0.025, \"#9c8450\"); },\n  bedroll:      k => { k.rc(-0.30, -0.20, 0.60, 0.40, \"#5f7a8c\");\n                       k.el(-0.30, 0.00, 0.11, 0.20, \"#7f9aac\"); k.el(-0.30, 0.00, 0.055, 0.10, \"#455c6b\");\n                       k.el(0.30, 0.00, 0.11, 0.20, \"#4f6a7c\");\n                       k.rc(-0.02, -0.21, 0.10, 0.42, \"#c2a86a\"); },\n  sharprock:    k => { k.pg([[-0.24, 0.22], [-0.10, -0.26], [0.18, -0.10], [0.26, 0.22]], PAL.stone);\n                       k.pg([[-0.10, -0.26], [0.18, -0.10], [-0.02, 0.00]], \"#c2bbb0\"); },\n  stoneawl:     k => { k.ln(-0.20, 0.32, 0.14, -0.20, 0.07, PAL.wood); k.tri([0.10, -0.16], [0.20, -0.36], [0.22, -0.12], PAL.stone); },\n  stonemaul:    k => { SH.haft(k); k.pg([[-0.06, -0.30], [0.24, -0.26], [0.26, -0.04], [-0.04, -0.08]], PAL.stone);\n                       k.rc(-0.02, -0.26, 0.06, 0.18, PAL.stoneDk); },\n  stoneaxe:     k => { SH.haft(k); k.pg([[0.00, -0.26], [0.22, -0.34], [0.30, -0.14], [0.08, -0.06]], PAL.stone);\n                       k.ln(0.02, -0.28, 0.06, -0.06, 0.03, PAL.twine); },\n\n  /* ---------- weapons ---------- */\n  club:         k => { k.ln(-0.26, 0.32, 0.16, -0.24, 0.09, PAL.wood); k.ci(0.20, -0.28, 0.13, PAL.woodDk); },\n  bat:          k => { k.ln(-0.24, 0.32, 0.10, -0.14, 0.08, PAL.wood); k.pg([[0.04, -0.10], [0.24, -0.34], [0.34, -0.22], [0.14, 0.00]], \"#a8763f\"); },\n  baton:        k => { k.ln(-0.22, 0.30, 0.20, -0.26, 0.08, \"#2f3540\"); k.rc(-0.26, 0.16, 0.14, 0.16, \"#4a5566\"); },\n  knife:        k => { k.pg([[-0.06, 0.06], [0.06, -0.02], [0.32, -0.32], [0.34, -0.22], [0.06, 0.12]], PAL.steel);\n                       k.ln(-0.24, 0.28, -0.04, 0.08, 0.10, PAL.woodDk); },\n  slingshot:    k => { k.ln(0, 0.34, 0, -0.02, 0.07, PAL.wood);\n                       k.ln(0, -0.02, -0.20, -0.30, 0.06, PAL.wood); k.ln(0, -0.02, 0.20, -0.30, 0.06, PAL.wood);\n                       k.ln(-0.20, -0.28, 0.20, -0.28, 0.03, \"#8a5a4a\"); },\n  sling:        k => { k.ln(-0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine); k.ln(0.28, -0.24, 0.00, 0.14, 0.035, PAL.twine);\n                       k.pg([[-0.12, 0.10], [0.12, 0.10], [0.08, 0.28], [-0.08, 0.28]], \"#8a6a4a\"); k.ci(0, 0.19, 0.05, PAL.stone); },\n  bow:          k => { k.pg([[0.06, -0.34], [0.20, -0.10], [0.20, 0.10], [0.06, 0.34], [0.12, 0.30], [0.26, 0.06], [0.26, -0.06], [0.12, -0.30]], PAL.wood);\n                       k.ln(0.06, -0.34, 0.06, 0.34, 0.025, PAL.twine); k.ln(-0.24, 0.00, 0.12, 0.00, 0.03, \"#a89060\"); },\n  crudebow:     k => { k.pg([[0.02, -0.32], [0.18, -0.06], [0.16, 0.12], [0.04, 0.32], [0.10, 0.28], [0.24, 0.08], [0.24, -0.06], [0.10, -0.28]], \"#7f6136\");\n                       k.ln(0.02, -0.32, 0.04, 0.32, 0.022, PAL.twine); },\n  crossbow:     k => { k.pg([[-0.34, 0.10], [0.26, -0.06], [0.30, 0.04], [-0.26, 0.24]], PAL.wood);      // stock, angled\n                       k.pg([[0.06, -0.30], [0.14, -0.28], [0.20, 0.00], [0.14, 0.28], [0.06, 0.26], [0.12, 0.00]], PAL.woodDk);\n                       k.ln(0.10, -0.29, 0.10, 0.27, 0.022, PAL.twine);\n                       k.ln(0.10, -0.02, -0.20, 0.10, 0.03, \"#a89060\");                                   // the loaded bolt\n                       k.pg([[-0.34, 0.10], [-0.22, 0.06], [-0.20, 0.30], [-0.32, 0.32]], PAL.woodDk); },\n  stonespear:   k => { k.ln(-0.26, 0.34, 0.12, -0.14, 0.055, PAL.wood);\n                       k.tri([0.08, -0.10], [0.20, -0.36], [0.26, -0.10], PAL.stone); k.ln(0.06, -0.08, 0.20, -0.10, 0.03, PAL.twine); },\n  arrow:        k => { k.ln(-0.28, 0.30, 0.20, -0.24, 0.035, PAL.wood); k.tri([0.16, -0.20], [0.30, -0.34], [0.28, -0.16], PAL.steel);\n                       k.tri([-0.28, 0.30], [-0.18, 0.30], [-0.24, 0.16], PAL.linen); },\n  bolt:         k => { k.ln(-0.20, 0.24, 0.14, -0.18, 0.055, PAL.iron); k.tri([0.10, -0.14], [0.24, -0.30], [0.22, -0.10], PAL.steel); },\n\n  /* ---------- materials, parts, oddments ---------- */\n  wood:         k => { k.rc(-0.34, -0.10, 0.68, 0.22, PAL.wood); k.el(-0.34, 0.01, 0.09, 0.11, \"#a8763f\");\n                       k.el(-0.34, 0.01, 0.045, 0.055, PAL.woodDk); },\n  stick:        k => { for (const [a, b, c2] of [[-0.30, -0.20, 0.34], [-0.10, 0.30, 0.24], [0.10, -0.06, 0.30]])\n                         k.ln(a, c2, b, -0.30, 0.045, \"#8a6a3f\"); },\n  rope:         k => { for (const [y, c] of [[0.18, \"#a8905a\"], [0.06, PAL.rope], [-0.06, \"#a8905a\"], [-0.18, PAL.rope]]) {\n                         k.el(0, y, 0.30, 0.09, c);\n                         k.el(0, y, 0.13, 0.045, \"#7f6a42\"); }\n                       k.ln(0.26, -0.22, 0.36, -0.34, 0.045, PAL.rope); },\n  ore:          k => { for (const [x, y, r] of [[-0.14, 0.10, 0.13], [0.12, 0.12, 0.11], [0.00, -0.08, 0.15]])\n                         k.pg([[x - r, y], [x, y - r], [x + r, y], [x, y + r]], PAL.iron);\n                       k.ci(0.00, -0.10, 0.045, \"#9aa0a6\"); },\n  hardware:     k => { k.ci(-0.14, -0.06, 0.13, PAL.steelDk); k.ci(-0.14, -0.06, 0.05, \"#4a5058\");\n                       k.rc(0.02, 0.04, 0.28, 0.08, PAL.steel); k.ci(0.06, 0.08, 0.06, PAL.iron); },\n  pipe:         k => { k.rc(-0.32, -0.08, 0.52, 0.18, PAL.steelDk); k.rc(-0.36, -0.14, 0.10, 0.30, PAL.steel);\n                       k.rc(0.16, -0.14, 0.10, 0.30, PAL.steel); },\n  nozzle:       k => { k.pg([[-0.28, -0.06], [0.06, -0.16], [0.06, 0.16], [-0.28, 0.06]], PAL.steelDk);\n                       k.rc(0.06, -0.09, 0.20, 0.18, PAL.steel);\n                       for (const y of [-0.05, 0.03]) k.ln(0.26, y, 0.36, y, 0.03, \"#a8d4e8\"); },\n  heatcoil:     k => { k.rc(-0.30, 0.18, 0.60, 0.10, PAL.steelDk);\n                       for (let i = 0; i < 4; i++) k.ln(-0.24 + i * 0.16, 0.18, -0.18 + i * 0.16, -0.24, 0.05, \"#c0503c\"); },\n  frame:        k => { k.rc(-0.30, -0.28, 0.60, 0.56, PAL.wood); k.rc(-0.22, -0.20, 0.44, 0.40, \"#cfe0ea\");\n                       k.tri([-0.22, 0.20], [-0.02, -0.08], [0.14, 0.20], PAL.green); },\n  stamp:        k => { k.rc(-0.28, -0.24, 0.56, 0.48, PAL.paper);\n                       k.rc(-0.20, -0.16, 0.40, 0.32, \"#c05a4a\"); k.ci(0, 0, 0.09, PAL.paper); },\n  paint:        k => { k.rc(-0.32, -0.10, 0.64, 0.30, \"#c8bda4\");\n                       for (const [i, c] of [[0, \"#c0403c\"], [1, \"#3c6ac0\"], [2, \"#d8a93c\"], [3, \"#4a8a46\"]])\n                         k.ci(-0.22 + i * 0.15, 0.02, 0.055, c);\n                       k.ln(0.20, -0.12, 0.30, -0.34, 0.035, PAL.wood); },\n  candle:       k => { k.rc(-0.09, -0.14, 0.18, 0.36, PAL.linen); k.rc(-0.16, 0.20, 0.32, 0.10, PAL.steelDk);\n                       k.ln(0, -0.14, 0, -0.20, 0.02, PAL.ink); k.tri([0, -0.36], [-0.07, -0.20], [0.07, -0.20], PAL.flame); },\n  whistle:      k => { k.pg([[-0.34, -0.12], [0.22, -0.09], [0.22, 0.09], [-0.34, 0.12]], \"#c9a45e\");\n                       k.pg([[-0.34, -0.12], [-0.22, -0.09], [-0.22, 0.09], [-0.34, 0.12]], \"#8a6a34\");   // mouthpiece\n                       k.pg([[0.22, -0.09], [0.34, -0.16], [0.34, 0.16], [0.22, 0.09]], \"#a8853f\");        // flared bell\n                       for (const x of [-0.10, 0.02, 0.13]) k.ci(x, 0.00, 0.038, \"#5f4520\"); },\n  drum:         k => { k.el(0, -0.12, 0.30, 0.11, PAL.linen); k.rc(-0.30, -0.12, 0.60, 0.26, \"#c05a4a\");\n                       k.el(0, 0.14, 0.30, 0.11, \"#9c4438\");\n                       for (const x of [-0.18, 0.00, 0.18]) k.ln(x, -0.12, x - 0.06, 0.14, 0.025, PAL.linen); },\n  toy:          k => { k.ci(0, -0.16, 0.13, \"#c9a45e\"); k.rc(-0.14, -0.04, 0.28, 0.22, \"#a8763f\");\n                       k.ci(-0.10, 0.24, 0.06, PAL.woodDk); k.ci(0.10, 0.24, 0.06, PAL.woodDk); },\n  birdhouse:    k => { k.tri([0, -0.34], [-0.30, -0.04], [0.30, -0.04], \"#a8563c\");\n                       k.rc(-0.24, -0.04, 0.48, 0.32, PAL.wood); k.ci(0, 0.06, 0.09, \"#3a2f24\");\n                       k.ln(0, 0.14, 0, 0.30, 0.035, PAL.woodDk); },\n  tie:          k => { k.pg([[-0.26, -0.34], [-0.09, -0.30], [0.09, -0.30], [0.26, -0.34], [0.14, -0.20], [-0.14, -0.20]], \"#e8e2d0\");  // collar\n                       k.pg([[-0.10, -0.28], [0.10, -0.28], [0.13, -0.14], [-0.13, -0.14]], \"#3f3158\");                                    // knot\n                       k.pg([[-0.09, -0.12], [0.09, -0.12], [0.15, 0.18], [0.00, 0.34], [-0.15, 0.18]], \"#5f4a86\");\n                       k.ln(-0.08, 0.00, 0.10, 0.10, 0.032, \"#8a76b0\"); k.ln(-0.06, 0.14, 0.08, 0.22, 0.032, \"#8a76b0\"); },\n  ring:         k => { k.ci(0, 0.10, 0.21, \"#8a7440\"); k.ci(0, 0.10, 0.13, \"#2f2a22\");\n                       k.tri([0, -0.32], [-0.14, -0.12], [0.14, -0.12], \"#a8d0e2\");\n                       k.tri([-0.14, -0.12], [0.14, -0.12], [0, 0.02], \"#6f9cb4\"); },\n  rock:         k => { k.pg([[-0.26, 0.20], [-0.22, -0.08], [-0.02, -0.24], [0.20, -0.12], [0.26, 0.14], [0.06, 0.26]], PAL.stone);\n                       k.pg([[-0.14, -0.04], [0.00, -0.16], [0.10, -0.04], [-0.02, 0.04]], \"#b4aca1\"); },\n  goodie_crate: k => { k.rc(-0.32, -0.20, 0.64, 0.46, PAL.wood);\n                       k.rc(-0.32, -0.06, 0.64, 0.08, PAL.woodDk); k.rc(-0.06, -0.20, 0.12, 0.46, PAL.woodDk);\n                       k.tri([-0.32, -0.20], [0.00, -0.34], [0.32, -0.20], \"#a8763f\"); },\n  pelt:         k => { k.pg([[-0.30, -0.10], [-0.12, -0.28], [0.12, -0.28], [0.30, -0.10], [0.20, 0.24], [-0.20, 0.24]], \"#8a6238\");\n                       k.pg([[-0.14, -0.06], [0.14, -0.06], [0.10, 0.16], [-0.10, 0.16]], \"#c2a077\");\n                       k.tri([-0.30, -0.10], [-0.36, -0.28], [-0.16, -0.22], \"#8a6238\");\n                       k.tri([0.30, -0.10], [0.36, -0.28], [0.16, -0.22], \"#8a6238\"); },\n  finefiber:    k => { k.rc(-0.24, -0.30, 0.48, 0.07, \"#a8996f\"); k.rc(-0.24, 0.23, 0.48, 0.07, \"#a8996f\");\n                       k.rc(-0.17, -0.24, 0.34, 0.47, \"#efe7d2\");\n                       for (const y of [-0.18, -0.08, 0.02, 0.12]) k.ln(-0.17, y, 0.17, y + 0.05, 0.035, \"#d8ccae\");\n                       k.ln(0.17, -0.02, 0.34, -0.16, 0.028, \"#efe7d2\"); },\n  cloth:        k => { k.pg([[-0.34, 0.06], [-0.34, -0.16], [0.24, -0.30], [0.24, -0.08]], \"#6f8fae\");\n                       k.pg([[-0.34, 0.06], [0.24, -0.08], [0.24, 0.16], [-0.34, 0.30]], \"#5f7d9c\");\n                       k.pg([[0.24, -0.30], [0.34, -0.24], [0.34, 0.10], [0.24, 0.16]], \"#4f6b88\"); },\n\n  /* ---------- medicine ---------- */\n  medicine:     k => { k.el(0, 0, 0.20, 0.13, \"#d8d2c8\"); k.pg([[-0.20, -0.04], [0.20, -0.10], [0.20, 0.02], [-0.20, 0.08]], \"#c04a4a\");\n                       k.el(-0.13, 0.02, 0.08, 0.11, \"#e8e2d8\"); },\n  bandage:      k => { k.pg([[-0.36, 0.16], [-0.20, -0.12], [0.20, -0.24], [0.36, -0.02], [0.20, 0.26], [-0.20, 0.32]], \"#efe0c4\");\n                       k.pg([[-0.16, -0.10], [0.14, -0.19], [0.19, 0.00], [-0.11, 0.11]], \"#dcc79a\");      // the pad\n                       for (const [x, y] of [[-0.06, -0.09], [0.04, -0.12], [-0.03, 0.00], [0.07, -0.03]]) k.ci(x, y, 0.024, \"#b89a68\");\n                       k.ln(-0.34, 0.12, -0.22, 0.28, 0.05, \"#e2d0ac\"); },\n  salve:        k => { k.rc(-0.20, -0.16, 0.40, 0.40, \"#cfe0d4\"); k.rc(-0.24, -0.24, 0.48, 0.10, \"#8a7a5a\");\n                       k.rc(-0.14, -0.02, 0.28, 0.20, \"#7f9a5c\"); },\n\n  /* ---------- garments (drawn as the piece, not a person wearing it) ---------- */\n  sun_hat:      k => { k.el(0, 0.10, 0.38, 0.14, \"#e2c882\"); k.el(0, 0.02, 0.18, 0.16, \"#efdca4\");\n                       k.rc(-0.18, 0.02, 0.36, 0.06, \"#c2a05a\"); },\n  cloth_cap:    k => { k.pg([[-0.26, 0.04], [-0.18, -0.20], [0.14, -0.24], [0.26, 0.04]], \"#6f7f8c\");\n                       k.pg([[0.10, 0.02], [0.36, 0.06], [0.34, 0.14], [0.08, 0.10]], \"#5f6d78\"); },\n  wool_hood:    k => { k.pg([[-0.28, 0.22], [-0.24, -0.14], [0.00, -0.30], [0.24, -0.14], [0.28, 0.22], [0.12, 0.14], [-0.12, 0.14]], \"#a86a5a\");\n                       k.el(0, 0.00, 0.14, 0.16, \"#d8c0a8\"); },\n  hunter_hat:   k => { k.el(0, 0.14, 0.36, 0.11, \"#5f4a34\"); k.pg([[-0.18, 0.14], [-0.14, -0.24], [0.14, -0.24], [0.18, 0.14]], \"#6f5a3e\");\n                       k.rc(-0.19, 0.02, 0.38, 0.07, \"#3f3324\"); k.tri([0.10, -0.02], [0.28, -0.16], [0.14, -0.14], \"#c2a05a\"); },\n  guard_helm:   k => { k.pg([[-0.26, 0.16], [-0.22, -0.14], [0.00, -0.30], [0.22, -0.14], [0.26, 0.16]], PAL.steel);\n                       k.rc(-0.05, -0.28, 0.10, 0.40, PAL.steelDk); k.pg([[-0.26, 0.16], [0.26, 0.16], [0.22, 0.24], [-0.22, 0.24]], PAL.steelDk); },\n  summer_tunic: k => { k.pg([[-0.30, -0.16], [-0.12, -0.26], [0.12, -0.26], [0.30, -0.16], [0.22, -0.02], [0.24, 0.28], [-0.24, 0.28], [-0.22, -0.02]], \"#8ac0b0\");\n                       k.pg([[-0.10, -0.26], [0.10, -0.26], [0.00, -0.12]], \"#6fa392\"); },\n  work_shirt:   k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.24, 0.02], [0.26, 0.30], [-0.26, 0.30], [-0.24, 0.02]], \"#5f7f9c\");\n                       k.ln(0, -0.20, 0, 0.30, 0.035, \"#4a6880\");\n                       for (const y of [-0.06, 0.06, 0.18]) k.ci(0, y, 0.028, \"#e8e2d0\"); },\n  leather_coat: k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.26, 0.30], [-0.26, 0.30]], \"#7a4f2c\");\n                       k.pg([[-0.10, -0.24], [0.10, -0.24], [0.06, 0.30], [-0.06, 0.30]], \"#5f3c20\");\n                       k.rc(-0.28, 0.10, 0.56, 0.07, \"#4a2f18\"); },\n  winter_jacket:k => { k.pg([[-0.34, -0.12], [-0.12, -0.26], [0.12, -0.26], [0.34, -0.12], [0.28, 0.30], [-0.28, 0.30]], \"#3f5f7a\");\n                       for (const y of [-0.06, 0.06, 0.18]) k.rc(-0.26, y, 0.52, 0.06, \"#527a98\");\n                       k.el(0, -0.22, 0.16, 0.07, \"#d8c4a8\"); },\n  guard_mail:   k => { k.pg([[-0.32, -0.14], [-0.12, -0.26], [0.12, -0.26], [0.32, -0.14], [0.26, 0.30], [-0.26, 0.30]], PAL.steelDk);\n                       for (let r = 0; r < 4; r++) for (let c2 = 0; c2 < 5; c2++)\n                         k.ci(-0.20 + c2 * 0.10, -0.14 + r * 0.11, 0.033, r % 2 ? PAL.steel : \"#9aa3ac\"); },\n  light_shorts: k => { k.pg([[-0.26, -0.22], [0.26, -0.22], [0.24, 0.02], [0.06, 0.16], [-0.06, 0.16], [-0.24, 0.02]], \"#c9b78a\");\n                       k.rc(-0.26, -0.24, 0.52, 0.07, \"#a89468\"); k.ln(0, -0.10, 0, 0.16, 0.02, \"#a89468\"); },\n  work_trous:   k => { k.pg([[-0.26, -0.26], [0.26, -0.26], [0.22, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.22, 0.32]], \"#4a5f7a\");\n                       k.rc(-0.26, -0.28, 0.52, 0.07, \"#38495e\"); },\n  winter_trous: k => { k.pg([[-0.27, -0.26], [0.27, -0.26], [0.23, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.23, 0.32]], \"#3a4a5e\");\n                       k.rc(-0.27, -0.28, 0.54, 0.07, \"#2c3a4a\");\n                       k.rc(-0.20, 0.20, 0.14, 0.06, \"#7f9ab0\"); k.rc(0.06, 0.20, 0.14, 0.06, \"#7f9ab0\"); },\n  leather_legs: k => { k.pg([[-0.26, -0.26], [0.26, -0.26], [0.22, 0.32], [0.04, 0.32], [0.00, 0.02], [-0.04, 0.32], [-0.22, 0.32]], \"#6f4728\");\n                       k.rc(-0.26, -0.28, 0.52, 0.07, \"#4a2f18\"); k.rc(-0.22, 0.04, 0.10, 0.08, \"#8a5f34\"); },\n  guard_greaves:k => { k.pg([[-0.24, -0.24], [-0.04, -0.24], [-0.06, 0.30], [-0.22, 0.30]], PAL.steel);\n                       k.pg([[0.04, -0.24], [0.24, -0.24], [0.22, 0.30], [0.06, 0.30]], PAL.steel);\n                       for (const y of [-0.10, 0.04, 0.18]) { k.rc(-0.24, y, 0.20, 0.05, PAL.steelDk); k.rc(0.04, y, 0.20, 0.05, PAL.steelDk); } },\n};";
+const code = document.getElementById('code');
+const grid = document.getElementById('grid');
+const err  = document.getElementById('err');
+code.value = DEFAULT_ART;
+
+let ART = {};
+function compile() {
+  try {
+    ART = new Function('PAL','SH','iconKit','"use strict"; return (' +
+      code.value.replace(/^\s*const\s+ICON_ART\s*=\s*/, '').replace(/;\s*$/, '') + ');')(PAL, SH, iconKit);
+    err.classList.remove('on'); return true;
+  } catch (e) { err.textContent = e.message; err.classList.add('on'); return false; }
+}
+function draw() {
+  if (!compile()) return;
+  const px = +document.getElementById('size').value;
+  const q = document.getElementById('filter').value.trim().toLowerCase();
+  const ids = Object.keys(NAMES).concat(Object.keys(ART).filter(id => !(id in NAMES)));
+  grid.innerHTML = ''; let shown = 0, missing = 0;
+  for (const id of ids) {
+    const nm = NAMES[id] || id + ' (not an object in the game)';
+    if (q && !id.toLowerCase().includes(q) && !nm.toLowerCase().includes(q)) continue;
+    const cell = document.createElement('div');
+    cell.className = 'cell' + (ART[id] ? '' : ' miss') + (id in NAMES ? '' : ' hit');
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = px * (window.devicePixelRatio || 1);
+    cv.style.width = cv.style.height = px + 'px';
+    const c = cv.getContext('2d'); c.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    if (ART[id]) { try { ART[id](iconKit(c, px/2, px/2, px)); } catch (e) {
+        c.fillStyle = '#7d2f2c'; c.fillRect(0,0,px,px); cell.title = e.message; } }
+    else missing++;
+    const lab = document.createElement('span'); lab.textContent = nm; lab.title = id;
+    cell.append(cv, lab);
+    cell.onclick = () => {                                     // jump the editor to this recipe
+      const i = code.value.indexOf('\n  ' + id + ':');
+      if (i >= 0) { code.focus(); code.setSelectionRange(i + 1, code.indexOf('\n  ', i + 3)); }
+    };
+    grid.append(cell); shown++;
+  }
+  document.getElementById('count').textContent =
+    shown + ' shown' + (missing ? ' \u00b7 ' + missing + ' with no art' : '');
+}
+document.getElementById('run').onclick = draw;
+document.getElementById('reset').onclick = () => { code.value = DEFAULT_ART; draw(); };
+document.getElementById('copy').onclick = async () => {
+  await navigator.clipboard.writeText(code.value);
+  const b = document.getElementById('copy'); b.textContent = 'Copied \u2713';
+  setTimeout(() => b.textContent = 'Copy ICON_ART', 1200);
+};
+document.getElementById('size').oninput = draw;
+document.getElementById('filter').oninput = draw;
+code.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); draw(); } });
+draw();
+</script>

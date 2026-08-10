@@ -71,11 +71,42 @@ extra configuration.
 - **⚙️ Settings → 💾 Save file** exports/imports a full save as JSON, which works
   anywhere and moves between devices.
 
+## Drawing the icons
+
+Every object in the game — all 109 items and 15 garments — is drawn as flat
+vertex art rather than an emoji, from recipes in the `ICON_ART` table in
+`index.tsx`.
+
+To draw your own, open **`tools/icon-studio.html`** in a browser. No build step
+and no server: it carries its own copy of the drawing kit, renders all 124
+objects live, and redraws on **Ctrl/Cmd+Enter**. Anything with no recipe shows
+up red, syntax errors appear in a banner instead of failing silently, and
+clicking a tile jumps the editor to that recipe. When you like it, hit **Copy
+ICON_ART** and paste over the `ICON_ART` block in `index.tsx`.
+
+A recipe is one function per object, given a kit `k`:
+
+```js
+bread: k => SH.loaf(k),                                  // reuse a shared shape
+ore:   k => { for (const [x, y, r] of [[-0.14, 0.10, 0.13], [0.12, 0.12, 0.11]])
+                k.pg([[x - r, y], [x, y - r], [x + r, y], [x, y + r]], PAL.iron); },
+```
+
+- Coordinates run about **−0.45…0.45** from the centre, so one recipe draws at
+  any size: 18px in an inventory row or a whole tile on the ground.
+- `k` gives you `pg(points, fill)`, `rc(x, y, w, h, fill)`, `ci(x, y, r, fill)`,
+  `el(x, y, rx, ry, fill)`, `ln(x1, y1, x2, y2, width, fill)` and
+  `tri(a, b, c, fill)`. Drawing order is back to front.
+- `SH` holds the shared assemblies (`plate`, `bowl`, `mug`, `bottle`,
+  `glassCup`, `fishBody`, `loaf`, `haft`, `sack`, `gem`) and `PAL` the named
+  colours. Using them is what keeps a hundred-odd objects looking related.
+
 ## Project layout
 
 | Path | What it is |
 | --- | --- |
 | `index.tsx` | The entire game (one big React component). |
+| `tools/icon-studio.html` | Standalone live editor for the item art (see above). |
 | `src/main.tsx` | Entry point: mounts the game, shims `window.storage` to `localStorage`. |
 | `index.html` | Vite HTML entry. |
 | `vite.config.ts` | Build config (relative base for Pages). |
