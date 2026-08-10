@@ -1557,7 +1557,7 @@ const BUILDINGS = [
   { id: "clinic_f",    town: "ferndale",   name: "Ferndale Clinic",  x: 19, y: 3,  w: 4, h: 3, door: { x: 20, y: 6 },  color: "#a8c0b8", roof: "#70908a", enterable: true },
   { id: "store_f",     town: "ferndale",   name: "Mill Supply Co.",  x: 3,  y: 3,  w: 3, h: 3, door: { x: 4,  y: 6 },  color: "#8a9a5a", roof: "#5e6b3a", enterable: true },
   { id: "grill_f",     town: "ferndale",   name: "The Millstone",    x: 3,  y: 9,  w: 4, h: 3, door: { x: 4,  y: 12 }, color: "#b07a4a", roof: "#7d5530", enterable: true },
-  { id: "tailor_f",    town: "ferndale",   name: "Thimble & Thread", x: 26, y: 3,  w: 4, h: 3, door: { x: 27, y: 6 },  color: "#9a7ab0", roof: "#6b5280", enterable: true },   // Stage 17: the valley's tailor
+  { id: "tailor_f",    town: "ferndale",   name: "Thimble & Thread", x: 7,  y: 3,  w: 3, h: 3, door: { x: 8,  y: 6 },  color: "#9a7ab0", roof: "#6b5280", enterable: true },   // Stage 17: the valley's tailor (Ferndale is 26 wide — this has to sit inside it)
   { id: "home_f1",     town: "ferndale",   name: "Hazel's House",    x: 11, y: 9,  w: 2, h: 2, door: { x: 11, y: 11 }, color: "#a08a70", roof: "#6f5e4a", enterable: true },
   { id: "home_f2",     town: "ferndale",   name: "Yusuf's Place",    x: 14, y: 9,  w: 2, h: 2, door: { x: 14, y: 11 }, color: "#7a90a0", roof: "#526470", enterable: true },
   { id: "home_f3",     town: "ferndale",   name: "Sana's Cottage",  x: 19, y: 9,  w: 2, h: 2, door: { x: 19, y: 11 }, color: "#90a07a", roof: "#647052", enterable: true },
@@ -2476,6 +2476,8 @@ const TAILOR_MATS = {
   cloth:     { name: "Bolt of Cloth",  emoji: "🧶", mats: { cotton: 3, finefiber: 1 }, out: 1 },
 };
 const PATCH_FRACTION = 0.45;   // patching a torn piece costs less than half of making a new one
+/* Stage 19: what a trip to Thimble & Thread costs a resident, and how many make it in a day */
+CFG.TAILOR = { npcSpend: 10, patchFee: 6, maxTrips: 3, openHour: 9, closeHour: 18 };
 
 /* =====================================================================
    STAGE 17 — HOW PEOPLE LOOK. Every soul gets a stable palette and a
@@ -2515,6 +2517,18 @@ function lookOf(ent) {
 }
 /* what someone is actually wearing, by slot — worn garments beat their default clothes */
 const wornInSlot = (ent, slot) => (ent.worn || []).find(id => GARMENTS[id]?.slot === slot) || null;
+/* Stage 19: does this soul actually need to see a tailor? Torn kit is the real driver — you
+   can re-layer what you own for the weather, but a hole is a hole. Returns the reason, or null. */
+function needsTailor(ent, felt) {
+  if (!ent.alive || ent.minor) return null;
+  const torn = (ent.worn || []).filter(id => ent.wornTorn?.[id]);
+  if (torn.length) return `${GARMENTS[torn[0]].name.toLowerCase()} is torn through`;
+  const st = tempStress(felt);
+  if (st.cold && !(ent.worn || []).some(id => GARMENTS[id]?.warmth >= 6)) return "nothing warm enough for this weather";
+  if (st.hot && !(ent.worn || []).some(id => GARMENTS[id]?.warmth < 0)) return "nothing light enough for this heat";
+  return null;
+}
+const TAILOR_BID = "tailor_f";
 /* dress someone sensibly for the weather from what their character would own. Watch officers
    draw their issued plate; hunters and outlaws favour leathers; everyone else wears the band
    that fits the season. Deterministic, so a given soul's wardrobe is stable. */
@@ -3576,7 +3590,9 @@ export default function Alderbrook() {
       y: def.home ? bld(def.home).door.y : world.towns[def.town].spots.bench.y,
       hunger: 60 + (i * 4) % 30, thirst: 60 + (i * 7) % 30, energy: 80,
       hygiene: 65 + (i * 5) % 30, health: 100, alive: true, wanted: 0,
-      worn: [], wornTorn: {}, wornWear: {},   // Stage 17: the wardrobe — pieces on, which are torn, and how used each is
+      // Stage 17: dressed from the very first morning — waiting for the midnight roll left the
+      // whole valley standing around in nothing on day one.
+      worn: dressForSeason({ ...def }, seasonOf(1), SEASONS[seasonOf(1)].base), wornTorn: {}, wornWear: {},
       legs: [], path: [], goal: null, activity: "starting the day", hidden: false,
       bubble: null, lastGreet: -999, mood: "neutral",
       evicted: false, vagrantWarned: false,             // Stage 3: rent debt + the officer's one free pass
@@ -5793,7 +5809,19 @@ export default function Alderbrook() {
     // Watch vehicles ride free; visitors pay fares in moveNPC. A commuter, or an NPC stranded
     // outside their home town (hospital discharge, a rescue hauled cross-town), may travel —
     // otherwise a cross-town hire can never reach the shop and discharged Outlanders pace Stonecross.
-    const cross = !!(npc.enforcer) || !!npc.visitPlan || hereTown !== npc.town || commutes;
+    /* Stage 19: once a day, in shop hours, anyone with torn kit or nothing fit for the sky
+       decides to walk to Thimble & Thread. Checked HERE rather than at the midnight rollover,
+       because midnight is bedtime and a trip set then would be cancelled before dawn. */
+    if (!npc.tailorTrip && npc._tailorAskDay !== sim.day && !npc.minor && !npc.jailedUntil && !npc.incap && !npc.dying
+        && hour >= CFG.TAILOR.openHour && hour < CFG.TAILOR.closeHour - 2) {
+      npc._tailorAskDay = sim.day;
+      const why = npc.coins >= CFG.TAILOR.npcSpend ? needsTailor(npc, feltTemp(sim, npc)) : null;
+      if (why && sim.npcs.filter(n => n.tailorTrip).length < CFG.TAILOR.maxTrips) {
+        npc.tailorTrip = { phase: "go", why };
+        npc.goal = null;
+      }
+    }
+    const cross = !!(npc.enforcer) || !!npc.visitPlan || !!npc.tailorTrip || hereTown !== npc.town || commutes;
 
     let goal, activity, hide = false;
     if ((npc.energy < 22 || asleepHours) && npc.thirst > 20 && npc.hunger > 15 && npc.sick?.level !== "bad") {
@@ -5804,6 +5832,7 @@ export default function Alderbrook() {
         activity = "sleeping on a bench"; hide = false;  // rough sleepers stay visible (that's the point)
       } else { goal = { scene: `t:${npc.town}`, ...homeDoor }; activity = "sleeping at home"; hide = true; }
       if (npc.visitPlan) npc.visitPlan = null;           // trips end at bedtime
+      if (npc.tailorTrip) npc.tailorTrip = null;         // ...and so does a shopping trip
       if (npc.hostingUntil) npc.hostingUntil = 0;        // Stage 4: stop hosting at bedtime
       if (npc.courierOrder) { const o = sim.orders.find(x => x.id === npc.courierOrder); if (o) o.claimedBy = null; npc.courierOrder = null; }   // release undelivered parcel
     } else if (npc.thirst < CFG.STARVE.criticalNeed || npc.hunger < CFG.STARVE.criticalNeed) {
@@ -6016,6 +6045,17 @@ export default function Alderbrook() {
       const hi = world.interiors[npc.home];
       const spot = hi?.stations?.table || hi?.seats?.[1] || bld(npc.home).door;
       goal = { scene: `i:${npc.home}`, x: spot.x, y: spot.y }; activity = "hosting a visitor at home";
+    } else if (npc.tailorTrip && hour >= CFG.TAILOR.openHour && hour < CFG.TAILOR.closeHour) {
+      /* Stage 19: the walk to Thimble & Thread. They go in, they get seen to at the counter,
+         they walk home in it. Cross-town legs route through Mo's bus like any other trip. */
+      const tt = npc.tailorTrip;
+      if (tt.phase === "return") {
+        goal = { scene: `t:${npc.town}`, ...homeDoor }; activity = "walking home in something new";
+      } else {
+        const stn = world.interiors[TAILOR_BID]?.stations?.shop || bld(TAILOR_BID).door;
+        goal = { scene: `i:${TAILOR_BID}`, x: stn.x, y: stn.y };
+        activity = npc.scene === `i:${TAILOR_BID}` ? "waiting on the tailor" : "off to the tailor";
+      }
     } else if (npc.visitPlan && (npc.visitPlan.party ? hour >= 15 : hour >= 9) && hour < 19) {
       /* the social trip (budget-gated in dailyTick); party guests leave later
          and stay for the whole thing instead of bailing at 17:00 */
@@ -6436,6 +6476,43 @@ export default function Alderbrook() {
       if (vp.arrived && absTime >= vp.until) vp.phase = "return";
     }
     if (npc.visitPlan?.phase === "return" && npc.scene === `t:${npc.town}`) npc.visitPlan = null;   // home again
+    /* Stage 19: served at the tailor's counter. Torn pieces get patched (cheaper); anything the
+       weather demands gets bought off the peg. The shop's till and shelves are REAL — the
+       owner takes the coin, and a bought garment comes off the rack. */
+    if (npc.tailorTrip && npc.tailorTrip.phase !== "return" && npc.scene === `i:${TAILOR_BID}`) {
+      const tt = npc.tailorTrip;
+      const stn = world.interiors[TAILOR_BID]?.stations?.shop;
+      if (!tt.served && (!stn || dist(npc, stn) < 2.4)) {
+        tt.served = true;
+        const felt = feltTemp(sim, npc);
+        const torn = (npc.worn || []).filter(id => npc.wornTorn[id]);
+        let spent = 0, note = "";
+        for (const id of torn) {                        // mending first — it's what they came for
+          if (npc.coins < CFG.TAILOR.patchFee) break;
+          npc.coins -= CFG.TAILOR.patchFee; spent += CFG.TAILOR.patchFee;
+          delete npc.wornTorn[id]; npc.wornWear[id] = (GARMENTS[id].dur || 100) * 0.35;
+          note = `had their ${GARMENTS[id].name.toLowerCase()} patched`;
+        }
+        if (!torn.length) {                              // nothing torn — then it's the weather they came about
+          const band = felt <= 6 ? "winter" : felt >= 24 ? "summer" : "medium";
+          const want = garmentsOfBand(band).find(id => GARMENTS[id].slot === "torso") || null;
+          if (want && npc.coins >= (ITEMS[want]?.price || 99)) {
+            npc.coins -= ITEMS[want].price; spent += ITEMS[want].price;
+            takeStock(sim, TAILOR_BID, want);            // off the rack if there's one on it
+            const old = wornInSlot(npc, "torso");
+            npc.worn = [...(npc.worn || []).filter(x => x !== old), want];
+            note = `bought a ${GARMENTS[want].name.toLowerCase()}`;
+          }
+        }
+        if (spent) {
+          ringSale(sim, TAILOR_BID, spent);              // the till takes it like any other sale
+          npc.bubble = { text: rand(["That'll see me right.", "Much obliged.", "Worth the walk."]), until: now + 5 };
+          sim.dayLog.push(`${npc.name} ${note || "saw the tailor"}`);
+        }
+        tt.phase = "return";
+      }
+    }
+    if (npc.tailorTrip?.phase === "return" && npc.scene === `t:${npc.town}`) npc.tailorTrip = null;
     if (npc.crimePlan) {
       stealAttempt(sim, world, npc, npc.crimePlan.bId, npc.crimePlan.itemId, now);
       npc.crimePlan = null; npc.goal = null;
@@ -7351,9 +7428,11 @@ export default function Alderbrook() {
         for (const n of sim.npcs) {
           if (!n.alive) continue;
           n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
+          /* Stage 19: you re-layer what you OWN for the weather — but torn pieces stay torn.
+             A hole doesn't mend itself overnight; that's what the walk to Ferndale is for. */
+          const torn = (n.worn || []).filter(id => n.wornTorn[id]);
           const want = dressForSeason(n, sim.season, t9);
-          // keep anything they already own that still suits; otherwise change into the day's kit
-          if (want.join() !== n.worn.join()) { n.worn = want; }
+          if (want.join() !== n.worn.join()) n.worn = [...new Set([...want, ...torn])].slice(0, 4);
         }
       }
       if (wasSeason !== sim.season) {
@@ -11602,6 +11681,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       sick: n.sick?.level || null,
       coins: Math.floor(n.coins), inv: invLine(n), tier: fameTier(n.fame, n.renown),
       health: healthDesc(n.health), wanted: n.wanted, mayor: !!n.mayor,
+      // Stage 19: what they've got on, and whether the sky is beating them up in it
+      wearing: (n.worn || []).map(id => `${GARMENTS[id].emoji} ${GARMENTS[id].name}${n.wornTorn?.[id] ? " (torn)" : ""}`).join(", ") || "little to speak of",
+      felt: feltTemp(sim, n),
       toYou: n.relationships.player || "neutral",
       memories: [...n.memories], likes: n.likes, dislikes: n.dislikes,
       rels: Object.entries(n.relationships).filter(([id]) => id !== "player")
@@ -14156,6 +14238,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                   </div>
                   <div style={{ fontSize: fs - 2, opacity: 0.8, marginTop: 4 }}>{f.intent ? `Today: ${f.intent}` : f.activity} · {f.tier} · {f.health}{f.sick && <span style={{ color: "#7a9a5f" }}> · 🤒 {f.sick}</span>}</div>
                   <div style={{ fontSize: fs - 2, marginTop: 4 }}>
+                    <span style={{ opacity: 0.6 }}>Wearing</span> {f.wearing}{(() => { const st = tempStress(f.felt); return st.cold ? <span style={{ color: "#7fb4e0" }}> · cold at {f.felt}°</span> : st.hot ? <span style={{ color: "#e08a52" }}> · overheating at {f.felt}°</span> : null; })()}<br />
                     <span style={{ opacity: 0.6 }}>Carries</span> {f.inv} · <span style={{ opacity: 0.6 }}>Likes</span> {f.likes.join(", ")} · <span style={{ opacity: 0.6 }}>Dislikes</span> {f.dislikes.join(", ")}
                   </div>
                   {f.rels.length > 0 && <div style={{ fontSize: fs - 2, marginTop: 3 }}><span style={{ opacity: 0.6 }}>Feels:</span> {f.rels.join(" · ")}</div>}
