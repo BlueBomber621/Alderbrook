@@ -922,6 +922,9 @@ const ITEMS = {
   river_titan:  { name: "River Titan",    emoji: "🐋", price: 48, cat: "ingredient", eat: { hunger: 30 } },   // Stage 12: the EXPERT catch — three stages of fight for one of these
   goodie_crate: { name: "Goodie Crate",   emoji: "🎲", price: 0,  cat: "misc",    use: "goodie" },            // Stage 6: open for 3 random items
   fish_stew:    { name: "Hearty Fish Stew", emoji: "🫕", price: 16, cat: "food",   eat: { hunger: 75, energy: 15 } },   // Stage 6: hard cook from tropical fish
+  /* Stage 22 — not a real item: the placeholder a recipe shows when it'll take ANY cut.
+     Never held in a pack; resolveNeeds() swaps it for the cheapest meat on the shelf. */
+  anymeat:      { name: "Any Meat",       emoji: "🍖", price: 0,  cat: "virtual" },
   /* Stage 16 — what the hedgerows give up */
   berry:        { name: "Wild Berries",   emoji: "🫐", price: 2,  cat: "food", eat: { hunger: 12, thirst: 8 } },
   flower:       { name: "Wildflowers",    emoji: "🌼", price: 2,  cat: "misc" },
@@ -1035,6 +1038,44 @@ const ITEMS = {
    knob must be set to before the timing game — presence of `temp` marks a HARD
    recipe), and `hard: true` (a Cooking-track skill check gates plating). Simple
    recipes omit all three and behave exactly as before. */
+/* =====================================================================
+   STAGE 22 — "ANY MEAT". A recipe slot that will take whatever cut you've
+   got: raw game, or something already off the fire. NOT finished meals —
+   you can't build a pizza out of a game pie. When a recipe asks for it the
+   kitchen reaches for the LEAST valuable meat on the shelf first, so your
+   good skewers don't vanish into a base.
+   ===================================================================== */
+const MEAT_POOL = ["meat", "roast_meat", "meat_skewer"];
+const cheapestMeat = (inv) => MEAT_POOL
+  .filter(id => (inv?.[id] || 0) > 0)
+  .sort((a, b) => (ITEMS[a]?.price || 0) - (ITEMS[b]?.price || 0))[0] || null;
+/* turn a recipe's needs into concrete items this pack can actually pay, or null if it can't.
+   Everything that checks or spends a recipe runs through here, so "anymeat" behaves like a
+   real ingredient everywhere: the cook panel, NPC kitchens and the chef shift alike. */
+function resolveNeeds(inv, needs) {
+  const out = {};
+  for (const [ing, n] of Object.entries(needs || {})) {
+    if (ing !== "anymeat") {
+      if ((inv?.[ing] || 0) < n) return null;
+      out[ing] = (out[ing] || 0) + n;
+      continue;
+    }
+    let left = n;
+    const pool = [...MEAT_POOL].sort((a, b) => (ITEMS[a]?.price || 0) - (ITEMS[b]?.price || 0));
+    for (const id of pool) {                    // spend the cheapest cuts first
+      if (left <= 0) break;
+      const have = (inv?.[id] || 0) - (out[id] || 0);
+      if (have <= 0) continue;
+      const take = Math.min(have, left);
+      out[id] = (out[id] || 0) + take;
+      left -= take;
+    }
+    if (left > 0) return null;
+  }
+  return out;
+}
+const canCookRecipe = (inv, r) => !!resolveNeeds(inv, r.needs);
+
 const RECIPES = {
   /* --- simple: the classic peak-timing game --- */
   grilled_fish: { needs: { fish: 1 },              tier: 0, label: "Grill a fish" },
@@ -1061,6 +1102,9 @@ const RECIPES = {
   sushi:        { needs: { fish: 1, flour: 1, veg: 1 },    temp: 220, hard: true, tier: 2, label: "Roll sushi" },
   croissant:    { needs: { fresh_bread: 1, milk: 1 },      temp: 375, hard: true, tier: 2, label: "Fold croissants" },
   game_pie:     { needs: { meat: 2, dough: 1, herb: 1 },   temp: 400, hard: true, tier: 2, label: "Bake a game pie" },
+  /* Stage 22 — the pizza: two rounds of dough for the base, milk for the cheese, and whatever
+     meat's to hand (the kitchen reaches for the cheapest cut first) */
+  pizza:        { needs: { dough: 2, milk: 1, anymeat: 1 }, temp: 425, hard: true, tier: 2, label: "Build a pizza" },
   /* --- EXPERT (tier 3): gourmet cooking built on wild herbs & foraged greens. `expert` flips
      the knob game to the skill-gated rules: below Professional you must hit the temp EXACTLY in
      3s; Professional gets "close enough" in 3s; Expert/Master cook with no time rush. Below
@@ -2046,11 +2090,15 @@ const NPC_DEFS = [
     coins: 7, startInv: { bread: 1 }, fame: 2, renown: 4,
     likes: ["first days", "full shifts"], dislikes: ["waiting lists", "no"],
     rel: {}, greets: ["Anyone hiring out east?", "I'm quick, I promise."] },
-  { id: "edgar", name: "Edgar", town: "stonecross", color: "#7a8a9a", home: "home_s2",
-    desc: "a 34-year-old rooming with Posy, between things", personality: "wry, sleeps late, means to fix that",
-    coins: 4, startInv: {}, fame: 2, renown: 3,
-    likes: ["late mornings", "borrowed time"], dislikes: ["rent day", "alarms"],
-    rel: { posy: "likes" }, greets: ["Posy's the ambitious one.", "I'm between things. Long between."] },
+  /* Stage 22: the valley's SECOND hunter. Two of them keeps four towns' kitchens in meat —
+     Rowan works the Ferndale tree lines, Edgar the stone country in the east. */
+  { id: "edgar", name: "Edgar", town: "stonecross", color: "#6a7a5a", home: "home_s2",
+    desc: "the 34-year-old hunter who works the stone country east of town", personality: "wry, sleeps late and hunts later, swears the evening game is worth the lie-in",
+    hunter: true, work: { spot: "graveyard" }, schedule: [11, 20],
+    coins: 8, startInv: { meat: 1 }, fame: 3, renown: 10,
+    likes: ["late mornings", "long light", "borrowed time"], dislikes: ["rent day", "alarms", "dawn starts"],
+    rel: { posy: "likes", rowan: "likes" },
+    greets: ["Rowan takes the mornings. I'll take the dusk.", "Hares are thick in the stone country.", "Posy's the ambitious one. I just feed people."] },
   { id: "tilda", name: "Tilda", town: "stonecross", color: "#8a9a7a", home: "home_s3",
     desc: "a 52-year-old who keeps the commons tidy and everyone's business", personality: "brisk, nosy in a kindly way, misses nothing",
     coins: 16, startInv: { bread: 1 }, fame: 5, renown: 11, cooks: ["stew"],
@@ -2123,11 +2171,15 @@ const NPC_DEFS = [
     coins: 6, startInv: { bread: 1 }, fame: 2, renown: 4,
     likes: ["payday", "new starts"], dislikes: ["idle days", "pity"],
     rel: {}, greets: ["Know anyone hiring?", "I'll take any shift."] },
-  { id: "rowan", name: "Rowan", town: "ferndale", color: "#7a90a0", home: "home_f4",
-    desc: "a 31-year-old odd-jobber rooming with Ivy", personality: "easygoing to a fault, always a week behind on something",
-    coins: 3, startInv: {}, fame: 1, renown: 3,
-    likes: ["long lunches", "luck"], dislikes: ["deadlines", "rent day"],
-    rel: { ivy: "likes" }, greets: ["Work finds me eventually.", "Rent? Already?"] },
+  /* Stage 22: the valley's HUNTER. Rowan works the tree lines instead of a counter, and every
+     cut of meat on an eatery's menu came off his shoulder. */
+  { id: "rowan", name: "Rowan", town: "ferndale", color: "#7a6a4a", home: "home_f4",
+    desc: "the 31-year-old hunter who works the tree lines above Ferndale", personality: "unhurried, reads weather and tracks better than people, talks about the woods like a colleague",
+    hunter: true, work: { spot: "park" }, schedule: [7, 16],
+    coins: 12, startInv: { meat: 2, pelt: 1 }, fame: 4, renown: 14,
+    likes: ["first light", "a clean shot", "quiet company"], dislikes: ["waste", "crowds", "questions about the kill"],
+    rel: { ivy: "likes" },
+    greets: ["Stag moved down the valley last night.", "Butcher's price is fair this week.", "Wind's wrong today. Tomorrow, maybe."] },
   { id: "marcus", name: "Marcus", town: "ferndale", color: "#8a7aa0", home: "home_f5",
     desc: "a 40-year-old ex-mill hand between jobs", personality: "proud, punctual, hates owing anyone anything",
     coins: 9, startInv: { water: 1 }, fame: 3, renown: 8,
@@ -2424,6 +2476,39 @@ const FLORA = {
       poly(ctx, cx, cy, T, [[-0.22, -0.16], [0.00, -0.30], [0.22, -0.14], [0.00, -0.20]], "#dfe8ee");
     },
   },
+  /* --- WILD WHEAT: the volunteer crop along every field edge. Where flour comes from
+         if you'd rather not buy it. --- */
+  wildwheat: {
+    name: "Wild Wheat", emoji: "🌾", towns: null, seasons: ["summer", "autumn"],
+    gives: { flour: 5, fiber: 3, veg: 1 },
+    draw(ctx, cx, cy, T, season) {
+      const stalk = season === "autumn" ? "#c8a94a" : "#a8b054";
+      for (const dx of [-0.18, -0.02, 0.16]) {
+        poly(ctx, cx, cy, T, [[dx - 0.025, 0.26], [dx - 0.012, -0.24], [dx + 0.012, -0.24], [dx + 0.025, 0.26]], stalk);
+        poly(ctx, cx, cy, T, [[dx - 0.055, -0.22], [dx, -0.40], [dx + 0.055, -0.22], [dx, -0.16]], season === "autumn" ? "#e0c25a" : "#c3cb6a");
+      }
+    },
+  },
+  /* --- THE ROOT PATCH: wild carrot and its neighbours, dug rather than picked --- */
+  rootpatch: {
+    name: "Root Patch", emoji: "🥕", towns: null, seasons: ["spring", "summer", "autumn"],
+    gives: { veg: 6, herb: 2, fiber: 1 },
+    draw(ctx, cx, cy, T) {
+      poly(ctx, cx, cy, T, [[-0.26, 0.24], [-0.16, -0.06], [0.00, 0.10], [0.16, -0.06], [0.26, 0.24]], "#4f7f3e");
+      for (const dx of [-0.13, 0.05]) poly(ctx, cx, cy, T, [[dx, 0.12], [dx + 0.09, 0.12], [dx + 0.045, 0.30]], "#d1802c");
+    },
+  },
+  /* --- THE ORCHARD EDGE: windfall fruit, and worth the walk in autumn --- */
+  windfall: {
+    name: "Windfall Bough", emoji: "🍎", towns: ["alderbrook", "ferndale", "hills"], seasons: ["summer", "autumn"],
+    gives: { fruit: 6, stick: 2, herb: 1 },
+    draw(ctx, cx, cy, T, season) {
+      poly(ctx, cx, cy, T, [[-0.05, 0.28], [-0.03, -0.06], [0.03, -0.06], [0.05, 0.28]], "#6b4f36");
+      poly(ctx, cx, cy, T, [[-0.30, -0.04], [-0.16, -0.30], [0.16, -0.30], [0.30, -0.04], [0.12, 0.10], [-0.12, 0.10]], season === "autumn" ? "#a8862c" : "#417f36");
+      for (const [ax, ay] of [[-0.14, -0.06], [0.10, -0.14], [0.02, 0.02]])
+        poly(ctx, cx, cy, T, [[ax - 0.05, ay], [ax, ay - 0.06], [ax + 0.05, ay], [ax, ay + 0.06]], "#c2452f");
+    },
+  },
   /* --- THE OUTLANDS: nothing here wants to be picked --- */
   thornbush: {
     name: "Thornbush", emoji: "🌵", towns: ["outlands"], seasons: ["spring", "summer", "autumn", "winter"],
@@ -2483,6 +2568,9 @@ const TAILOR_MATS = {
 const PATCH_FRACTION = 0.45;   // patching a torn piece costs less than half of making a new one
 /* Stage 19: what a trip to Thimble & Thread costs a resident, and how many make it in a day */
 CFG.TAILOR = { npcSpend: 10, patchFee: 6, maxTrips: 3, openHour: 9, closeHour: 18 };
+/* Stage 22: the hunter's working day — how often he tries, what a stalk yields, and the
+   wholesale he gets when he walks it round to the kitchens. */
+CFG.HUNTER = { everyMin: 55, reach: 6, stalkOdds: 0.34, cuts: [1, 3], carryCap: 8, perDrop: 4, wholesale: 0.7, supplyFrom: 3 };
 
 /* =====================================================================
    STAGE 17 — HOW PEOPLE LOOK. Every soul gets a stable palette and a
@@ -5953,7 +6041,7 @@ export default function Alderbrook() {
          cheaper, better, and the reason they bought the oven. This is what pulls them through
          a market for ingredients in the first place. */
       const canCookNow = npc.home && npc.furniture?.includes("oven")
-        && HOME_COOK.some(r => Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m]));
+        && HOME_COOK.some(r => canCookRecipe(npc.inv, r));
       if (canCookNow) {
         goal = { scene: `t:${npc.town}`, ...bld(npc.home).door }; activity = "heading home to cook"; hide = true;
       } else if (npc.minor && npc.home) {                // Stage 3.5: kids don't buy dinner — the family pantry is free
@@ -6088,6 +6176,23 @@ export default function Alderbrook() {
       const hi = world.interiors[npc.home];
       const spot = hi?.stations?.table || hi?.seats?.[1] || bld(npc.home).door;
       goal = { scene: `i:${npc.home}`, x: spot.x, y: spot.y }; activity = "hosting a visitor at home";
+    } else if (npc.hunter && (npc.inv.meat || 0) >= CFG.HUNTER.supplyFrom && hour >= 8 && hour < 18) {
+      /* Stage 22: shoulder's loaded — take it round to a kitchen that's short of meat */
+      if (!npc.supplyRun) {
+        const kitchens = Object.keys(KITCHEN).filter(b => OWNERS[b] && stockOf(sim, b, "meat") < 12);
+        const pick = kitchens.sort((a, b) => stockOf(sim, a, "meat") - stockOf(sim, b, "meat"))[0];
+        if (pick) npc.supplyRun = { bId: pick };
+      }
+      if (npc.supplyRun) {
+        const b9 = npc.supplyRun.bId, stn = world.interiors[b9]?.stations?.[SHOP_STATION[b9]] || bld(b9).door;
+        goal = { scene: `i:${b9}`, x: stn.x, y: stn.y };
+        activity = `taking the day's meat to ${bld(b9).name}`;
+      } else { goal = { scene: `t:${npc.town}`, ...town.spots.plaza }; activity = "looking for a buyer"; }
+    } else if (npc.hunter && hour >= npc.schedule?.[0] && hour < npc.schedule?.[1]) {
+      /* out on the tree line — the edge of town, where the game is */
+      const spot = town.spots.park || town.spots.plaza;
+      goal = { scene: `t:${npc.town}`, x: spot.x, y: spot.y };
+      activity = "working the tree line";
     } else if (npc.tailorTrip && hour >= CFG.TAILOR.openHour && hour < CFG.TAILOR.closeHour) {
       /* Stage 19: the walk to Thimble & Thread. They go in, they get seen to at the counter,
          they walk home in it. Cross-town legs route through Mo's bus like any other trip. */
@@ -6556,6 +6661,8 @@ export default function Alderbrook() {
       }
     }
     if (npc.tailorTrip?.phase === "return" && npc.scene === `t:${npc.town}`) npc.tailorTrip = null;
+    // Stage 22: the hunter reached the kitchen door — the meat goes into the larder here
+    if (npc.supplyRun && npc.scene === `i:${npc.supplyRun.bId}`) hunterSupply(sim, npc);
     if (npc.crimePlan) {
       stealAttempt(sim, world, npc, npc.crimePlan.bId, npc.crimePlan.itemId, now);
       npc.crimePlan = null; npc.goal = null;
@@ -7461,6 +7568,59 @@ export default function Alderbrook() {
       .then(out => { if (out) finish(out.votes || {}, typeof out.mood === "string" ? out.mood : null, true); else localAll(); })
       .catch(localAll)
       .finally(() => { apiBusyRef.current = false; });
+  };
+
+  /* =====================================================================
+     STAGE 22 — THE HUNTER'S TRADE. Rowan works the tree lines during his
+     shift, brings game in, and then walks it round to the kitchens. Every
+     cut of meat on an eatery's menu came off his shoulder.
+     ===================================================================== */
+  const hunterTick = (sim, world, npc, now) => {
+    if (!npc.hunter || !npc.alive || npc.incap || npc.dying || npc.jailedUntil) return;
+    const hour = (sim.time / 60) % 24;
+    const onShift = npc.schedule && hour >= npc.schedule[0] && hour < npc.schedule[1];
+    if (!onShift) return;
+    const absMin = sim.day * 1440 + sim.time;
+    if (absMin - (npc.lastHuntAt || -9999) < CFG.HUNTER.everyMin) return;
+    npc.lastHuntAt = absMin;
+    const carrying = npc.inv.meat || 0;
+    if (carrying >= CFG.HUNTER.carryCap) return;          // shoulder's full — time to make the rounds
+    /* a real quarry standing in his scene is taken properly; otherwise it's a quiet stalk that
+       may or may not come to anything. Skill decides how often he comes back with something. */
+    const quarry = beastsIn(sim, npc.scene).find(b => dist(b, npc) < CFG.HUNTER.reach);
+    const lvl = skillLevel(npc, "foraging");
+    if (quarry) {
+      const S9 = BEAST_SPECIES[quarry.sp];
+      killBeast(sim, quarry, npc);
+      npc.bubble = { text: rand(["Clean one.", "That'll do.", "*field-dresses it where it fell*"]), until: now + 5 };
+      sim.dayLog.push(`${npc.name} took a ${S9.name.toLowerCase()} above ${TOWN_DEFS[npc.town]?.name || npc.town}`);
+      npc.skills.foraging = (npc.skills.foraging || 0) + taskXp("foraging", 1);
+    } else if (Math.random() < clamp(CFG.HUNTER.stalkOdds + lvl * 0.04, 0.1, 0.85)) {
+      const cuts = randInt(CFG.HUNTER.cuts);
+      npc.inv.meat = (npc.inv.meat || 0) + cuts;
+      if (Math.random() < 0.5) npc.inv.pelt = (npc.inv.pelt || 0) + 1;
+      npc.skills.foraging = (npc.skills.foraging || 0) + taskXp("foraging", 0);
+    }
+  };
+  /* the rounds: sell what he's carrying into a kitchen's larder, at a fair trade price */
+  const hunterSupply = (sim, npc) => {
+    const bId = npc.supplyRun?.bId; if (!bId) return;
+    const cuts = npc.inv.meat || 0;
+    if (cuts <= 0) { npc.supplyRun = null; return; }
+    const room = Math.max(0, 30 - stockOf(sim, bId, "meat"));
+    const sold = Math.min(cuts, room, CFG.HUNTER.perDrop);
+    if (sold > 0) {
+      npc.inv.meat -= sold; if (npc.inv.meat <= 0) delete npc.inv.meat;
+      addStock(sim, bId, "meat", sold);
+      const owner = OWNERS[bId] ? sim.npcs.find(n => n.id === OWNERS[bId] && n.alive) : null;
+      const price = Math.max(1, Math.round(ITEMS.meat.price * CFG.HUNTER.wholesale)) * sold;
+      if (OWNERS[bId] === "player") { spend(sim.player, price) && (npc.coins += price); }
+      else if (owner && owner.coins >= price) { owner.coins -= price; npc.coins += price; }
+      else npc.coins += Math.ceil(price / 2);              // a lean kitchen still gets fed, at a cut rate
+      npc.bubble = { text: rand([`${sold} cuts, fresh this morning.`, "Same as always?", "Take it while it's cold."]), until: performance.now() / 1000 + 5 };
+      sim.dayLog.push(`${npc.name} supplied ${bld(bId).name} with ${sold} cuts of meat`);
+    }
+    npc.supplyRun = null;
   };
 
   const dailyTick = (sim, world) => {
@@ -8897,6 +9057,7 @@ export default function Alderbrook() {
           } else if (sim.player.scene !== "t:outlands") sim._ambHr = hr9;
         }
         beastTick(sim, world, dt, now);
+        for (const h9 of sim.npcs) if (h9.hunter) hunterTick(sim, world, h9, now);   // Stage 22: the hunters work their shift
         processTrades(sim);
         playDialogues(sim, now);
 
@@ -9188,8 +9349,8 @@ export default function Alderbrook() {
 
   const homeMake = (npc, table) => {          // spend the makings, return the made item id
     for (const r of table) {
-      if (!Object.keys(r.needs).every(m => (npc.inv[m] || 0) >= r.needs[m])) continue;
-      for (const m of Object.keys(r.needs)) { npc.inv[m] -= r.needs[m]; if (npc.inv[m] <= 0) delete npc.inv[m]; }
+      const spend9 = resolveNeeds(npc.inv, r.needs); if (!spend9) continue;
+      for (const [m, q] of Object.entries(spend9)) { npc.inv[m] -= q; if (npc.inv[m] <= 0) delete npc.inv[m]; }
       npc.inv[r.out] = (npc.inv[r.out] || 0) + 1;
       npc.homemade = { ...(npc.homemade || {}), [r.out]: (npc.homemade?.[r.out] || 0) + 1 };   // remembers whose hands made it
       return r.out;
@@ -10143,8 +10304,11 @@ export default function Alderbrook() {
           const r2 = Math.random();
           if (r2 < 0.42) { const c = 1 + Math.floor(Math.random() * (tier === "rich" ? 4 : 3)); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
           else if (r2 < 0.60) { give("ring", 1, "💍 A tarnished ring — someone lost this…"); sfx.coin(); }
-          else if (r2 < 0.78) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
-          else if (r2 < 0.92) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
+          else if (r2 < 0.70) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
+          // Stage 22: the hedgerows feed you too — wild roots and windfall fruit, now and then
+          else if (r2 < 0.80) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("veg", q, `🥕 Wild roots${q > 1 ? " — a good double handful" : ""}.`); }
+          else if (r2 < 0.90) { const q = 1 + (tier === "rich" && Math.random() < 0.5 ? 1 : 0); give("fruit", q, `🍎 Windfall fruit${q > 1 ? ", and plenty of it" : ""}.`); }
+          else if (r2 < 0.95) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
           else { give("goodie_crate", 1, "📦 A weathered crate, half-buried. Somebody's cache…"); sfx.coin(); }
         } else {                                          // the staples — weighted by what's actually growing here
           const table = F9?.gives || { fiber: 3, stick: 3, rock: 2, herb: 2 };
@@ -11441,8 +11605,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const chefB = resume ? resume.bId : (cookPanelRef.current?.chef || null);   // chef shifts: house supplies the ingredients
     const r = RECIPES[recipeId];
     if (!chefB && !resume) {
-      for (const [ing, n] of Object.entries(r.needs)) if ((p.inv[ing] || 0) < n) return showToast(`Missing ${ITEMS[ing].name}.`);
-      for (const [ing, n] of Object.entries(r.needs)) p.inv[ing] -= n;
+      const spend9 = resolveNeeds(p.inv, r.needs);
+      if (!spend9) return showToast(`Missing ${Object.keys(r.needs).map(i => ITEMS[i]?.name || i).join(", ")}.`);
+      for (const [ing, n] of Object.entries(spend9)) { p.inv[ing] -= n; if (p.inv[ing] <= 0) delete p.inv[ing]; }
     }
     setCookPanel(false);
     /* EXPERT cooking opens on the precision task — the expert stage FIRST, then the oven dial,
@@ -12792,7 +12957,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 if (cookPanel?.drinks) return !!r.drink;    // drink station: only drinks
                 return !r.drink;                            // stove: only food (drinks excluded)
               }).map(([id, r]) => {
-                const can = cookPanel?.chef ? true : Object.entries(r.needs).every(([ing, n]) => (player.inv[ing] || 0) >= n);
+                const can = cookPanel?.chef ? true : canCookRecipe(player.inv, r);
                 return (
                   <div key={id} style={{ ...S.folkCard, display: "flex", alignItems: "center", gap: 10, opacity: can ? 1 : 0.55 }}>
                     <span style={{ fontSize: 22 }}>{ITEMS[id].emoji}</span>
