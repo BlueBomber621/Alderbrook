@@ -793,6 +793,49 @@ const CFG = {
     bribeCost: 30,                      // the editor is not made of stone
     archive: 8,                         // headlines kept on the save
   },
+  /* ===== Stage 16 — THE LIVING YEAR: seasons, weather, and the temperature they make ===== */
+  SEASON: { daysEach: 15, order: ["spring", "summer", "autumn", "winter"] },   // a 60-day year, four even seasons
+  TEMP: {
+    /* the valley's thermometer runs -10 (bitter) … 40 (baking). Comfort is the band where
+       nothing extra is asked of a body; outside it, needs burn faster. */
+    comfortLo: 8, comfortHi: 26,
+    indoorTemp: 18,                       // four walls and a roof normalise you, whatever it's doing outside
+    nightDrop: 6, noonLift: 4,            // the daily swing either side of the season's base
+    hotThirst: 1.9, hotEnergy: 1.5,       // heat: thirst first, then the will to keep going
+    coldHunger: 2.4, coldEnergy: 1.6,     // cold: you burn FOOD to stay warm — hunger goes fairly fast
+    perDegree: 0.06,                      // how sharply the multiplier climbs per degree outside comfort
+    maxMult: 3.2,
+  },
+  WEATHER: {
+    /* rolled fresh each dawn, weighted by season. `temp` shifts the day's reading; `wet` and
+       `dim` are read by the renderer; `forage` tilts what the hedgerows give up. */
+    kinds: {
+      clear:    { name: "Clear",        emoji: "☀️", temp:  2, wet: 0,    dim: 0,    forage:  0.05 },
+      cloud:    { name: "Overcast",     emoji: "☁️", temp: -1, wet: 0,    dim: 0.10, forage:  0 },
+      rain:     { name: "Rain",         emoji: "🌧️", temp: -3, wet: 0.55, dim: 0.20, forage:  0.10 },
+      storm:    { name: "Storm",        emoji: "⛈️", temp: -5, wet: 0.85, dim: 0.34, forage: -0.10 },
+      fog:      { name: "Fog",          emoji: "🌫️", temp: -2, wet: 0.20, dim: 0.26, forage:  0 },
+      snow:     { name: "Snowfall",     emoji: "🌨️", temp: -7, wet: 0.45, dim: 0.22, forage: -0.20 },
+      heatwave: { name: "Heatwave",     emoji: "🔥", temp:  9, wet: 0,    dim: 0,    forage: -0.10 },
+    },
+    /* per-season weight tables — winter never bakes, summer rarely snows */
+    table: {
+      spring: { clear: 30, cloud: 26, rain: 28, storm: 8,  fog: 8,  snow: 0,  heatwave: 0 },
+      summer: { clear: 42, cloud: 18, rain: 14, storm: 8,  fog: 3,  snow: 0,  heatwave: 15 },
+      autumn: { clear: 22, cloud: 30, rain: 26, storm: 9,  fog: 13, snow: 0,  heatwave: 0 },
+      winter: { clear: 18, cloud: 28, rain: 10, storm: 6,  fog: 12, snow: 26, heatwave: 0 },
+    },
+  },
+  /* ===== Stage 16 — FORAGING, reworked: the first handfuls are the good ones ===== */
+  FORAGE: {
+    richRuns: 4, fairRuns: 4,             // your first 4 of the day are rich, the next 4 fair, the rest lean
+    // odds of coming away with SOMETHING, per tier — every one lifts with the foraging skill
+    rich: 0.94, fair: 0.72, lean: 0.34,
+    perLevel: 0.03,                       // each skill level nudges every tier up
+    interestRich: 0.30, interestFair: 0.16, interestLean: 0.07,   // odds the find is something notable rather than staples
+    critterRich: 0.14, critterFair: 0.08, critterLean: 0.04,      // ...or that something LIVING bursts out of the leaves
+    hazardBase: 0.11, hazardPerLevel: 0.012,                      // snakes and biters, thinned by experience
+  },
   SAFE_ROB: { yield: 0.6, minLoot: 5 },                   // cracking a hall safe: 3★, Extreme-tier check, takes 60% of escrow
   TRESPASS: { graceMin: 25, reportMin: 60 },              // uninvited lingering in a private home: warning, then a 1★ report
   /* difficulty — set on the start screen or in ⚙️; only touches death & bills */
@@ -879,6 +922,13 @@ const ITEMS = {
   river_titan:  { name: "River Titan",    emoji: "🐋", price: 48, cat: "ingredient", eat: { hunger: 30 } },   // Stage 12: the EXPERT catch — three stages of fight for one of these
   goodie_crate: { name: "Goodie Crate",   emoji: "🎲", price: 0,  cat: "misc",    use: "goodie" },            // Stage 6: open for 3 random items
   fish_stew:    { name: "Hearty Fish Stew", emoji: "🫕", price: 16, cat: "food",   eat: { hunger: 75, energy: 15 } },   // Stage 6: hard cook from tropical fish
+  /* Stage 16 — what the hedgerows give up */
+  berry:        { name: "Wild Berries",   emoji: "🫐", price: 2,  cat: "food", eat: { hunger: 12, thirst: 8 } },
+  flower:       { name: "Wildflowers",    emoji: "🌼", price: 2,  cat: "misc" },
+  cotton:       { name: "Raw Cotton",     emoji: "🤍", price: 3,  cat: "material" },
+  pelt:         { name: "Pelt",           emoji: "🟫", price: 7,  cat: "material" },
+  finefiber:    { name: "Fine Fibre",     emoji: "🧵", price: 14, cat: "material" },
+  cloth:        { name: "Bolt of Cloth",  emoji: "🧶", price: 9,  cat: "material" },
   flour:        { name: "Flour",          emoji: "🌾", price: 2,  cat: "ingredient" },
   sugar:        { name: "Sugar",          emoji: "🍬", price: 2,  cat: "ingredient" },   // Stage 3.6: baking staple
   dough:        { name: "Dough",          emoji: "🥣", price: 3,  cat: "ingredient" },   // Stage 3.6: a made ingredient — flour+water, then baked on
@@ -2173,6 +2223,257 @@ const BUSINESS_PRICE = { cafe: 180, market: 200, fastfood: 160, diner: 190, mart
 /* v7 Stage 3: bushes grow beside every tree — derived, not authored, so all towns have them */
 const bushSpots = (town) => town.trees.map(([x, y]) => [x + 1, y]).filter(([x, y]) => x < town.w - 1 && y < town.h - 1);
 
+/* =====================================================================
+   STAGE 16 — THE LIVING YEAR
+   Seasons turn, weather rolls at dawn, and between them they set a
+   temperature the whole valley has to live in.
+   ===================================================================== */
+const SEASONS = {
+  spring: { name: "Spring", emoji: "🌱", base: 13, grass: "#6f9a4e", canopy: "#4d8a3a", bloom: "#e8a0c0" },
+  summer: { name: "Summer", emoji: "🌻", base: 25, grass: "#7aa84f", canopy: "#3f7a30", bloom: "#f0c848" },
+  autumn: { name: "Autumn", emoji: "🍂", base: 12, grass: "#8a8a4a", canopy: "#a86a2c", bloom: "#c8642c" },
+  winter: { name: "Winter", emoji: "❄️", base: -1, grass: "#b9c2c8", canopy: "#6d7a72", bloom: "#dfe8ee" },
+};
+/* Stage 17 fills this in from what the entity is actually wearing. Until then, bare skin: the
+   sky is what you feel. Kept here (not in the clothing block) so the climate model stands alone. */
+function wardrobeWarmth(ent) {
+  let w = 0;
+  for (const id of (ent?.worn || [])) {
+    const G = GARMENTS[id];
+    if (!G) continue;
+    w += (ent.wornTorn?.[id] ? G.warmth * 0.4 : G.warmth);   // a torn coat is barely a coat
+  }
+  return w;
+}
+const seasonOf = (day) => CFG.SEASON.order[Math.floor(((day - 1) % (CFG.SEASON.daysEach * 4)) / CFG.SEASON.daysEach)];
+const seasonDayOf = (day) => ((day - 1) % CFG.SEASON.daysEach) + 1;   // where you are within the season
+const yearOf = (day) => Math.floor((day - 1) / (CFG.SEASON.daysEach * 4)) + 1;
+
+/* the reading on the valley's thermometer, right now, where this entity is standing */
+function outdoorTemp(sim) {
+  const S = SEASONS[sim.season || seasonOf(sim.day)];
+  const W = CFG.WEATHER.kinds[sim.weather?.kind] || CFG.WEATHER.kinds.clear;
+  const hour = (sim.time / 60) % 24;
+  // a smooth day curve: coldest before dawn, warmest mid-afternoon
+  const swing = Math.sin((hour - 9) / 24 * Math.PI * 2);
+  const daily = swing >= 0 ? swing * CFG.TEMP.noonLift : swing * CFG.TEMP.nightDrop;
+  return Math.round(S.base + W.temp + daily);
+}
+const isIndoors = (scene) => !!scene && scene.startsWith("i:");
+/* what THIS entity actually feels: indoors is normalised; outdoors is the valley's reading,
+   pulled back toward comfort by whatever they're wearing (Stage 17 clothing hooks in here). */
+function feltTemp(sim, ent) {
+  const out = outdoorTemp(sim);
+  const raw = isIndoors(ent.scene) ? CFG.TEMP.indoorTemp + (out - CFG.TEMP.indoorTemp) * 0.15 : out;
+  return Math.round(raw + insulationShift(ent, raw));
+}
+/* how far a wardrobe drags the felt temperature back toward comfort. Stage 17 fills this in;
+   with nothing on, you feel exactly what the sky is doing. */
+function insulationShift(ent, raw) {
+  const warmth = wardrobeWarmth(ent);          // negative = cooling/airy, positive = insulating
+  if (raw < CFG.TEMP.comfortLo) return Math.max(0, warmth);           // in the cold, only warmth helps
+  if (raw > CFG.TEMP.comfortHi) return Math.min(0, warmth);           // in the heat, only airiness helps
+  return 0;
+}
+/* the multipliers a body pays for being too hot or too cold */
+function tempStress(t) {
+  const C = CFG.TEMP;
+  if (t < C.comfortLo) {
+    const d = (C.comfortLo - t) * C.perDegree;
+    return { hunger: Math.min(C.maxMult, 1 + d * C.coldHunger), thirst: 1, energy: Math.min(C.maxMult, 1 + d * C.coldEnergy), cold: true, hot: false };
+  }
+  if (t > C.comfortHi) {
+    const d = (t - C.comfortHi) * C.perDegree;
+    return { hunger: 1, thirst: Math.min(C.maxMult, 1 + d * C.hotThirst), energy: Math.min(C.maxMult, 1 + d * C.hotEnergy), cold: false, hot: true };
+  }
+  return { hunger: 1, thirst: 1, energy: 1, cold: false, hot: false };
+}
+const tempWord = (t) => t <= -2 ? "bitter" : t < 8 ? "cold" : t < 15 ? "cool" : t <= 26 ? "mild" : t < 33 ? "hot" : "baking";
+/* one line of sky for the AI brains */
+const weatherLine = (sim) => {
+  const S = SEASONS[sim.season || seasonOf(sim.day)];
+  const W = CFG.WEATHER.kinds[sim.weather?.kind] || CFG.WEATHER.kinds.clear;
+  const t = outdoorTemp(sim);
+  return `${S.name}, ${W.name.toLowerCase()}, ${t}° and ${tempWord(t)} outside`;
+};
+function rollWeather(sim) {
+  const table = CFG.WEATHER.table[sim.season] || CFG.WEATHER.table.spring;
+  const total = Object.values(table).reduce((s, v) => s + v, 0);
+  let r = Math.random() * total;
+  for (const [kind, w] of Object.entries(table)) { r -= w; if (r <= 0) return { kind, day: sim.day }; }
+  return { kind: "clear", day: sim.day };
+}
+
+/* =====================================================================
+   STAGE 16 — FLORA. Every town grows its own things, and some only show
+   in their season. Drawn as flat-shaded VERTEX art (polygons, no arcs)
+   so the hedgerows read as made rather than stamped.
+   ===================================================================== */
+/* a tiny polygon helper: pts are [x,y] offsets in tile units from the plant's base */
+const poly = (ctx, cx, cy, T, pts, fill) => {
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  pts.forEach(([dx, dy], i) => { const x = cx + dx * T, y = cy + dy * T; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.closePath(); ctx.fill();
+};
+const FLORA = {
+  /* --- the common hedgerow: everywhere, most of the year --- */
+  bramble: {
+    name: "Bramble", emoji: "🌿", towns: null, seasons: ["spring", "summer", "autumn"],
+    gives: { fiber: 3, herb: 2, stick: 2, berry: 3 },
+    draw(ctx, cx, cy, T, season) {
+      const leaf = season === "autumn" ? "#8a6a2c" : "#3f6b33";
+      poly(ctx, cx, cy, T, [[-0.34, 0.22], [-0.10, -0.26], [0.06, 0.04], [0.30, -0.20], [0.34, 0.22]], leaf);
+      poly(ctx, cx, cy, T, [[-0.16, 0.22], [0.00, -0.06], [0.16, 0.22]], season === "autumn" ? "#a8802c" : "#4f7f3e");
+      if (season !== "autumn") { poly(ctx, cx, cy, T, [[0.10, -0.16], [0.20, -0.24], [0.26, -0.12], [0.16, -0.06]], "#7d3a52"); }
+    },
+  },
+  /* --- COTTON: the tailor's whole trade starts here --- */
+  cottonbush: {
+    name: "Cotton Bush", emoji: "🤍", towns: ["ferndale", "alderbrook", "hills"], seasons: ["summer", "autumn"],
+    gives: { cotton: 6, fiber: 2 },
+    draw(ctx, cx, cy, T, season) {
+      poly(ctx, cx, cy, T, [[-0.30, 0.24], [-0.14, -0.14], [0.00, 0.02], [0.14, -0.14], [0.30, 0.24]], "#5d7a45");
+      for (const [bx, by] of [[-0.18, -0.14], [0.02, -0.24], [0.20, -0.12]])
+        poly(ctx, cx, cy, T, [[bx - 0.09, by], [bx, by - 0.11], [bx + 0.09, by], [bx, by + 0.09]], season === "autumn" ? "#f2efe4" : "#fbfaf4");
+    },
+  },
+  /* --- MOSSFORD: the river reeds --- */
+  reeds: {
+    name: "River Reeds", emoji: "🌾", towns: ["mossford"], seasons: ["spring", "summer", "autumn"],
+    gives: { fiber: 5, stick: 2, herb: 1 },
+    draw(ctx, cx, cy, T, season) {
+      const c = season === "autumn" ? "#b09a4c" : "#6f9a4e";
+      for (const dx of [-0.20, -0.05, 0.11, 0.24])
+        poly(ctx, cx, cy, T, [[dx - 0.035, 0.26], [dx - 0.015, -0.30], [dx + 0.015, -0.30], [dx + 0.035, 0.26]], c);
+      poly(ctx, cx, cy, T, [[0.09, -0.30], [0.14, -0.40], [0.19, -0.30]], "#8a6a3a");
+    },
+  },
+  /* --- STONECROSS: hard ground, hard little plants --- */
+  heather: {
+    name: "Heather", emoji: "🪻", towns: ["stonecross", "hills"], seasons: ["summer", "autumn", "winter"],
+    gives: { herb: 4, fiber: 3 },
+    draw(ctx, cx, cy, T, season) {
+      poly(ctx, cx, cy, T, [[-0.28, 0.24], [-0.12, -0.10], [0.12, -0.10], [0.28, 0.24]], season === "winter" ? "#6d7a72" : "#55703f");
+      if (season !== "winter")
+        for (const [bx, by] of [[-0.14, -0.14], [0.04, -0.22], [0.18, -0.10]])
+          poly(ctx, cx, cy, T, [[bx - 0.06, by], [bx, by - 0.10], [bx + 0.06, by]], "#9a6ab0");
+    },
+  },
+  /* --- FERNDALE's namesake --- */
+  fernclump: {
+    name: "Fern Clump", emoji: "🌿", towns: ["ferndale", "mossford"], seasons: ["spring", "summer", "autumn"],
+    gives: { herb: 4, fiber: 4 },
+    draw(ctx, cx, cy, T, season) {
+      const c = season === "autumn" ? "#96772f" : "#3d7a44";
+      for (const a of [-0.9, -0.3, 0.3, 0.9]) {
+        const tx = Math.sin(a) * 0.30, ty = -0.26 + Math.abs(a) * 0.06;
+        poly(ctx, cx, cy, T, [[0, 0.24], [tx * 0.5, ty * 0.7], [tx, ty], [tx * 0.7, ty + 0.10], [0, 0.24]], c);
+      }
+    },
+  },
+  /* --- SPRING ONLY: the meadow flush --- */
+  meadowbloom: {
+    name: "Meadow Bloom", emoji: "🌼", towns: null, seasons: ["spring"],
+    gives: { herb: 5, fiber: 2, flower: 4 },
+    draw(ctx, cx, cy, T) {
+      poly(ctx, cx, cy, T, [[-0.03, 0.26], [-0.02, -0.14], [0.02, -0.14], [0.03, 0.26]], "#4f8a3e");
+      poly(ctx, cx, cy, T, [[-0.16, 0.10], [-0.04, 0.02], [-0.04, 0.16]], "#4f8a3e");
+      for (const a of [0, 1.26, 2.51, 3.77, 5.03]) {
+        const px2 = Math.cos(a) * 0.15, py2 = -0.20 + Math.sin(a) * 0.15;
+        poly(ctx, cx, cy, T, [[px2 * 0.35, -0.20], [px2, py2 - 0.05], [px2 * 1.1, py2 + 0.07]], "#f0e2a0");
+      }
+      poly(ctx, cx, cy, T, [[-0.05, -0.22], [0.00, -0.27], [0.05, -0.22], [0.00, -0.16]], "#e8b23a");
+    },
+  },
+  /* --- AUTUMN ONLY: the good hedge, the one everyone waits for --- */
+  berrythicket: {
+    name: "Berry Thicket", emoji: "🫐", towns: null, seasons: ["autumn"],
+    gives: { berry: 7, herb: 2, fiber: 2 },
+    draw(ctx, cx, cy, T) {
+      poly(ctx, cx, cy, T, [[-0.34, 0.24], [-0.16, -0.20], [0.02, 0.00], [0.20, -0.22], [0.34, 0.24]], "#7a5a2c");
+      for (const [bx, by] of [[-0.20, -0.06], [-0.02, -0.14], [0.16, -0.08], [0.06, 0.06]])
+        poly(ctx, cx, cy, T, [[bx - 0.055, by], [bx, by - 0.07], [bx + 0.055, by], [bx, by + 0.07]], "#3f3a6b");
+    },
+  },
+  /* --- WINTER ONLY: what's left standing when everything else gives up --- */
+  frostbriar: {
+    name: "Frost Briar", emoji: "🥀", towns: null, seasons: ["winter"],
+    gives: { stick: 5, fiber: 2, herb: 1 },
+    draw(ctx, cx, cy, T) {
+      for (const [dx, tilt] of [[-0.18, -0.10], [0.02, 0.03], [0.20, 0.12]])
+        poly(ctx, cx, cy, T, [[dx - 0.03, 0.26], [dx + tilt - 0.02, -0.24], [dx + tilt + 0.02, -0.24], [dx + 0.03, 0.26]], "#6b5f52");
+      poly(ctx, cx, cy, T, [[-0.22, -0.16], [0.00, -0.30], [0.22, -0.14], [0.00, -0.20]], "#dfe8ee");
+    },
+  },
+  /* --- THE OUTLANDS: nothing here wants to be picked --- */
+  thornbush: {
+    name: "Thornbush", emoji: "🌵", towns: ["outlands"], seasons: ["spring", "summer", "autumn", "winter"],
+    gives: { stick: 4, fiber: 4, rock: 2 },
+    hazardBonus: 0.10,                       // the Outlands bite back
+    draw(ctx, cx, cy, T, season) {
+      poly(ctx, cx, cy, T, [[-0.30, 0.24], [-0.10, -0.22], [0.10, -0.22], [0.30, 0.24]], season === "winter" ? "#5d5a4e" : "#4a5c33");
+      for (const [tx, ty] of [[-0.22, 0.02], [0.22, 0.02], [-0.10, -0.16], [0.12, -0.16]])
+        poly(ctx, cx, cy, T, [[tx, ty], [tx + Math.sign(tx || 1) * 0.11, ty - 0.05], [tx, ty + 0.05]], "#8a8470");
+    },
+  },
+};
+/* =====================================================================
+   STAGE 17 — THE WARDROBE. Three slots (head / torso / legs), three
+   weights of clothing, and armour on top. Everything here is made at a
+   TAILOR BENCH from cotton, pelts and fine fibre.
+     warmth  — negative is airy (helps in heat), positive insulates (helps in cold)
+     tough   — added toughness: how much punishment you soak before you go down
+     endur   — what it costs your maximum energy to carry it around
+   Torn pieces give NO toughness and a fraction of their warmth until patched.
+   ===================================================================== */
+const GARMENTS = {
+  /* ---- SUMMER WEAR: airy, no protection, cheap ---- */
+  sun_hat:      { name: "Straw Sun Hat",   emoji: "👒", slot: "head",  warmth: -3, tough: 0,  endur: 0,  tier: "easy",   mats: { fiber: 3 },                      dur: 70,  wear: "summer" },
+  summer_tunic: { name: "Summer Tunic",    emoji: "🎽", slot: "torso", warmth: -6, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 3 },                     dur: 80,  wear: "summer" },
+  light_shorts: { name: "Light Shorts",    emoji: "🩳", slot: "legs",  warmth: -4, tough: 0,  endur: 0,  tier: "easy",   mats: { cotton: 2 },                     dur: 80,  wear: "summer" },
+  /* ---- MEDIUM WEAR: what most people own ---- */
+  cloth_cap:    { name: "Cloth Cap",       emoji: "🧢", slot: "head",  warmth: 2,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 2, fiber: 1 },           dur: 100, wear: "medium" },
+  work_shirt:   { name: "Work Shirt",      emoji: "👕", slot: "torso", warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 4, finefiber: 1 },       dur: 120, wear: "medium" },
+  work_trous:   { name: "Work Trousers",   emoji: "👖", slot: "legs",  warmth: 3,  tough: 1,  endur: 0,  tier: "easy",   mats: { cotton: 3, finefiber: 1 },       dur: 120, wear: "medium" },
+  /* ---- WINTER WEAR: the jacket is genuinely protective in its own right ---- */
+  wool_hood:    { name: "Wool Hood",       emoji: "🧣", slot: "head",  warmth: 7,  tough: 2,  endur: -1, tier: "medium", mats: { cotton: 3, finefiber: 1 },       dur: 130, wear: "winter" },
+  winter_jacket:{ name: "Winter Jacket",   emoji: "🧥", slot: "torso", warmth: 13, tough: 5,  endur: -3, tier: "medium", mats: { cotton: 5, finefiber: 2 },       dur: 150, wear: "winter" },
+  winter_trous: { name: "Lined Trousers",  emoji: "👖", slot: "legs",  warmth: 8,  tough: 2,  endur: -2, tier: "medium", mats: { cotton: 4, finefiber: 1 },       dur: 140, wear: "winter" },
+  /* ---- HUNTER'S LEATHERS: pelt work, warm and genuinely tough ---- */
+  hunter_hat:   { name: "Hunter's Hat",    emoji: "🎩", slot: "head",  warmth: 4,  tough: 3,  endur: -1, tier: "medium", mats: { pelt: 1, fiber: 2 },             dur: 160, wear: "medium" },
+  leather_coat: { name: "Leather Jacket",  emoji: "🧥", slot: "torso", warmth: 6,  tough: 9,  endur: -4, tier: "medium", mats: { pelt: 3, finefiber: 1 },         dur: 200, wear: "medium" },
+  leather_legs: { name: "Leather Leggings",emoji: "👖", slot: "legs",  warmth: 5,  tough: 5,  endur: -3, tier: "medium", mats: { pelt: 2, finefiber: 1 },         dur: 180, wear: "medium" },
+  /* ---- THE WATCH'S PLATE: guard issue. Heavy, hard, and not for just anyone. ---- */
+  guard_helm:   { name: "Watch Helm",      emoji: "⛑️", slot: "head",  warmth: 3,  tough: 7,  endur: -3, tier: "hard",   mats: { ore: 4, finefiber: 1 },          dur: 260, wear: "medium", guard: true },
+  guard_mail:   { name: "Watch Hauberk",   emoji: "🦺", slot: "torso", warmth: 5,  tough: 18, endur: -9, tier: "hard",   mats: { ore: 9, pelt: 2, finefiber: 2 }, dur: 320, wear: "medium", guard: true },
+  guard_greaves:{ name: "Watch Greaves",   emoji: "🥾", slot: "legs",  warmth: 4,  tough: 9,  endur: -5, tier: "hard",   mats: { ore: 6, pelt: 1, finefiber: 1 }, dur: 280, wear: "medium", guard: true },
+};
+const GARMENT_SLOTS = ["head", "torso", "legs"];
+/* the Watch's kit is Watch issue — unless the valley thinks well enough of you to look away */
+const GUARD_KIT_FAME = 25;
+const mayWearGuardKit = (ent) => !!ent.enforcer || (ent.fame || 0) >= GUARD_KIT_FAME;
+/* what a finished piece is worth over the counter */
+const garmentPrice = (id) => {
+  const G = GARMENTS[id]; if (!G) return 0;
+  const mats = Object.entries(G.mats).reduce((s, [m, q]) => s + (ITEMS[m]?.price || 1) * q, 0);
+  return Math.max(4, Math.round(mats * 1.6));
+};
+/* register every garment as a real ITEM so packs, shops, gifts and trades all just work */
+for (const [id, G] of Object.entries(GARMENTS))
+  ITEMS[id] = { name: G.name, emoji: G.emoji, price: garmentPrice(id), cat: "clothing", garment: id };
+
+/* which species can be standing in this town, this season */
+const floraFor = (townId, season) =>
+  Object.entries(FLORA).filter(([, F]) => (!F.towns || F.towns.includes(townId)) && F.seasons.includes(season)).map(([id]) => id);
+/* a stable per-spot species pick, so a given bush is the same plant all season */
+const floraAt = (townId, season, x, y) => {
+  const pool = floraFor(townId, season);
+  if (!pool.length) return null;
+  const h = Math.abs((x * 73856093) ^ (y * 19349663) ^ season.length * 83492791);
+  return pool[h % pool.length];
+};
+
 const bestWeapon = (ent) => {
   // an explicitly EQUIPPED combat item wins — you fight with what you chose. Falls back to the
   // strongest thing on hand when nothing's equipped (or the equipped piece is gone).
@@ -2212,7 +2513,7 @@ const brokeLine = (id) => `💥 Your ${ITEMS[id].name} gives out and comes apart
 const BEAST_SPECIES = {
   hare: {
     name: "Wild Hare", emoji: "🐇", color: "#a89070",
-    hp: 16, meat: 2, speed: 2.4, hostile: false,
+    hp: 16, meat: 2, pelt: [0, 1], speed: 2.4, hostile: false,   // Stage 17: a hare is a maybe-pelt
     spook: 3.5,                    // bolts when anything gets this close — but slower than a person, so it CAN be run down
     cap: 2, globalCap: 5, spawnChance: 0.34,   // two to a town, and they're the common sight
     lifeS: 300,                    // drifts back into the woods if nothing comes of it
@@ -2220,7 +2521,7 @@ const BEAST_SPECIES = {
   },
   stag: {
     name: "Rogue Stag", emoji: "🦌", color: "#6d4a2c",
-    hp: 48, meat: 5, speed: 2.5, hostile: true,
+    hp: 48, meat: 5, pelt: [1, 3], speed: 2.5, hostile: true,     // Stage 17: a stag is a proper haul of hide
     dmg: [9, 16], aggro: 6.5,      // reads the field this far out, then charges — at 3.1 it can't catch a sprinting player
     cap: 1, globalCap: 2, spawnChance: 0.03,   // RARE, and deliberately so: one to a town, two in the whole
     lifeS: 360,                    // valley, and it moves on if nobody deals with it
@@ -3246,6 +3547,7 @@ export default function Alderbrook() {
       tradeQueue: [],   // pending NPC↔NPC trade offers awaiting a considered decision
       crime: { ticks: 0, blockedWatch: 0, blockedRoll: 0, blockedCap: 0, attempts: 0, arrests: 0 },   // the crime ledger (diagnosis + future town stats)
       foragedAt: {},    // v7 Stage 3: bush cooldowns (`t:town:x,y` → last foraged day)
+      season: seasonOf(1), weather: { kind: "clear", day: 1 },   // Stage 16: the living year
       watchReq: null,   // Stage 11: an open Watch armoury order — the one way contraband is commissionable
       beasts: [], beastSeq: 0, lastBeastSpawn: 0,   // Stage 9: the wild — hares and stags, outside the social sim entirely
       approval: { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start },   // Stage 8
@@ -3289,6 +3591,7 @@ export default function Alderbrook() {
       homePlacements: sim.homePlacements || {}, election: sim.election,
       taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
       campaign: sim.campaign, pledges: sim.pledges, press: sim.press, debate: sim.debate,
+      season: sim.season, weather: sim.weather,   // Stage 16: the year and the sky
       opening: sim.opening, interviewBans: sim.interviewBans,
       player: { ...sim.player, dying: null, jailedUntil: sim.player.jailedUntil === Infinity ? "life" : sim.player.jailedUntil },
       npcs: Object.fromEntries(sim.npcs.map(n => [n.id, {
@@ -3344,6 +3647,8 @@ export default function Alderbrook() {
     sim.approval = { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start, ...(data.approval || {}) };
     sim.tradeQueue = data.tradeQueue || [];
     sim.foragedAt = data.foragedAt || {};
+    sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
+    sim.weather = data.weather || { kind: "clear", day: sim.day };
     // the wild reloads as it was standing: position and wounds, no memory of who it was chasing
     sim.beasts = (data.beasts || []).filter(b => BEAST_SPECIES[b.sp])
       .map(b => ({ ...b, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
@@ -6847,6 +7152,21 @@ export default function Alderbrook() {
   };
 
   const dailyTick = (sim, world) => {
+    /* ===== Stage 16: the year turns, and a new sky rolls in at dawn ===== */
+    {
+      const wasSeason = sim.season;
+      sim.season = seasonOf(sim.day);
+      sim.weather = rollWeather(sim);
+      const S = SEASONS[sim.season], W = CFG.WEATHER.kinds[sim.weather.kind];
+      if (wasSeason !== sim.season) {
+        sim.dayLog.push(`${S.name} came to the valley`);
+        sim.buzz = { text: `${S.emoji} ${S.name} is here — day ${seasonDayOf(sim.day)} of it, and year ${yearOf(sim.day)}.`, day: sim.day };
+        showToast(`${S.emoji} ${S.name} arrives in the valley.`);
+      } else if (["storm", "snow", "heatwave", "fog"].includes(sim.weather.kind)) {
+        sim.dayLog.push(`${W.name.toLowerCase()} over the valley`);
+        showToast(`${W.emoji} ${W.name} — ${tempWord(outdoorTemp(sim))} out there today.`);
+      }
+    }
     // Stage 2.1: recent-demand fades so restock chases CURRENT buying, not history
     for (const bId of Object.keys(sim.demand || {}))
       for (const it of Object.keys(sim.demand[bId])) {
@@ -7769,9 +8089,12 @@ export default function Alderbrook() {
         }
 
         /* --- player needs, hygiene, health --- */
-        p.hunger = clamp(p.hunger - CFG.DECAY.hunger * dtHours, 0, 100);
-        p.thirst = clamp(p.thirst - CFG.DECAY.thirst * dtHours, 0, 100);
-        p.energy = clamp(p.energy - CFG.DECAY.energy * dtHours * (dx || dy ? 1.4 : 1), 0, 100);
+        // Stage 16: the weather taxes a body. Heat pulls water and will; cold burns food to keep
+        // you warm. Four walls level it out, and what you're wearing decides how much reaches you.
+        const stress = tempStress(feltTemp(sim, p));
+        p.hunger = clamp(p.hunger - CFG.DECAY.hunger * dtHours * stress.hunger, 0, 100);
+        p.thirst = clamp(p.thirst - CFG.DECAY.thirst * dtHours * stress.thirst, 0, 100);
+        p.energy = clamp(p.energy - CFG.DECAY.energy * dtHours * (dx || dy ? 1.4 : 1) * stress.energy, 0, 100);
         p.hygiene = clamp(p.hygiene - CFG.HYGIENE.decay * dtHours, 0, 100);
         if (p.bedrest) {
           const docIn = sim.npcs.some(n => n.alive && n.doctor && n.scene === "i:hospital");
@@ -7997,9 +8320,10 @@ export default function Alderbrook() {
         if (decide) sim.lastDecide = 0;
         for (const npc of sim.npcs) {
           if (!npc.alive) continue;
-          npc.hunger = clamp(npc.hunger - CFG.DECAY.hunger * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
-          npc.thirst = clamp(npc.thirst - CFG.DECAY.thirst * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
-          npc.energy = clamp(npc.energy - CFG.DECAY.energy * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
+          const ns = tempStress(feltTemp(sim, npc));   // Stage 16: the sky taxes them too — and their coats matter
+          npc.hunger = clamp(npc.hunger - CFG.DECAY.hunger * CFG.NPC_DECAY_SCALE * dtHours * ns.hunger, 0, 100);
+          npc.thirst = clamp(npc.thirst - CFG.DECAY.thirst * CFG.NPC_DECAY_SCALE * dtHours * ns.thirst, 0, 100);
+          npc.energy = clamp(npc.energy - CFG.DECAY.energy * CFG.NPC_DECAY_SCALE * dtHours * ns.energy, 0, 100);
           npc.hygiene = clamp(npc.hygiene - CFG.HYGIENE.decay * CFG.NPC_DECAY_SCALE * dtHours, 0, 100);
           // Stage 3.5: survival damage — same rules as the player, nobody is exempt
           if (npc.jailedUntil) { npc.hunger = Math.max(npc.hunger, CFG.STARVE.jailNeedFloor); npc.thirst = Math.max(npc.thirst, CFG.STARVE.jailNeedFloor); }
@@ -8249,6 +8573,9 @@ export default function Alderbrook() {
           hunger: Math.round(p.hunger), thirst: Math.round(p.thirst), energy: Math.round(p.energy),
           health: Math.round(p.health), hygiene: Math.round(p.hygiene), wanted: p.wanted, sick: p.sick?.level || null,
           tier: fameTier(p.fame, p.renown),
+          // Stage 16: the sky, the season, and what it's doing to you right now
+          season: sim2.season || seasonOf(sim2.day), weather: sim2.weather?.kind || "clear",
+          temp: feltTemp(sim2, p), outTemp: outdoorTemp(sim2), indoors: isIndoors(p.scene),
         });
         setActions(computeActions(sim2, worldRef.current));
       }
@@ -8292,10 +8619,19 @@ export default function Alderbrook() {
 
   const spawnBeast = (sim, world, tid, town, sp) => {
     const spot = beastSpawnSpot(sim, world, tid, town); if (!spot) return null;
-    const S9 = BEAST_SPECIES[sp];
-    const b = { id: `bst${++sim.beastSeq}`, sp, scene: `t:${tid}`, x: spot.x, y: spot.y,
-      health: S9.hp, alive: true, target: null, wanderAt: 0, lastHit: 0, fleeUntil: 0, bubble: null,
-      bornAt: performance.now() / 1000 };
+    return spawnBeastAt(sim, `t:${tid}`, spot.x, spot.y, sp);
+  };
+  /* Stage 16: put a beast down at an EXACT spot — the hare that was living in the bush you
+     just stuck your arm into. Respects the species' global cap so a hedgerow can't flood the
+     valley with deer. */
+  const spawnBeastAt = (sim, scene, x, y, sp) => {
+    const S9 = BEAST_SPECIES[sp]; if (!S9) return null;
+    const live = (sim.beasts || []).filter(b => b.alive && b.sp === sp).length;
+    if (live >= S9.globalCap) return null;
+    const b = { id: `bst${++sim.beastSeq}`, sp, scene, x, y,
+      health: S9.hp, alive: true, target: null, wanderAt: 0, lastHit: 0,
+      fleeUntil: sp === "hare" ? performance.now() / 1000 + 6 : 0,   // a flushed hare is already running
+      bubble: null, bornAt: performance.now() / 1000 };
     (sim.beasts = sim.beasts || []).push(b);
     return b;
   };
@@ -8308,6 +8644,12 @@ export default function Alderbrook() {
     sim.beasts = (sim.beasts || []).filter(x => x !== b);
     if (!by) return 0;
     by.inv.meat = (by.inv.meat || 0) + S9.meat;
+    // Stage 17: the hide is the other half of the kill — a hare is a maybe, a stag is a haul.
+    const hides = randInt(S9.pelt || [0, 0]);
+    if (hides > 0) {
+      by.inv.pelt = (by.inv.pelt || 0) + hides;
+      if (!by.id) showToast(`🟫 ${hides} pelt${hides > 1 ? "s" : ""} off the ${S9.name.toLowerCase()} — the tailor will want that.`);
+    }
     return S9.meat;
   };
 
@@ -9416,23 +9758,61 @@ export default function Alderbrook() {
         showToast(wasFive ? `🏥 ${downed.name} patched up — and sent straight down for LIFE.` : wasWanted ? `🏥 ${downed.name} delivered to the Watch cells.` : `🏥 You haul ${downed.name} to the hospital.`);
         bump(); break;
       }
-      case "forage": {   // v7 Stage 3: the bush table — loot shifts up and bites shift down with skill
+      case "forage": {
+        /* Stage 16: the day has a SHAPE. Your first four handfuls are the rich ones — you're
+           working fresh ground and you know where to look. The next four are fair. After that
+           you're picking over what you already stripped: mostly leaves, but the valley still
+           surprises you now and then. Skill lifts every tier, and thins the things that bite. */
         const [fx, fy] = a.bush;
         (sim.foragedAt = sim.foragedAt || {})[`${p.scene}:${fx},${fy}`] = sim.day;
-        const lv = skillLevel(p, "foraging");
-        const before = lv;
+        if (p.forageDay !== sim.day) { p.forageDay = sim.day; p.forageRuns = 0; }
+        const run = p.forageRuns++;
+        const F = CFG.FORAGE;
+        const tier = run < F.richRuns ? "rich" : run < F.richRuns + F.fairRuns ? "fair" : "lean";
+        const lv = skillLevel(p, "foraging"), before = lv;
         p.skills.foraging = (p.skills.foraging || 0) + taskXp("foraging", 0);
-        const r = Math.random();
-        const bite = Math.max(0.04, 0.10 - lv * 0.015), snake = Math.max(0.02, 0.05 - lv * 0.008);
-        if (r < snake) { p.health = Math.max(1, p.health - 10); sfx.alert(); showToast("🐍 A lil snake gets you! (-10 hp)"); }
-        else if (r < snake + bite) { p.health = Math.max(1, p.health - 4); showToast("🐜 Something bites you. (-4 hp)"); }
-        else if (r < snake + bite + 0.19) { const q = 1 + (Math.random() < 0.4 ? 1 : 0); p.inv.rock = (p.inv.rock || 0) + q; showToast(`🪨 Found ${q} round rock${q > 1 ? "s" : ""}.`); }
-        else if (r < snake + bite + 0.38) { const q = 1 + (Math.random() < 0.5 ? 1 : 0); p.inv.stick = (p.inv.stick || 0) + q; showToast(`🥢 ${q > 1 ? "A good armful of sticks" : "A fallen stick"} — deadfall, free for the taking.`); }
-        else if (r < snake + bite + 0.52) { p.inv.fiber = (p.inv.fiber || 0) + 1; showToast("🌾 A tidy grass bundle."); }
-        else if (r < snake + bite + 0.63) { p.inv.herb = (p.inv.herb || 0) + 1; showToast("🌿 A wild herb — good for what ails you."); }
-        else if (r < snake + bite + 0.70) { const c = 1 + Math.floor(Math.random() * 3); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
-        else if (r < snake + bite + 0.72) { p.inv.ring = (p.inv.ring || 0) + 1; sfx.coin(); showToast("💍 A tarnished ring — someone lost this…"); }
-        else showToast("🍃 Nothing but leaves this time.");
+
+        const townId = townOfScene(world, p.scene);
+        const season = sim.season || seasonOf(sim.day);
+        const fid = floraAt(townId, season, fx, fy);
+        const F9 = fid ? FLORA[fid] : null;
+        const W = CFG.WEATHER.kinds[sim.weather?.kind] || CFG.WEATHER.kinds.clear;
+
+        const skillLift = lv * F.perLevel;
+        const anything = clamp(F[tier] + skillLift + (W.forage || 0), 0.05, 0.98);
+        const interest = clamp((tier === "rich" ? F.interestRich : tier === "fair" ? F.interestFair : F.interestLean) + skillLift * 0.5, 0, 0.6);
+        const critter = (tier === "rich" ? F.critterRich : tier === "fair" ? F.critterFair : F.critterLean);
+        const hazard = Math.max(0.015, F.hazardBase + (F9?.hazardBonus || 0) - lv * F.hazardPerLevel);
+
+        const tierNote = tier === "rich" ? "" : tier === "fair" ? " (picked over)" : " (slim pickings)";
+        const give = (id, q, msg) => { p.inv[id] = (p.inv[id] || 0) + q; showToast(msg); };
+
+        if (Math.random() < hazard) {                    // something in there objects
+          if (Math.random() < 0.35) { p.health = Math.max(1, p.health - 10); sfx.alert(); showToast("🐍 A snake strikes out of the leaves! (−10 hp)"); }
+          else { p.health = Math.max(1, p.health - 4); showToast("🐜 Something bites you. (−4 hp)"); }
+        } else if (Math.random() < critter) {            // ...or bolts. Stage 16: the plant HAD a tenant.
+          const spawned = spawnBeastAt(sim, p.scene, fx, fy, Math.random() < 0.12 ? "stag" : "hare");
+          if (spawned) { sfx.alert(); showToast(spawned.sp === "stag" ? "🦌 A STAG crashes out of the thicket — and it's seen you." : "🐇 A hare bursts out of the leaves and bolts!"); }
+          else give("herb", 1, "🌿 Something rustled off before you could see it — a herb, at least.");
+        } else if (Math.random() >= anything) {
+          showToast(`🍃 Nothing but leaves this time.${tierNote}`);
+        } else if (Math.random() < interest) {           // the notable finds
+          const r2 = Math.random();
+          if (r2 < 0.42) { const c = 1 + Math.floor(Math.random() * (tier === "rich" ? 4 : 3)); p.coins += c; sfx.coin(); showToast(`🪙 ${c} coin${c > 1 ? "s" : ""} in the roots!`); }
+          else if (r2 < 0.60) { give("ring", 1, "💍 A tarnished ring — someone lost this…"); sfx.coin(); }
+          else if (r2 < 0.78) give("herb", 2, "🌿 A whole patch of good herb — two bundles.");
+          else if (r2 < 0.92) give("cotton", 2, "🤍 Wild cotton, caught on the thorns — two handfuls.");
+          else { give("goodie_crate", 1, "📦 A weathered crate, half-buried. Somebody's cache…"); sfx.coin(); }
+        } else {                                          // the staples — weighted by what's actually growing here
+          const table = F9?.gives || { fiber: 3, stick: 3, rock: 2, herb: 2 };
+          const total = Object.values(table).reduce((s, v) => s + v, 0);
+          let r3 = Math.random() * total, pick = "fiber";
+          for (const [id, w] of Object.entries(table)) { r3 -= w; if (r3 <= 0) { pick = id; break; } }
+          const bonus = tier === "rich" ? (Math.random() < 0.45 ? 1 : 0) : tier === "fair" ? (Math.random() < 0.2 ? 1 : 0) : 0;
+          const q = 1 + bonus;
+          const IT = ITEMS[pick];
+          give(pick, q, `${IT?.emoji || "🌿"} ${q > 1 ? `${q}× ` : ""}${IT?.name || pick}${F9 ? ` from the ${F9.name.toLowerCase()}` : ""}.${tierNote}`);
+        }
         if (skillLevel(p, "foraging") > before) showToast(`📈 ${SKILL_TRACKS.foraging} — now ${skillTierName(p, "foraging")}!`);
         bump(); break;
       }
@@ -11132,18 +11512,48 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
        reads it, for safety or for opportunity */
     const world = worldRef.current;
     const watchHere = sim.npcs.some(n => n.alive && n.enforcer && townOfScene(world, n.scene) === town.id);
+    /* Stage 16: the ground wears the season. Each palette is the summer tile blended toward the
+       season's own colour, so roads stay roads and water still reads as water — but a winter
+       town is pale and frozen, and an autumn one has gone to straw. */
+    const season9 = sim.season || seasonOf(sim.day);
+    const GROUND = {
+      spring: { a: "#7cb45b", b: "#74ab54", p1: "#6fae57", p2: "#66a350", grave1: "#7a8a72", grave2: "#71816a", road1: "#b3a284", road2: "#a8987c", water: "#4a90c2" },
+      summer: { a: "#86bd5e", b: "#7cb257", p1: "#79b95c", p2: "#6faa53", grave1: "#83917a", grave2: "#7a8871", road1: "#bcab8c", road2: "#b1a084", water: "#3f96cc" },
+      autumn: { a: "#9aa257", b: "#8f9750", p1: "#a2a45a", p2: "#959852", grave1: "#8a8a6e", grave2: "#807f66", road1: "#b0a07e", road2: "#a49475", water: "#4a83a8" },
+      winter: { a: "#c3ccd2", b: "#b8c2c9", p1: "#c8d2d8", p2: "#bcc6cd", grave1: "#a8b0b4", grave2: "#9ea6aa", road1: "#a9a9a6", road2: "#9e9e9b", water: "#7fa8c4" },
+    };
+    const G9 = GROUND[season9] || GROUND.spring;
     for (let y = 0; y < town.h; y++) for (let x = 0; x < town.w; x++) {
       const t = town.grid[y][x];
       ctx.fillStyle =
-        t === "r" ? ((x + y) % 2 ? "#b3a284" : "#a8987c") :
-        t === "p" ? ((x + y) % 2 ? "#6fae57" : "#66a350") :
-        t === "g" ? ((x + y) % 2 ? "#7a8a72" : "#71816a") :   // graveyard grass — muted, respectful
-        t === "w" ? "#4a90c2" : ((x + y) % 2 ? "#7cb45b" : "#74ab54");
+        t === "r" ? ((x + y) % 2 ? G9.road1 : G9.road2) :
+        t === "p" ? ((x + y) % 2 ? G9.p1 : G9.p2) :
+        t === "g" ? ((x + y) % 2 ? G9.grave1 : G9.grave2) :   // graveyard grass — muted, respectful
+        t === "w" ? G9.water : ((x + y) % 2 ? G9.a : G9.b);
       ctx.fillRect(px(x), py(y), T + 0.6, T + 0.6);
       if (t === "w") {
         ctx.fillStyle = `rgba(255,255,255,${0.15 + 0.1 * Math.sin(nowMs / 300 + x + y)})`;
         ctx.fillRect(px(x) + T * 0.2, py(y) + T * 0.2, T * 0.6, T * 0.6);
       }
+    }
+    /* falling weather, drawn over the ground and under everything that lives on it */
+    {
+      const W9 = CFG.WEATHER.kinds[sim.weather?.kind] || CFG.WEATHER.kinds.clear;
+      if (W9.wet > 0) {
+        const snowy = sim.weather?.kind === "snow";
+        const n = Math.floor(W9.wet * (snowy ? 90 : 160));
+        ctx.fillStyle = snowy ? "rgba(255,255,255,0.85)" : "rgba(170,200,235,0.55)";
+        for (let i = 0; i < n; i++) {
+          const seed = i * 9301 + 49297;
+          const bx = (seed % 1000) / 1000 * ctx.canvas.width;
+          const speed = snowy ? 0.05 : 0.55;
+          const by = ((nowMs * speed + (seed % 777) * 13) % (ctx.canvas.height + 40)) - 20;
+          const drift = snowy ? Math.sin(nowMs / 700 + i) * 6 : 0;
+          if (snowy) ctx.fillRect(bx + drift, by, 2.5, 2.5);
+          else ctx.fillRect(bx, by, 1.4, 7);
+        }
+      }
+      if (W9.dim > 0) { ctx.fillStyle = `rgba(96,104,120,${W9.dim})`; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); }
     }
     /* headstones — one per grave, filled row by row. Empty until it isn't. */
     if (town.grave) {
@@ -11160,13 +11570,37 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         ctx.fillText(g.name, px(gx) + T / 2, py(gy) + T * 1.05);
       });
     }
-    for (const [bx2, by2] of bushSpots(town)) {   // v7 Stage 3: forage bushes, low and light
-      ctx.fillStyle = "#5b8a3f";
-      ctx.beginPath(); ctx.arc(px(bx2) + T / 2, py(by2) + T / 2 + T * 0.12, T * 0.28, 0, 7); ctx.fill();
-    }
-    for (const [tx, ty] of town.trees) {
-      ctx.fillStyle = "#3f6b33";
-      ctx.beginPath(); ctx.arc(px(tx) + T / 2, py(ty) + T / 2, T * 0.42, 0, 7); ctx.fill();
+    /* Stage 16: the hedgerows are SPECIES now, drawn as flat vertex art and gated by season —
+       a berry thicket in autumn stands where a meadow bloom stood in spring. Foraged-out
+       plants read as picked-over rather than vanishing. */
+    {
+      const season = simRef.current?.season || seasonOf(simRef.current?.day || 1);
+      const S = SEASONS[season];
+      for (const [bx2, by2] of bushSpots(town)) {
+        const fid = floraAt(town.id, season, bx2, by2);
+        const cx2 = px(bx2) + T / 2, cy2 = py(by2) + T / 2 + T * 0.1;
+        const picked = simRef.current?.foragedAt?.[`t:${town.id}:${bx2},${by2}`] === simRef.current?.day;
+        ctx.save();
+        if (picked) ctx.globalAlpha = 0.45;                    // stripped this morning — come back tomorrow
+        if (fid) FLORA[fid].draw(ctx, cx2, cy2, T, season);
+        else { poly(ctx, cx2, cy2, T, [[-0.24, 0.22], [0, -0.16], [0.24, 0.22]], S.grass); }   // bare ground cover
+        ctx.restore();
+      }
+      /* the canopy takes the season too: bare frames in winter, fire in autumn */
+      for (const [tx, ty] of town.trees) {
+        const cx2 = px(tx) + T / 2, cy2 = py(ty) + T / 2;
+        poly(ctx, cx2, cy2, T, [[-0.07, 0.44], [-0.05, 0.02], [0.05, 0.02], [0.07, 0.44]], "#6b4f36");   // trunk
+        if (season === "winter") {                             // bare limbs, a little snow on top
+          for (const [ax, ay] of [[-0.30, -0.16], [0.30, -0.16], [-0.18, -0.34], [0.18, -0.34]])
+            poly(ctx, cx2, cy2, T, [[0, 0.04], [ax, ay], [ax * 0.82, ay + 0.09]], "#6b4f36");
+          poly(ctx, cx2, cy2, T, [[-0.26, -0.28], [0, -0.46], [0.26, -0.28], [0, -0.34]], "#dfe8ee");
+        } else {
+          const c = S.canopy;
+          poly(ctx, cx2, cy2, T, [[-0.44, 0.04], [-0.26, -0.34], [0, -0.50], [0.26, -0.34], [0.44, 0.04], [0.20, 0.16], [-0.20, 0.16]], c);
+          poly(ctx, cx2, cy2, T, [[-0.22, -0.10], [0, -0.36], [0.22, -0.10], [0, -0.02]], season === "autumn" ? "#c8862c" : "#5fa04a");
+          if (season === "spring") poly(ctx, cx2, cy2, T, [[-0.12, -0.28], [-0.06, -0.38], [0.00, -0.28], [-0.06, -0.20]], S.bloom);
+        }
+      }
     }
     ctx.fillStyle = "#e8c84a";
     ctx.fillRect(px(town.busStop.x) + T * 0.35, py(town.busStop.y) + T * 0.1, T * 0.3, T * 0.5);
@@ -11389,6 +11823,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
 
       <div style={S.topBar}>
         <div style={S.clockChip}>{hud?.place || hud?.town || "…"} · D{hud?.day ?? 1} {hud?.clock ?? ""}</div>
+        {hud?.season && (() => {   // Stage 16: season, sky, and the temperature you're actually feeling
+          const S9 = SEASONS[hud.season], W9 = CFG.WEATHER.kinds[hud.weather] || CFG.WEATHER.kinds.clear;
+          const st = tempStress(hud.temp);
+          const col = st.cold ? "#7fb4e0" : st.hot ? "#e08a52" : undefined;
+          return (
+            <div style={{ ...S.clockChip, color: col }} title={`${S9.name} · ${W9.name} · ${hud.outTemp}° outside${hud.indoors ? " (you're indoors)" : ""}`}>
+              {S9.emoji}{W9.emoji} {hud.temp}° {tempWord(hud.temp)}{st.cold ? " 🥶" : st.hot ? " 🥵" : ""}
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: 6, flex: 1, maxWidth: 460 }}>
           {["hunger", "thirst", "energy", "health"].map(n => (
             <div key={n} style={S.barOuter}>
