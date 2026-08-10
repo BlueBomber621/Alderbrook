@@ -1429,7 +1429,11 @@ const seedOccupation = (def) => {
 const NPC_SKILL_SEED = { priya: { office: 60 }, bruno: { office: 35 }, dex: { office: 8 },
   marge: { kitchen: 60 }, rosa: { kitchen: 35 }, wren: { kitchen: 60 }, hollis: { kitchen: 18 },
   opal: { stock: 35 }, pete: { stock: 35 }, gus: { fishing: 60 }, juniper: { stock: 18 },
-  reyes: { service: 18 }, noor: { service: 18 }, briar: { service: 18 } };   // Stage 2.3: lvl-2 medics + working enforcer
+  reyes: { service: 18 }, noor: { service: 18 }, briar: { service: 18 },   // Stage 2.3: lvl-2 medics + working enforcer
+  /* Stage 16: the Outlands live off the land — they forage better than anyone in the towns,
+     and they keep getting better at it (the camp has nothing else to teach). */
+  mara: { foraging: 55 }, howl: { foraging: 70, kitchen: 40 },
+  cutter: { foraging: 60 }, sly: { foraging: 50 }, vik: { foraging: 45 } };
 const PARTY_MENU = { dinner: ["pizza", "combo"], dessert: ["cake", "pie"], drink: ["cider", "water", "coffee", "tea"] };
 
 /* =====================================================================
@@ -2975,6 +2979,13 @@ const invLine = (ent) => {
 };
 // Stage 3.7b: a compact "how ready are they for trouble" line for the AI brains — carried food,
 // drink, and medicine counts, so the director can nudge the under-provisioned to stock up.
+/* Stage 17: what someone has on, and whether it actually suits the day — read by every brain */
+const wearLine = (ent, felt) => {
+  const worn = (ent.worn || []).map(id => `${GARMENTS[id].name}${ent.wornTorn?.[id] ? " (TORN)" : ""}`);
+  const st = tempStress(felt);
+  const verdict = st.cold ? "and they are COLD in it" : st.hot ? "and they are OVERHEATING in it" : "and it suits the weather";
+  return `${worn.length ? worn.join(", ") : "little more than rags"} — ${verdict}`;
+};
 const provisionLine = (ent) => {
   let food = 0, drink = 0, med = 0;
   for (const [id, c] of Object.entries(ent.inv)) {
@@ -3004,6 +3015,7 @@ Likes: ${npc.likes.join(", ")}. Dislikes: ${npc.dislikes.join(", ")}. Feelings: 
 YOUR STATE — hunger ${ctx.hunger}/100, thirst ${ctx.thirst}/100, energy ${ctx.energy}/100, health: ${healthDesc(npc.health)}, hygiene: ${hygieneDesc(npc.hygiene)}. You have ${Math.floor(npc.coins)} coins and carry: ${invLine(npc)}. You are ${fameTier(npc.fame, npc.renown)}${npc.wanted > 0 ? ` and WANTED by the Watch (level ${npc.wanted})` : ""}. Currently: ${npc.activity}.${npc.intent ? ` Today you planned to: ${npc.intent}.` : ""}${npc.mayor ? ` You are the elected MAYOR of the valley — you set the business tax, fund civic upgrades from the town treasuries, preside over the weekly Council Call, and answer to public approval. Carry yourself with that authority${ctx.mayorApproval != null ? ` (approval is around ${ctx.mayorApproval}% right now)` : ""}.` : ""}
 ${mem}
 THE PLAYER — ${ctx.playerTier}${ctx.playerWanted > 0 ? `, currently wanted by the Watch (level ${ctx.playerWanted})` : ""}, looks ${healthDesc(ctx.playerHealth)}, hygiene: ${hygieneDesc(ctx.playerHygiene)}${ctx.playerArmed ? ", visibly carrying a weapon" : ""}.
+WEATHER — ${ctx.weather}. You are wearing: ${ctx.wearing}.${ctx.tempNote ? ` ${ctx.tempNote}` : ""}
 SCENE — ${ctx.clock}, day ${ctx.day}. Nearby: ${ctx.nearby || "no one else"}.${ctx.buzz ? ` Town buzz: "${ctx.buzz}".` : ""}${ctx.recent ? ` Recently: ${ctx.recent}.` : ""}
 ${ctx.interview ? `\nJOB INTERVIEW IN PROGRESS — you are interviewing the player for the position of ${ctx.interview.position} at ${ctx.interview.business} (your business). Their training: ${ctx.interview.skills}. Their reputation: ${ctx.playerTier}. Ask pointed, in-character questions about work ethic and skill. After 2-3 exchanges (${ctx.interview.exchanges} so far), when you have enough, include "verdict":"hire" or "verdict":"pass" in your JSON. Weigh their ACTUAL answers along with skill and reputation — a skilled applicant who's rude or evasive still fails; an eager unskilled one with great answers can squeak in. In "remember", record honestly how the interview went.\n` : ""}${history ? `Recent conversation:\n${history}\n` : ""}The player says: "${playerMsg}"
 
@@ -3013,11 +3025,12 @@ Only set remember for genuinely notable things. Only shift relationship if the p
   return callClaude(prompt, CFG.CHAT_MAX_TOKENS);
 }
 
-async function dailyPulse(town, npcs, dayLog, npcsById, playerTier) {
+async function dailyPulse(town, npcs, dayLog, npcsById, playerTier, sky) {
   const roster = npcs.map(n =>
     `- ${n.id} (${n.name}): ${n.personality}.${n.mayor ? " ⭐THE ELECTED MAYOR of the valley — sets taxes, funds civic upgrades, answers to public approval." : ""} Feels: ${relLine(n, npcsById)}. Has ${Math.floor(n.coins)} coins, ${healthDesc(n.health)}.` +
     `${n.wanted > 0 ? ` WANTED lvl ${n.wanted}.` : ""}${n.memories.length ? ` Memories: ${n.memories.join("; ")}.` : ""}` +
-    ` Needs h${Math.round(n.hunger)}/t${Math.round(n.thirst)}/e${Math.round(n.energy)}. ${provisionLine(n)}.`
+    ` Needs h${Math.round(n.hunger)}/t${Math.round(n.thirst)}/e${Math.round(n.energy)}. ${provisionLine(n)}.` +
+    (n._wear ? ` Wearing: ${n._wear}.` : "")
   ).join("\n");
   const spots = Object.keys(town.spots).join("|");
   const prompt =
@@ -3025,13 +3038,17 @@ async function dailyPulse(town, npcs, dayLog, npcsById, playerTier) {
 Residents:
 ${roster}
 The player is ${playerTier}.
+TODAY'S SKY — ${sky || "settled weather"}.
 ${dayLog.length ? `Yesterday: ${dayLog.join(". ")}.` : "Yesterday was quiet."}
 
 Respond ONLY with JSON, no markdown:
-{"npcs":{"<id>":{"intent":"their small plan today, under 8 words","mood":"happy|neutral|grumpy|tired","spot":"${spots}|null"}},
+{"npcs":{"<id>":{"intent":"their small plan today, under 8 words","mood":"happy|neutral|grumpy|tired","spot":"${spots}|null","wear":"summer|medium|winter|leathers|keep","shop":true|false}},
 "encounters":[{"a":"<id>","b":"<id>","lines":["Name: line","Name: line","Name: line"]}],
-"drift":[{"a":"<id>","b":"<id>","change":"warmer|cooler"}]}
+"drift":[{"a":"<id>","b":"<id>","change":"warmer|cooler"}],
+"bonds":[{"a":"<id>","b":"<id>","move":"closer|cooler","reply":"accept|reject|rebuff"}]}
 Rules: every resident gets an entry. Max 2 encounters between residents with history, lines under 12 words. Max 2 drifts, only if yesterday justifies one. Stay in character.
+WEATHER & CLOTHES: for each resident set "wear" — what weight they'd choose to put on given today's sky and their character ("keep" to stay as they are, "leathers" for hunters and hard cases). Anyone marked COLD or OVERHEATING should change, and anyone in TORN clothes may set "shop":true to go and get something new made. A vain character dresses for looks; a poor one makes do.
+BONDS (residents only, never the player): at most ONE entry, and only when the day genuinely earned it. Two residents whose history warrants it may grow "closer" or go "cooler". "reply" is how the approached one takes it: "accept" (warmly), "reject" (kindly but no), or "rebuff" (rudely — they were graceless about it). Leave the array empty on an ordinary day.
 IF A RESIDENT IS THE MAYOR: their intent should read like a mayor's — being seen around town, hearing folk out, showing up at the hall, tending to unrest or a project — fitting their character (dutiful, vain, scheming, generous, whatever they are).
 IMPORTANT — SELF-CARE: anyone marked ⚠LOW-SUPPLIES, or with a need below 30, should have an intent that gets them sorted: buying food/water to carry, stocking up, or heading to eat/drink. A resident keeping a few meals and drinks in their pocket is normal, sensible behavior — lean toward it. Nobody should wander idly while low on supplies or needs.`;
   return callClaude(prompt, CFG.PULSE_MAX_TOKENS);
@@ -6572,12 +6589,15 @@ export default function Alderbrook() {
     const tier = fameTier(sim.player.fame, sim.player.renown);
     if (!townNpcs.length) return;                          // nothing left to pulse here today
     apiBusyRef.current = true;
-    dailyPulse(town, townNpcs, sim.dayLog, byId, tier).then(out => {
+    for (const n of townNpcs) n._wear = wearLine(n, feltTemp(sim, n));   // Stage 17: the director sees their wardrobe
+    dailyPulse(town, townNpcs, sim.dayLog, byId, tier, weatherLine(sim)).then(out => {
       for (const n of townNpcs) {
         const plan = out.npcs?.[n.id]; if (!plan) continue;
         n.intent = plan.intent || null; n.mood = plan.mood || n.mood;
         n.pulseSpot = town.spots[plan.spot] ? plan.spot : null;
+        applyWearChoice(sim, n, plan);                                   // Stage 17: what they decided to put on
       }
+      applyBonds(sim, out.bonds, byId);                                  // Stage 17: NPC↔NPC, decided in character
       (out.encounters || []).slice(0, 2).forEach((e, i) => {
         if (byId[e.a]?.alive && byId[e.b]?.alive) sim.encounters.push({ ...e, hour: 10 + i * 4 + Math.random() * 2, done: false, town: townId });
       });
@@ -6598,6 +6618,57 @@ export default function Alderbrook() {
      watch/clinic staff inherit the exemption automatically. One lean call
      covering the whole exempt roster; everyone else pulses via their town's
      tryPulse only while the player is home. */
+  /* Stage 17: the director said what this soul would put on today. "keep" leaves them be; a
+     weight band re-dresses them in it; "leathers" is the hunter's answer. A resident in torn
+     kit who chose to shop gets a fresh piece cut for them at the tailor's (off-screen — they
+     paid for it), because a torn coat in a snowstorm is a problem they'd actually solve. */
+  const applyWearChoice = (sim, n, plan) => {
+    if (!plan || !n.alive) return;
+    n.worn = n.worn || []; n.wornTorn = n.wornTorn || {}; n.wornWear = n.wornWear || {};
+    const want = plan.wear;
+    if (want && want !== "keep") {
+      if (want === "leathers") n.worn = ["hunter_hat", "leather_coat", "leather_legs"];
+      else if (["summer", "medium", "winter"].includes(want) && !n.enforcer) {
+        const pool = garmentsOfBand(want);
+        const h = hash32(n.id + want);
+        n.worn = GARMENT_SLOTS.map(slot => { const o = pool.filter(id => GARMENTS[id].slot === slot); return o.length ? o[h % o.length] : null; }).filter(Boolean);
+      }
+    }
+    if (plan.shop) {   // they went and had the torn things replaced
+      for (const id of [...n.worn]) if (n.wornTorn[id]) { delete n.wornTorn[id]; n.wornWear[id] = 0; }
+      if (n.coins >= 6) n.coins -= 6;
+    }
+  };
+  /* Stage 17: bonds BETWEEN residents — never the player. The director decides who reached out,
+     how it was taken, and the relationship moves accordingly. A rude rebuff costs the rebuffer
+     something too: the valley notices graceless behaviour. */
+  const applyBonds = (sim, bonds, byId) => {
+    for (const bd of (bonds || []).slice(0, 1)) {
+      const a = byId[bd?.a], b = byId[bd?.b];
+      if (!a || !b || !a.alive || !b.alive || a === b) continue;
+      if (bd.a === "player" || bd.b === "player") continue;             // strictly resident-to-resident
+      const step = (ent, key, d) => { const cur = relIdx(ent.relationships[key] || "neutral"); ent.relationships[key] = REL_ORDER[clamp(cur + d, 0, REL_ORDER.length - 1)]; };
+      const now = performance.now() / 1000;
+      if (bd.reply === "accept" && bd.move !== "cooler") {
+        step(a, b.id, 1); step(b, a.id, 1);
+        a.memories = [...a.memories, `${b.name} and I grew closer`].slice(-CFG.MAX_MEMORIES);
+        b.bubble = { text: rand(["I'd like that, honestly.", "You know — yes.", "Took you long enough."]), until: now + 5 };
+        sim.dayLog.push(`${a.name} and ${b.name} grew closer`);
+      } else if (bd.reply === "rebuff") {
+        step(a, b.id, -2); step(b, a.id, -1);
+        a.memories = [...a.memories, `${b.name} was rude about it`].slice(-CFG.MAX_MEMORIES);
+        b.bubble = { text: rand(["Don't be ridiculous.", "You? Really.", "*walks off mid-sentence*"]), until: now + 5 };
+        seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === b.town).slice(0, 3), { text: `${b.name} was graceless to ${a.name}`, subjectId: b.id, bad: true });
+        sim.dayLog.push(`${b.name} rebuffed ${a.name} rudely`);
+      } else if (bd.reply === "reject") {
+        step(a, b.id, -1);
+        b.bubble = { text: rand(["That's kind — but no.", "I'd rather we stayed as we are.", "No. Sorry."]), until: now + 5 };
+        sim.dayLog.push(`${b.name} turned ${a.name} down, gently`);
+      } else if (bd.move) {
+        const d = bd.move === "closer" ? 1 : -1; step(a, b.id, d); step(b, a.id, d);
+      }
+    }
+  };
   const exemptPulse = (n) => (n.occupation?.owner && n.occupation?.bId) || n.enforcer || n.doctor || n.mayor;   // the chair has levers now — it plans wherever the player roams
   const tryOwnerPulse = (sim, world) => {
     if (!sim.settings.pulse || apiBusyRef.current) return;
@@ -6611,12 +6682,15 @@ export default function Alderbrook() {
     // own intents/moods still apply to them individually wherever they live.
     const frameTown = world.towns[townOfScene(world, sim.player.scene)] || Object.values(world.towns)[0];
     apiBusyRef.current = true;
-    dailyPulse(frameTown, owners, sim.dayLog, byId, tier).then(out => {
+    for (const n of owners) n._wear = wearLine(n, feltTemp(sim, n));
+    dailyPulse(frameTown, owners, sim.dayLog, byId, tier, weatherLine(sim)).then(out => {
       for (const n of owners) {
         const plan = out.npcs?.[n.id]; if (!plan) continue;
         n.intent = plan.intent || null; n.mood = plan.mood || n.mood;
         n.pulseSpot = world.towns[n.town].spots[plan.spot] ? plan.spot : null;   // resolve spot in the owner's OWN town
+        applyWearChoice(sim, n, plan);
       }
+      applyBonds(sim, out.bonds, byId);
     }).catch(() => { /* owners fall back to local routines */ })
       .finally(() => { apiBusyRef.current = false; });
   };
@@ -11405,6 +11479,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       playerTier: fameTier(p.fame, p.renown), playerWanted: p.wanted,
       playerHealth: p.health, playerHygiene: p.hygiene, playerArmed: !!bestWeapon(p),
       mayorApproval: npc.mayor ? mayorApprovalPct(sim) : null,   // the chair should speak from how the valley actually feels
+      // Stage 16/17: they know what the sky is doing, and whether their coat is up to it
+      weather: weatherLine(sim), wearing: wearLine(npc, feltTemp(sim, npc)),
+      tempNote: (() => { const st = tempStress(feltTemp(sim, npc)); return st.cold ? "You're genuinely cold and it's on your mind." : st.hot ? "You're sweltering and it's on your mind." : ""; })(),
       nearby, buzz: sim.buzz?.text || null, recent: sim.dayLog.slice(-3).join("; ") || null,
       interview: sim.interview?.npcId === npc.id ? {
         business: bld(sim.interview.bId).name,
