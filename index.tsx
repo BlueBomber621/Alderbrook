@@ -4415,14 +4415,39 @@ const invLine = (ent) => {
 // Stage 3.7b: a compact "how ready are they for trouble" line for the AI brains — carried food,
 // drink, and medicine counts, so the director can nudge the under-provisioned to stock up.
 /* Stage 17: what someone has on, and whether it actually suits the day — read by every brain */
-const wearLine = (ent, felt) => {
+/* The nudge prompt used to list EVERY item id in the game so the director could
+   pick one to buy, gift or trade — 150 of them, a third of that prompt, and it
+   grew every time the game did. Most were never plausible: the wardrobe is
+   bought at a bench rather than nudged, contraband is gated, and the virtual
+   and zero-price entries aren't things at all. This is the pool that a small
+   mid-day kindness could actually involve. */
+const NUDGEABLE_IDS = Object.entries(ITEMS)
+  .filter(([id, it]) => it.price > 0 && !it.garment && !it.contraband && it.cat !== "virtual" && !GARMENTS[id])
+  .map(([id]) => id);
+
+/* `brief` is what the DIRECTOR gets. It reads this line for every resident of a
+   town, every day, and the full wardrobe — each garment's id followed by its
+   name in brackets — measured 45% of that entire prompt once everyone owned a
+   dozen pieces. It was pure duplication: `work_shirt` already says what it is,
+   and the only thing the director does with the list is name a favourite, which
+   is a torso piece. So the brief form lists the tops, by id, and nothing else.
+   Chat still gets the whole wardrobe: that's one person, once. */
+const wearLine = (ent, felt, brief = false) => {
   const worn = wornPieces(ent).map(pc => `${GARMENTS[pc.g].name}${pc.t ? " (TORN)" : ""}`);
   const st = tempStress(felt);
   const verdict = st.cold ? "and they are COLD in it" : st.hot ? "and they are OVERHEATING in it" : "and it suits the weather";
   const fav = ent.favorite && GARMENTS[ent.favorite] ? `; favourite: ${GARMENTS[ent.favorite].name}` : "";
-  const owns = kitOf(ent).length ? `. Wardrobe: ${ownedIds(ent).map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}` : "";
+  let owns = "";
+  if (brief) {
+    const tops = ownedIds(ent).filter(id => GARMENTS[id]?.slot === "torso");
+    if (tops.length) owns = `. Tops: ${tops.join(",")}`;
+  } else if (kitOf(ent).length) {
+    owns = `. Wardrobe: ${ownedIds(ent).map(id => `${id} (${GARMENTS[id]?.name})`).join(", ")}`;
+  }
   return `${worn.length ? worn.join(", ") : "little more than rags"} — ${verdict}${fav}${owns}`;
 };
+/* Same reasoning, smaller stake: this repeats once per resident per pulse, so it
+   says what it needs to in a sixth of the characters. */
 const provisionLine = (ent) => {
   let food = 0, drink = 0, med = 0;
   for (const [id, c] of Object.entries(ent.inv)) {
@@ -4432,7 +4457,7 @@ const provisionLine = (ent) => {
     if (ITEMS[id]?.cat === "med" || id === "medicine") med += c;
   }
   const flag = (food < 2 || drink < 2) ? " ⚠LOW-SUPPLIES" : "";
-  return `provisions: ${food} food, ${drink} drink, ${med} med${flag}`;
+  return `prov ${food}f/${drink}d/${med}m${flag}`;
 };
 // the mayor governs the whole valley — their standing is the average approval across the towns that have a hall
 function mayorApprovalPct(sim) {
@@ -4479,13 +4504,13 @@ TODAY'S SKY — ${sky || "settled weather"}.
 ${dayLog.length ? `Yesterday: ${dayLog.join(". ")}.` : "Yesterday was quiet."}
 
 Respond ONLY with JSON, no markdown:
-{"npcs":{"<id>":{"intent":"their small plan today, under 8 words","mood":"happy|neutral|grumpy|tired","spot":"${spots}|null","wear":"summer|medium|winter|leathers|keep","favourite":"<a garment id from THEIR OWN wardrobe, or empty to keep their current favourite>","shop":true|false}},
+{"npcs":{"<id>":{"intent":"their small plan today, under 8 words","mood":"happy|neutral|grumpy|tired","spot":"${spots}|null","wear":"summer|medium|winter|leathers|keep","favourite":"<one of the ids listed after Tops: for that resident, or empty to keep their current favourite>","shop":true|false}},
 "encounters":[{"a":"<id>","b":"<id>","lines":["Name: line","Name: line","Name: line"]}],
 "drift":[{"a":"<id>","b":"<id>","change":"warmer|cooler"}],
 "bonds":[{"a":"<id>","b":"<id>","move":"closer|cooler","reply":"accept|reject|rebuff"}]}
 Rules: every resident gets an entry. Max 2 encounters between residents with history, lines under 12 words. Max 2 drifts, only if yesterday justifies one. Stay in character.
 WEATHER & CLOTHES: for each resident set "wear" — what weight they'd choose to put on given today's sky and their character ("keep" to stay as they are, "leathers" for hunters and hard cases). Anyone marked COLD or OVERHEATING should change, and anyone in TORN clothes may set "shop":true to go and get something new made. A vain character dresses for looks; a poor one makes do.
-FAVOURITES: everyone owns several outfits (listed as their Wardrobe) and has a favourite piece they reach for whenever the weather allows. Set "favourite" only when the day genuinely changes their mind about what they love wearing — a compliment, a ruined coat, a new look they've taken to. It must be an id from THEIR OWN wardrobe. Otherwise leave it empty.
+FAVOURITES: everyone owns several outfits, and the tops they own are listed after "Tops:" on their line. A favourite is the one they reach for whenever the weather allows. Set "favourite" only when the day genuinely changes their mind about what they love wearing — a compliment, a ruined coat, a new look they've taken to. It must be one of THEIR OWN listed tops. Otherwise leave it empty.
 BONDS (residents only, never the player): at most ONE entry, and only when the day genuinely earned it. Two residents whose history warrants it may grow "closer" or go "cooler". "reply" is how the approached one takes it: "accept" (warmly), "reject" (kindly but no), or "rebuff" (rudely — they were graceless about it). Leave the array empty on an ordinary day.
 IF A RESIDENT IS THE MAYOR: their intent should read like a mayor's — being seen around town, hearing folk out, showing up at the hall, tending to unrest or a project — fitting their character (dutiful, vain, scheming, generous, whatever they are).
 IMPORTANT — SELF-CARE: anyone marked ⚠LOW-SUPPLIES, or with a need below 30, should have an intent that gets them sorted: buying food/water to carry, stocking up, or heading to eat/drink. A resident keeping a few meals and drinks in their pocket is normal, sensible behavior — lean toward it. Nobody should wander idly while low on supplies or needs.`;
@@ -4727,7 +4752,7 @@ Residents:
 ${roster}
 The player is ${playerTier}.
 Today so far: ${dayLog.join(". ")}.
-Item ids: ${Object.keys(ITEMS).join(", ")}. Spots: ${Object.keys(town.spots).join(", ")}.
+Item ids: ${NUDGEABLE_IDS.join(",")}. Spots: ${Object.keys(town.spots).join(", ")}.
 
 Respond ONLY with JSON, no markdown:
 {"nudges":[{"npc":"<id>","say":"one in-character line under 12 words","do":"goto|buy|gift_coins|gift_item|visit|send_letter|throw_party|trade","spot":"<spot>|null","item":"<itemId>|null","amount":<1-15>|null,"askItem":"<itemId>|null","askAmount":<coins>|null,"target":"<npcId>|player|null"}]}
@@ -8280,7 +8305,7 @@ export default function Alderbrook() {
     const tier = fameTier(sim.player.fame, sim.player.renown);
     if (!townNpcs.length) return;                          // nothing left to pulse here today
     apiBusyRef.current = true;
-    for (const n of townNpcs) n._wear = wearLine(n, feltTemp(sim, n));   // Stage 17: the director sees their wardrobe
+    for (const n of townNpcs) n._wear = wearLine(n, feltTemp(sim, n), true);   // Stage 17: the director sees their tops, compactly
     dailyPulse(town, townNpcs, sim.dayLog, byId, tier, weatherLine(sim)).then(out => {
       for (const n of townNpcs) {
         const plan = out.npcs?.[n.id]; if (!plan) continue;
@@ -8382,7 +8407,7 @@ export default function Alderbrook() {
     // own intents/moods still apply to them individually wherever they live.
     const frameTown = world.towns[townOfScene(world, sim.player.scene)] || Object.values(world.towns)[0];
     apiBusyRef.current = true;
-    for (const n of owners) n._wear = wearLine(n, feltTemp(sim, n));
+    for (const n of owners) n._wear = wearLine(n, feltTemp(sim, n), true);
     dailyPulse(frameTown, owners, sim.dayLog, byId, tier, weatherLine(sim)).then(out => {
       for (const n of owners) {
         const plan = out.npcs?.[n.id]; if (!plan) continue;
