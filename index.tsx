@@ -11372,7 +11372,13 @@ export default function Alderbrook() {
       if (SHOP_STOCK[bId] && sim.mess[bId] >= 40 && !sim.task && bId !== "home_p")
         out.push({ id: "clean", label: `🧹 Cleaning shift (+${CFG.PAY.clean}c)` });
     }
-    return out;
+    /* Ids are ACTION TYPES, not identities: doAction switches on them, so several
+       different buttons legitimately share one — "party" covers the house do and
+       the sleepover, "cook" the kitchen and the home oven, and so on. Two buttons
+       offering genuinely the same thing is still a bug, so collapse on the label,
+       which is what the player actually reads. */
+    const seen = new Set();
+    return out.filter(a => { const k = `${a.id}|${a.label}`; if (seen.has(k)) return false; seen.add(k); return true; });
   };
 
   const spend = (p, n) => { if (p.coins < n) { showToast("Not enough coins."); return false; } p.coins -= n; return true; };
@@ -14396,8 +14402,14 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
             so they don't overlap the HUD or sit uselessly behind a dialog. */}
         {!overlayUp && (
           <div style={{ ...S.actionCol, right: isPhone ? 10 : 16, bottom: isPhone ? 16 : 16, left: isPhone ? 190 : "auto" }}>
+            {/* Keyed by id + label, never id alone. Seven action types are pushed
+                from more than one place — party, cook, chef, mixdrinks, sweep,
+                hillpath, shadyroute — so `key={a.id}` handed React duplicate keys
+                in the same list. Standing in your own house produced two buttons
+                both keyed "party" side by side, and React is free to mis-reconcile
+                that: the pair could come back as the same option twice. */}
             {actions.map(a => (
-              <button key={a.id} style={{ ...S.actionBtn, fontSize: fs }} onClick={() => doAction(a)}>{a.label}</button>
+              <button key={`${a.id}|${a.label}`} style={{ ...S.actionBtn, fontSize: fs }} onClick={() => doAction(a)}>{a.label}</button>
             ))}
           </div>
         )}
