@@ -632,7 +632,7 @@ const CFG = {
     },
   },
   DECOR: {   // the generated dressing, up only while the party runs
-    glyphs: ["🎈", "🎊", "🕯️", "🎀", "🍥", "🎐"],
+    glyphs: ["decor_balloon", "decor_streamer", "decor_candle", "decor_ribbon", "decor_swirl", "decor_lantern"],
     count: 6,
   },
   PATROL: { everyH: 4 },
@@ -4000,6 +4000,99 @@ const ICON_ART = {
   day_dress:    k => SH.gDress(k, "#5f7f9c", "#44607a"),
   wool_coat:    k => SH.gCoat(k, "#3f4a3a", "#2c3529", true),
   quilt_vest:   k => SH.gQuilt(k, "#4a3f5f", "#352c45"),
+/* ---------- shots in flight ----------
+     These point along +X, unlike the inventory arrow and bolt which lie on a
+     diagonal. The renderer rotates a shot to its flight angle, so its art has to
+     start pointing at zero degrees or it would come out crabbing sideways. */
+  /* the heads are solid and dark on purpose: at 300ms of flight a pale outline
+     reads as nothing at all, so the point has to carry the shape by itself */
+  shot_arrow:   k => { k.rrc(-0.34, -0.024, 0.58, 0.048, "#8a6a3f", 0.012);                    // shaft
+                       k.rpg([[0.46, 0.00], [0.16, -0.115], [0.16, 0.115]], "#6f7880", [0.01, 0.02, 0.02]);
+                       k.rpg([[0.42, 0.00], [0.20, -0.075], [0.20, 0.075]], "#aeb6bd", [0.01, 0.02, 0.02]);   // its lit facet
+                       for (const s of [-1, 1])                                                // fletching
+                         k.rpg([[-0.34, s * 0.02], [-0.31, s * 0.13], [-0.16, s * 0.10], [-0.14, s * 0.02]], "#e8e2d0", 0.018);
+                       k.rrc(-0.37, -0.035, 0.05, 0.07, "#c2a86a", 0.012); },                  // nock
+  shot_bolt:    k => { k.rrc(-0.26, -0.036, 0.46, 0.072, "#6f5434", 0.014);
+                       k.rpg([[0.44, 0.00], [0.12, -0.135], [0.12, 0.135]], "#5f666d", [0.01, 0.02, 0.02]);
+                       k.rpg([[0.39, 0.00], [0.17, -0.085], [0.17, 0.085]], "#9aa3ac", [0.01, 0.02, 0.02]);
+                       for (const s of [-1, 1])
+                         k.rpg([[-0.26, s * 0.035], [-0.24, s * 0.13], [-0.11, s * 0.11], [-0.10, s * 0.035]], "#8a9096", 0.018); },
+  shot_stone:   k => { k.blob(0.00, 0.00, 0.15, 0.13, PAL.stone, 6, 0.13, 0.7);
+                       k.blob(-0.04, -0.03, 0.07, 0.05, "#b4aca1", 5, 0.16, 1.5); },
+
+  /* ---------- world props ---------- */
+  prop_bus:     k => { k.rrc(-0.40, -0.20, 0.78, 0.34, "#c9a45e", 0.05);                       // body
+                       k.rrc(-0.36, -0.15, 0.30, 0.15, "#a8d4e8", 0.03);                       // windows
+                       k.rrc(-0.02, -0.15, 0.22, 0.15, "#a8d4e8", 0.03);
+                       k.rrc(0.24, -0.15, 0.12, 0.15, "#8fbcd4", 0.03);
+                       k.rrc(-0.40, 0.02, 0.78, 0.06, "#8a6a34", 0.02);                        // side stripe
+                       k.ci(-0.24, 0.16, 0.095, "#2f2a26"); k.ci(-0.24, 0.16, 0.042, "#8a8478");
+                       k.ci(0.22, 0.16, 0.095, "#2f2a26"); k.ci(0.22, 0.16, 0.042, "#8a8478");
+                       k.rrc(0.36, -0.10, 0.05, 0.10, "#e8c46a", 0.02); },                     // headlamp
+  prop_watchcar:k => { k.rrc(-0.40, -0.16, 0.78, 0.30, "#3f4a5e", 0.05);
+                       k.rpg([[-0.24, -0.16], [0.16, -0.16], [0.10, -0.30], [-0.18, -0.30]], "#4e5c72", 0.04);   // cabin
+                       k.rrc(-0.22, -0.28, 0.30, 0.12, "#a8c4d8", 0.03);
+                       k.rrc(-0.40, -0.02, 0.78, 0.07, "#e8e2d4", 0.02);                       // the white flash
+                       k.ci(-0.24, 0.15, 0.095, "#22242a"); k.ci(-0.24, 0.15, 0.042, "#9aa0a6");
+                       k.ci(0.22, 0.15, 0.095, "#22242a"); k.ci(0.22, 0.15, 0.042, "#9aa0a6");
+                       k.rrc(-0.10, -0.37, 0.09, 0.08, "#d94a4a", 0.02);                       // the light bar
+                       k.rrc(0.00, -0.37, 0.09, 0.08, "#4a7fd9", 0.02); },
+  /* a standing drinking fountain: pedestal, basin, and an arc of water thrown
+     from the spout back into the bowl */
+  prop_water:   k => { k.rrc(-0.19, 0.28, 0.38, 0.09, "#7a746a", 0.03);                         // footing
+                       k.rpg([[-0.11, -0.06], [0.11, -0.06], [0.14, 0.30], [-0.14, 0.30]], "#9aa0a6", 0.03);   // column
+                       k.rpg([[-0.05, -0.05], [0.02, -0.05], [0.04, 0.29], [-0.03, 0.29]], "#b4bac0", 0.02);
+                       k.rpg([[-0.28, -0.12], [0.28, -0.12], [0.22, 0.06], [-0.22, 0.06]], "#8a9096", [0.04, 0.04, 0.06, 0.06]);   // basin
+                       k.el(0.00, -0.115, 0.275, 0.075, "#b4bac0");
+                       k.el(0.00, -0.10, 0.215, 0.055, "#7fb4d4");                              // the water in it
+                       k.rrc(-0.15, -0.30, 0.07, 0.20, "#8a9096", 0.02);                        // the spout stem
+                       k.rpg([[-0.14, -0.30], [-0.06, -0.33], [-0.02, -0.27], [-0.10, -0.25]], "#b4bac0", 0.02);
+                       for (const [x, y, r] of [[-0.02, -0.25, 0.030], [0.04, -0.21, 0.028], [0.07, -0.16, 0.024]])
+                         k.ci(x, y, r, "#a8d4e8");                                              // the arc, mid-air
+                       k.ci(0.07, -0.12, 0.020, "#cfe6f4"); },
+  prop_dock:    k => { k.rrc(-0.40, 0.04, 0.80, 0.10, PAL.wood, 0.02);                          // the boards
+                       for (const x of [-0.30, -0.06, 0.18]) k.rrc(x, 0.12, 0.07, 0.24, PAL.woodDk, 0.015);   // its piles
+                       k.el(0.00, 0.30, 0.42, 0.09, "#5f8aa8");                                  // water beneath
+                       const a = k.ax(-0.14, 0.02, 0.30, -0.34);                                 // a rod left leaning
+                       a.bar(0.00, 1.00, 0.022, "#6f5434", 0.01);
+                       k.ln(0.30, -0.34, 0.34, 0.06, 0.014, "#efe7d2");                          // the line
+                       k.ci(0.345, 0.10, 0.035, "#c05a4a"); },                                   // and its float
+  fx_scales:    k => { k.rrc(-0.035, -0.30, 0.07, 0.46, "#c9a84a", 0.02);                        // the column
+                       k.rrc(-0.20, 0.14, 0.40, 0.07, "#c9a84a", 0.025);                         // its base
+                       k.rrc(-0.30, -0.32, 0.60, 0.05, "#e0c46a", 0.02);                         // the beam
+                       for (const s of [-1, 1]) {
+                         k.ln(s * 0.24, -0.29, s * 0.24, -0.16, 0.014, "#e0c46a");
+                         k.rpg([[s * 0.24 - 0.11, -0.16], [s * 0.24 + 0.11, -0.16], [s * 0.24 + 0.07, -0.06], [s * 0.24 - 0.07, -0.06]], "#e0c46a", 0.03);
+                       }
+                       k.ci(0, -0.34, 0.045, "#f0dc8a"); },
+
+  /* ---------- party dressing ---------- */
+  decor_balloon:k => { k.el(0, -0.12, 0.20, 0.24, "#d86a8a"); k.el(-0.07, -0.19, 0.07, 0.08, "#f0a8bc");
+                       k.tri([-0.04, 0.10], [0.04, 0.10], [0.00, 0.17], "#c05a76");
+                       k.ln(0.00, 0.16, 0.05, 0.36, 0.016, "#efe7d2"); },
+  decor_streamer:k => { for (const [i, c] of ["#f0dc72", "#8ac0b0", "#d86a8a"].entries()) {
+                         const x = -0.22 + i * 0.22;
+                         k.rpg([[x - 0.05, -0.34], [x + 0.05, -0.34], [x + 0.08, 0.00], [x - 0.02, 0.16], [x + 0.02, 0.34], [x - 0.06, 0.34], [x - 0.09, 0.14], [x - 0.01, -0.02]], c, 0.03);
+                       } },
+  decor_candle: k => { k.rrc(-0.09, -0.14, 0.18, 0.36, PAL.linen, 0.03);
+                       k.rrc(-0.14, 0.20, 0.28, 0.09, "#a8853f", 0.03);
+                       k.ln(0, -0.14, 0, -0.19, 0.018, PAL.ink);
+                       k.el(0, -0.26, 0.055, 0.09, PAL.flame); k.el(0, -0.24, 0.028, 0.05, "#f6e08a"); },
+  decor_ribbon: k => { k.ci(0, 0, 0.06, "#c05a76");
+                       for (const s of [-1, 1]) {
+                         k.rpg([[0, -0.02], [s * 0.20, -0.20], [s * 0.26, -0.04], [s * 0.08, 0.02]], "#d86a8a", 0.05);
+                         k.rpg([[0, 0.02], [s * 0.12, 0.20], [s * 0.05, 0.34], [s * 0.01, 0.10]], "#c05a76", 0.03);
+                       } },
+  decor_swirl:  k => { k.ci(0, 0, 0.28, "#efe7d2"); k.ci(0, 0, 0.20, "#f0a8bc");
+                       k.ci(0, 0, 0.12, "#efe7d2"); k.ci(0, 0, 0.05, "#d86a8a");
+                       k.rpg([[-0.30, -0.05], [-0.24, -0.05], [-0.24, 0.05], [-0.30, 0.05]], "#8ac0b0", 0.02); },
+  decor_lantern:k => { k.ln(0, -0.36, 0, -0.26, 0.016, "#8a6a34");
+                       k.rrc(-0.13, -0.28, 0.26, 0.06, "#a8763f", 0.02);
+                       k.rpg([[-0.13, -0.22], [0.13, -0.22], [0.19, 0.02], [0.13, 0.24], [-0.13, 0.24], [-0.19, 0.02]], "#e0644a", [0.04, 0.04, 0.07, 0.04, 0.04, 0.07]);
+                       for (const y of [-0.12, 0.02, 0.14]) k.ln(-0.17, y, 0.17, y, 0.014, "#b8443a");
+                       k.rrc(-0.13, 0.22, 0.26, 0.06, "#a8763f", 0.02);
+                       k.rpg([[-0.05, 0.28], [0.05, 0.28], [0.02, 0.38], [-0.02, 0.38]], "#f0dc72", 0.015); },
+
   /* ---------- the wild: drawn, not borrowed from a font ---------- */
   beast_hare:   k => { k.rpg([[-0.06, -0.30], [0.02, -0.34], [0.06, -0.16], [-0.02, -0.12]], "#8a7358", 0.03);   // ears, back one first
                        k.rpg([[0.06, -0.31], [0.14, -0.33], [0.14, -0.14], [0.06, -0.12]], "#a89070", 0.03);
@@ -4096,6 +4189,12 @@ const ICON_ART = {
    so it could list them but never let you edit them. */
 for (const fid of Object.keys(FURNITURE))
   ICON_ART["furn_" + fid] = k => k.host((c, x, y, T) => drawFurnitureArt(c, fid, x, y, T));
+
+/* What actually leaves the weapon. A bow used to fling a little bow across the
+   screen, because the shot carried the WEAPON's emoji rather than its ammunition's
+   — it's the thing that travels that should be drawn. */
+const SHOT_ART = { arrow: "shot_arrow", bolt: "shot_bolt", rock: "shot_stone" };
+const shotArt = (w) => SHOT_ART[ITEMS[w]?.ammo] || "shot_stone";
 
 /* Draw any object at (cx,cy) with T as its full width. Used both for the little
    icons in lists and for things lying on the ground in the world. */
@@ -6517,8 +6616,8 @@ export default function Alderbrook() {
   /* a flying shot: an emoji that travels shooter→target and is drawn in the loop. Because combat
      can play out in the open, a bystander standing ON the line of fire may catch a stray — the
      RTS "don't wander into a firefight" hazard. Returns nothing; damage is applied here. */
-  const spawnProjectile = (sim, scene, from, to, emoji = "➶") => {
-    (sim.projectiles = sim.projectiles || []).push({ scene, x0: from.x, y0: from.y, x1: to.x, y1: to.y, born: performance.now(), dur: 300, emoji });
+  const spawnProjectile = (sim, scene, from, to, art = "shot_stone") => {
+    (sim.projectiles = sim.projectiles || []).push({ scene, x0: from.x, y0: from.y, x1: to.x, y1: to.y, born: performance.now(), dur: 300, art });
     if (sim.projectiles.length > 16) sim.projectiles.shift();
     const line = sim.npcs.filter(n => n.alive && !n.incap && !n.dying && n.scene === scene && n !== from && n !== to);
     for (const b of line) {
@@ -10401,7 +10500,7 @@ export default function Alderbrook() {
                 if (!npc._lastShot || now - npc._lastShot > 1.1) {   // a shot roughly once a second
                   npc._lastShot = now; npc.steelUntil = now + 6;     // a live firefight — civilians scatter
                   npc.inv[w.ammo]--; if (npc.inv[w.ammo] <= 0) delete npc.inv[w.ammo];
-                  spawnProjectile(sim, npc.scene, npc, t, w.emoji || "➶");
+                  spawnProjectile(sim, npc.scene, npc, t, shotArt(w));
                   const dmg = randInt(w.dmg);
                   const downed = damage(t, dmg);
                   npc.bubble = { text: rand(["HALT — or the next one lands!", "Down! NOW!", "Watch! Stand down!"]), until: now + 3 };
@@ -10441,7 +10540,7 @@ export default function Alderbrook() {
               else if (rangedB && gapB <= wB.range && (!npc._lastShot || now - npc._lastShot > 1.1)) {
                 npc._lastShot = now; npc.steelUntil = now + 6;
                 npc.inv[wB.ammo]--; if (npc.inv[wB.ammo] <= 0) delete npc.inv[wB.ammo];
-                spawnProjectile(sim, npc.scene, npc, b, wB.emoji || "➶");
+                spawnProjectile(sim, npc.scene, npc, b, shotArt(wB));
                 b.health -= randInt(wB.dmg);
                 if (b.health <= 0) {
                   const spN = BEAST_SPECIES[b.sp];
@@ -12937,7 +13036,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     const claim = () => huntKill(b);
     if (w?.range && (p.inv[w.ammo] || 0) > 0 && dist(b, p) > 1.4) {
       p.inv[w.ammo]--; if (p.inv[w.ammo] <= 0) delete p.inv[w.ammo];
-      spawnProjectile(sim, p.scene, p, b, w.emoji || "➶");
+      spawnProjectile(sim, p.scene, p, b, shotArt(w));
       const dmg = randInt(w.dmg);
       b.health -= dmg;
       if (crudeBreak(p, wid)) { sfx.alert(); showToast(brokeLine(wid)); }
@@ -13014,7 +13113,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       }
       if (w?.range && (p.inv[w.ammo] || 0) > 0) {   // v7 Stage 2: the OPENING SHOT — spend ammo, strike from range
         p.inv[w.ammo]--; if (p.inv[w.ammo] <= 0) delete p.inv[w.ammo];
-        spawnProjectile(sim, p.scene, p, foe, w.emoji || "➶");   // the bolt flies — and can clip a bystander
+        spawnProjectile(sim, p.scene, p, foe, shotArt(w));   // the bolt flies — and can clip a bystander
         const dmg = randInt(w.dmg);
         foe.health = Math.max(0, foe.health - dmg);
         if (foe.health <= 5) {   // dropped at range — same justice as a won fight, minus the looting
@@ -13537,7 +13636,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       if (ph >= K.hour && ph < K.endHour) {
         ctx.font = `${Math.floor(T * 0.6)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillStyle = "#000";
-        for (const d of sim.party.decor) ctx.fillText(d.glyph, px(d.x) + T / 2, py(d.y) + T / 2);
+        for (const d of sim.party.decor) drawItemIcon(ctx, d.glyph, px(d.x) + T / 2, py(d.y) + T / 2, T * 0.8);
         ctx.textBaseline = "alphabetic";
       }
     }
@@ -13572,8 +13671,7 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       } else {
         ctx.strokeStyle = "#e6c04a";
         ctx.beginPath(); ctx.arc(cx, cy, T * (0.4 + t01 * 1.2), 0, Math.PI * 2); ctx.stroke();
-        ctx.font = `${Math.floor(T * 0.8)}px sans-serif`; ctx.textAlign = "center";
-        ctx.fillText("⚖️", cx, cy - T * (0.3 + t01));
+        drawItemIcon(ctx, "fx_scales", cx, cy - T * (0.3 + t01), T * 0.8);
       }
       ctx.globalAlpha = 1;
     }
@@ -13585,9 +13683,8 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       const cx = px(pr.x0 + (pr.x1 - pr.x0) * t01) + T / 2, cy = py(pr.y0 + (pr.y1 - pr.y0) * t01) + T / 2;
       const ang = Math.atan2(pr.y1 - pr.y0, pr.x1 - pr.x0);
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
-      ctx.font = `${Math.floor(T * 0.6)}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(pr.emoji || "➶", 0, 0);
-      ctx.restore(); ctx.textBaseline = "alphabetic";
+      drawItemIcon(ctx, pr.art || "shot_stone", 0, 0, T * 0.8);   // the AMMO flies, pointed the way it's going
+      ctx.restore();
     }
     for (const e of ents) {
       if (e.ref.dying) drawBubble(ctx, "🩸 DYING — get help!", px(e.x) + T / 2, py(e.y) - T * 0.15, T, cw);
@@ -13699,15 +13796,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     ctx.fillStyle = "#e8c84a";
     ctx.fillRect(px(town.busStop.x) + T * 0.35, py(town.busStop.y) + T * 0.1, T * 0.3, T * 0.5);
     ctx.fillStyle = "#2a2620"; ctx.font = `700 ${T * 0.32}px system-ui`; ctx.textAlign = "center";
-    ctx.fillText("🚌", px(town.busStop.x) + T / 2, py(town.busStop.y) + T * 0.45);
+    drawItemIcon(ctx, "prop_bus", px(town.busStop.x) + T / 2, py(town.busStop.y) + T * 0.15, T * 1.05);
     if (watchHere) {
-      ctx.fillText("🚓", px(town.busStop.x + 1) + T / 2, py(town.busStop.y) + T * 0.45);
+      drawItemIcon(ctx, "prop_watchcar", px(town.busStop.x + 1) + T / 2, py(town.busStop.y) + T * 0.15, T * 1.05);
       ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.font = `600 ${Math.max(8, T * 0.24)}px system-ui`;
       ctx.fillText("the Watch is in town", px(town.busStop.x + 1) + T / 2, py(town.busStop.y) - 3);
       ctx.fillStyle = "#2a2620"; ctx.font = `700 ${T * 0.32}px system-ui`;
     }
-    ctx.fillText("💧", px(town.drink.x) + T / 2, py(town.drink.y) + T * 0.6);
-    if (town.id === "mossford") ctx.fillText("🎣", px(town.spots.dock.x) + T / 2, py(town.spots.dock.y) + T * 0.6);
+    drawItemIcon(ctx, "prop_water", px(town.drink.x) + T / 2, py(town.drink.y) + T * 0.35, T * 0.95);
+    if (town.id === "mossford") drawItemIcon(ctx, "prop_dock", px(town.spots.dock.x) + T / 2, py(town.spots.dock.y) + T * 0.35, T * 1.0);
 
     for (const b of BUILDINGS.filter(b => b.town === town.id)) {
       ctx.fillStyle = b.color; ctx.fillRect(px(b.x), py(b.y), b.w * T, b.h * T);
@@ -13940,7 +14037,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     // v7 Stage 1: steel SHOWS — the player's drawn weapon, or an NPC mid-confrontation
     const steel = e.kind === "player" ? (e.ref.unsheathed && bestWeapon(e.ref))
       : (e.ref.steelUntil > performance.now() / 1000 && (bestWeapon(e.ref) || "knife"));
-    if (steel) { ctx.textAlign = "center"; ctx.font = `${Math.floor(T * 0.42)}px sans-serif`; ctx.fillText(ITEMS[steel]?.emoji || "🗡", cx + T * 0.34, cy + T * 0.02); }
+    /* the weapon itself, at the hand, drawn from its OWN recipe — so what you see
+       held is the same object you see in the pack, tipped as if gripped */
+    if (steel) {
+      ctx.save();
+      ctx.translate(cx + T * 0.34, cy + T * 0.04);
+      ctx.rotate(-0.35);
+      drawItemIcon(ctx, steel, 0, 0, T * 0.62);
+      ctx.restore();
+    }
     if (e.ref.wanted > 0) { ctx.fillStyle = "#e0a832"; ctx.font = `700 ${T * 0.3}px system-ui`; ctx.textAlign = "center"; ctx.fillText("★".repeat(Math.min(5, e.ref.wanted)), cx, cy - T * 0.58); }
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = `${e.kind === "player" ? 700 : 600} ${Math.max(8, T * 0.28)}px system-ui`;
