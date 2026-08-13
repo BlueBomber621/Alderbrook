@@ -71,6 +71,31 @@ extra configuration.
 - **⚙️ Settings → 💾 Save file** exports/imports a full save as JSON, which works
   anywhere and moves between devices.
 
+## Paperwork
+
+The offices run on forms, and a form is a thing you actually sit down and fill in.
+Five of them exist, each a chain of sections drawn from a set of five deliberately
+dull tasks — routing sheets to the right department, matching a quoted clause,
+transcribing a reference off a scrambled pad, landing a seal inside its box, and
+holding a countersignature to the line. A form forgives a few mistakes (more as
+your Clerical skill climbs); one too many and it comes back rejected, costing you
+the time, the energy and a resubmission fee.
+
+Who may file is the point of the whole system:
+
+| Form | Counter | Gets you |
+|---|---|---|
+| **CC-1** Clerk's Certification | Brightleaf | the right to lodge anything at all — and a better wage for an office shift |
+| **DT-9** Deed of Transfer | Brightleaf | legal title to a business you bought; without it you can't improve the place |
+| **TL-6** Trading Licence | town hall | assessment at the ordinary tax rate instead of the unlicensed one |
+| **OH-4** Ordnance Handling Permit | town hall | carrying high-power arms in the open without the Watch marking you |
+| **MW-2** Mayoral Writ | town hall | one funded civic upgrade or one change to the tax rate; consumed on use |
+
+An uncertified hand can't lodge a form, so everything has to go through a clerk at
+a fee per form — which is exactly why an office keeps one on the payroll. Sit CC-1
+and that's you: residents who need something lodged and can't lodge it themselves
+will pay a certified clerk to sit the form for them, one commission a day.
+
 ## Drawing the icons
 
 Every object in the game is drawn as flat vertex art rather than an emoji, from
