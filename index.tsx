@@ -3112,6 +3112,89 @@ const PLEDGES = {
   },
 };
 
+/* =====================================================================
+   STAGE 25 — THE PAPERWORK. Some things in this valley are not legal until
+   somebody has sat at a desk and filed them, and filing is genuinely
+   unpleasant work: a form is a stack of sections, each its own small
+   indignity, and getting one wrong sends the whole thing back.
+
+   That unpleasantness is the point. It is why Bruno pays over the odds for
+   a certified clerk instead of doing it himself, and why an office needs
+   one on the books at all — an uncertified hand cannot legally file, so
+   the choice is get certified, or pay someone who is.
+   ===================================================================== */
+CFG.PAPER = {
+  hallFee: 34,          // what the office charges to have a clerk do it FOR you
+  certFee: 12,          // sitting the clerk's certification yourself
+  redoFee: 8,           // resubmitting a rejected form
+  missBase: 2,          // mistakes tolerated before rejection, before skill
+  missPerLevel: 0.5,    // every two clerical levels buys another
+  minPerSection: 6,     // in-game minutes each section eats
+  energyPerSection: 2,
+  clerkWageBonus: 4,    // extra per office shift once you're certified — Bruno pays for the licence
+  noLicenceRate: 0.2,   // trading without TL-6: this much of gross again, on top of the tax
+  noLicenceMin: 5,      // ...and never less than this
+  commPerSection: 5,    // a commission pays the hall fee plus this much a section — the long forms pay
+  commChance: 0.7,      // how often somebody wants a certified hand on any given day
+};
+/* The five sections. Each is a different kind of tedium on purpose, so a long
+   form never settles into one rhythm you can zone out through. */
+const FORM_SECTIONS = {
+  sort:   { name: "Departmental routing",  hint: "Send each sheet to the department that owns it." },
+  clause: { name: "Clause cross-reference", hint: "Only one clause carries the quoted reference." },
+  code:   { name: "Reference transcription", hint: "Key the reference in, character by character." },
+  stamp:  { name: "Seal and impression",    hint: "Bring the press down inside the seal box." },
+  sign:   { name: "Countersignature",       hint: "Hold the nib, release it on the line." },
+};
+const FORMS = {
+  clerkcert: {
+    name: "Clerk's Certification", short: "certification", emoji: "🎓", at: "office", tier: 1,
+    blurb: "Form CC-1. The paperwork that licenses you to do paperwork. Nobody sees the joke.",
+    sections: ["sort", "clause", "stamp"],
+    fee: 0,   // you pay CFG.PAPER.certFee to sit it; there is nobody else who can sit it for you
+    grants: "You may file on your own behalf, and Brightleaf Co. will pay a certified clerk more.",
+  },
+  deed: {
+    name: "Deed of Transfer", short: "deed", emoji: "🏷️", at: "office", tier: 3,
+    blurb: "Form DT-9. A handshake moves the keys. Only this moves the title.",
+    sections: ["sort", "clause", "code", "stamp", "sign", "clause", "code", "stamp"],
+    grants: "The business is registered to you — you may improve it, and one day sell it on.",
+  },
+  armspermit: {
+    name: "Ordnance Handling Permit", short: "permit", emoji: "🛡️", at: "hall", tier: 3,
+    blurb: "Form OH-4, countersigned by a Watch captain. Cole will not skip a line of it.",
+    sections: ["sort", "code", "clause", "stamp", "code", "sign", "stamp"],
+    grants: "You may carry high-power arms in the open without the Watch marking you for it.",
+  },
+  writ: {
+    name: "Mayoral Writ", short: "writ", emoji: "📜", at: "hall", tier: 2,
+    blurb: "Form MW-2. Every coin a mayor moves leaves a paper trail, or it is not a coin they moved.",
+    sections: ["sort", "clause", "code", "stamp", "sign"],
+    grants: "Funds one civic upgrade or one change to the tax rate.",
+    mayorOnly: true,
+  },
+  licence: {
+    name: "Trading Licence", short: "licence", emoji: "🧾", at: "hall", tier: 2,
+    blurb: "Form TL-6. Renewable, non-transferable, and required of anyone selling anything to anyone.",
+    sections: ["sort", "code", "stamp", "sign"],
+    grants: "Your shop is assessed at the ordinary rate. Unlicensed, the hall adds a fifth of gross every collection day.",
+    ownerOnly: true,
+  },
+};
+/* THE JOB ITSELF. A certification isn't only a licence to do your own paperwork — it
+   makes you the person an office can legally put on the books. Residents who need
+   something lodged and can't lodge it themselves will pay a certified hand to sit the
+   form for them, which is exactly the arrangement Bruno has, seen from the other side. */
+const commissionPay = (F) => CFG.PAPER.hallFee + F.sections.length * CFG.PAPER.commPerSection;
+/* how many mistakes this attempt forgives, given what the filer actually knows */
+const formMisses = (lvl) => CFG.PAPER.missBase + Math.floor(lvl * CFG.PAPER.missPerLevel);
+/* a form is filed against a SUBJECT — a deed is for one business, a writ for one act */
+const filingKey = (formId, subject) => subject ? `${formId}:${subject}` : formId;
+const hasFiling = (sim, formId, subject) => !!(sim.filings || {})[filingKey(formId, subject)];
+const recordFiling = (sim, formId, subject, byId) => {
+  (sim.filings = sim.filings || {})[filingKey(formId, subject)] = { day: sim.day, by: byId || "player" };
+};
+
 /* ===== Stage 24 — AN ACTUAL PIECE FOR EVERY THING =====
    Emoji were always placeholders. They render differently on every machine,
    they carry some font designer's opinion of what a "meat cut" looks like, and
@@ -4020,6 +4103,41 @@ const ICON_ART = {
   shot_stone:   k => { k.blob(0.00, 0.00, 0.15, 0.13, PAL.stone, 6, 0.13, 0.7);
                        k.blob(-0.04, -0.03, 0.07, 0.05, "#b4aca1", 5, 0.16, 1.5); },
 
+  /* ---------- the forms themselves ----------
+     Every one of these is a near-white sheet, and at 22px in a list it would otherwise
+     dissolve into the card behind it. Each sheet gets a hairline of ink underneath. */
+  form_clerkcert:k => { k.rpg([[-0.28, -0.32], [0.28, -0.32], [0.28, 0.24], [-0.28, 0.24]], "#9a9382", 0.02);
+                        k.rpg([[-0.26, -0.30], [0.26, -0.30], [0.26, 0.22], [-0.26, 0.22]], PAL.paper, 0.02);
+                        for (const y of [-0.20, -0.12, -0.04]) k.ln(-0.19, y, 0.19, y, 0.022, "#c9c2b2");
+                        k.ci(-0.06, 0.06, 0.10, "#c9a84a"); k.ci(-0.06, 0.06, 0.055, "#e8c46a");   // the seal
+                        k.rpg([[-0.11, 0.13], [-0.01, 0.13], [-0.03, 0.32], [-0.06, 0.24], [-0.09, 0.32]], "#b8443a", 0.01);
+                        k.ln(0.06, 0.10, 0.20, 0.10, 0.02, "#8a8478"); },
+  form_deed:     k => { k.rpg([[-0.30, -0.30], [0.23, -0.30], [0.30, -0.22], [0.30, 0.26], [-0.30, 0.26]], "#9a9382", 0.02);
+                        k.rpg([[-0.28, -0.28], [0.22, -0.28], [0.28, -0.22], [0.28, 0.24], [-0.28, 0.24]], PAL.paper, 0.02);
+                        k.rpg([[0.22, -0.28], [0.28, -0.22], [0.22, -0.22]], "#d8d0bc", 0.01);      // the folded corner
+                        for (const y of [-0.18, -0.10, -0.02, 0.06]) k.ln(-0.20, y, 0.18, y, 0.02, "#c9c2b2");
+                        k.rrc(-0.20, 0.12, 0.16, 0.08, "#8a6a4a", 0.02);                            // the key motif
+                        k.ci(-0.02, 0.16, 0.045, "#8a6a4a"); k.ln(0.02, 0.16, 0.16, 0.16, 0.03, "#8a6a4a");
+                        k.ln(0.12, 0.16, 0.12, 0.22, 0.025, "#8a6a4a"); },
+  form_armspermit:k => { k.rpg([[-0.28, -0.32], [0.28, -0.32], [0.28, 0.22], [-0.28, 0.22]], "#9a9382", 0.02);
+                        k.rpg([[-0.26, -0.30], [0.26, -0.30], [0.26, 0.20], [-0.26, 0.20]], PAL.paper, 0.02);
+                        for (const y of [-0.22, -0.15]) k.ln(-0.19, y, 0.19, y, 0.02, "#c9c2b2");
+                        k.rpg([[0, -0.08], [0.20, 0.00], [0.18, 0.16], [0, 0.28], [-0.18, 0.16], [-0.20, 0.00]], "#5f7f9c", 0.04);
+                        k.rpg([[0, -0.02], [0.13, 0.03], [0.12, 0.14], [0, 0.22], [-0.12, 0.14], [-0.13, 0.03]], "#7fa4c4", 0.04);
+                        k.ln(-0.06, 0.08, -0.01, 0.14, 0.03, PAL.paper); k.ln(-0.02, 0.14, 0.07, 0.02, 0.03, PAL.paper); },
+  form_writ:     k => { k.rpg([[-0.30, -0.22], [0.30, -0.22], [0.30, 0.18], [-0.30, 0.18]], "#9a9382", 0.02);
+                        k.rpg([[-0.30, -0.20], [0.30, -0.20], [0.30, 0.16], [-0.30, 0.16]], PAL.paper, 0.02);
+                        k.el(-0.30, -0.02, 0.055, 0.19, "#c9a45e"); k.el(0.30, -0.02, 0.055, 0.19, "#c9a45e");   // the roller ends
+                        for (const y of [-0.12, -0.05, 0.02]) k.ln(-0.20, y, 0.20, y, 0.02, "#c9c2b2");
+                        k.ci(0.13, 0.10, 0.065, "#b8443a"); k.ci(0.13, 0.10, 0.03, "#8a2f2a");
+                        k.rpg([[0.10, 0.15], [0.16, 0.15], [0.15, 0.32], [0.13, 0.25], [0.11, 0.32]], "#b8443a", 0.01); },
+  form_licence:  k => { k.rpg([[-0.32, -0.24], [0.32, -0.24], [0.32, 0.24], [-0.32, 0.24]], "#9a9382", 0.02);
+                        k.rpg([[-0.30, -0.22], [0.30, -0.22], [0.30, 0.22], [-0.30, 0.22]], PAL.paper, 0.02);
+                        k.rrc(-0.30, -0.22, 0.60, 0.10, "#6b8f5e", 0.02);                           // the header band
+                        k.rrc(-0.24, -0.06, 0.16, 0.16, "#d8d0bc", 0.02);                           // the photo box
+                        for (const y of [-0.04, 0.03, 0.10]) k.ln(-0.04, y, 0.24, y, 0.02, "#c9c2b2");
+                        k.ln(-0.24, 0.16, 0.10, 0.16, 0.018, "#8a8478"); },
+
   /* ---------- world props ---------- */
   prop_bus:     k => { k.rrc(-0.40, -0.20, 0.78, 0.34, "#c9a45e", 0.05);                       // body
                        k.rrc(-0.36, -0.15, 0.30, 0.15, "#a8d4e8", 0.03);                       // windows
@@ -4912,6 +5030,190 @@ Respond ONLY with JSON, no markdown: {"action":"rob|ask","coins":<int>,"items":[
 /* ===== interaction minigames — MODULE SCOPE so they keep their own state across the
    game loop's re-renders (defined inside the component, they remounted every frame and
    reset/re-randomized — the oven repair "kept re-initiating"). ===== */
+/* =====================================================================
+   STAGE 25 — THE FORM. One component runs a whole document: a queue of
+   sections, each a different small tedium, and a running count of the
+   mistakes the clerk's office is prepared to overlook. Get through the
+   lot and it is filed; run out of patience on their side and the whole
+   thing comes back and you start it again.
+
+   The variety is deliberate. Any ONE of these would become muscle memory
+   in a minute; strung together and reshuffled, a long form stays exactly
+   as irritating on page eight as it was on page one.
+   ===================================================================== */
+const FORM_DEPTS = ["Registry", "Revenue", "Records"];
+const CODE_CHARS = "ACEFHJKLMNPRTVWXY3479";
+const FormGame = ({ form, misses, onDone, onFail }) => {
+  const [step, setStep] = useState(0);
+  const [bad, setBad] = useState(0);
+  const [seed, setSeed] = useState(0);          // bumped per section, so each one re-rolls
+  const sections = form.sections;
+  const kind = sections[step];
+
+  const advance = () => {
+    if (step + 1 >= sections.length) onDone();
+    else { setStep(step + 1); setSeed(s => s + 1); }
+  };
+  const slip = (msg) => {
+    const n = bad + 1;
+    setBad(n);
+    if (n > misses) onFail(msg);
+  };
+  const left = Math.max(0, misses - bad);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ ...S.folkCard, fontSize: 13 }}>
+        <b>{form.emoji} {form.name}</b> · section {step + 1} of {sections.length}
+        <br /><span style={{ opacity: 0.7 }}>{FORM_SECTIONS[kind].name} — {FORM_SECTIONS[kind].hint}</span>
+        <br /><span style={{ opacity: 0.6, fontSize: 11 }}>
+          Errors tolerated: <b style={{ color: left <= 1 ? "#a05252" : "#6b8f5e" }}>{left}</b>
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 3 }}>
+        {sections.map((s, i) => (
+          <div key={i} style={{ flex: 1, height: 5, borderRadius: 3, background: i < step ? "#6b8f5e" : i === step ? "#c9a84a" : "#0002" }} />
+        ))}
+      </div>
+      {kind === "sort"   && <FormSort   key={seed} onOk={advance} onSlip={slip} />}
+      {kind === "clause" && <FormClause key={seed} onOk={advance} onSlip={slip} />}
+      {kind === "code"   && <FormCode   key={seed} onOk={advance} onSlip={slip} />}
+      {kind === "stamp"  && <FormStamp  key={seed} onOk={advance} onSlip={slip} />}
+      {kind === "sign"   && <FormSign   key={seed} onOk={advance} onSlip={slip} />}
+    </div>
+  );
+};
+/* routing: three sheets, each belonging to a department named in its own small print */
+const FormSort = ({ onOk, onSlip }) => {
+  const [sheets] = useState(() => Array.from({ length: 3 }, () => ({
+    ref: `${rand(["Sch.", "App.", "Ann."])} ${randInt([1, 9])}${rand("abc")}`,
+    dept: rand(FORM_DEPTS),
+  })));
+  const [i, setI] = useState(0);
+  const cur = sheets[i];
+  const pick = (d) => {
+    if (d !== cur.dept) { onSlip("Misrouted. It comes back with a note attached."); return; }
+    if (i + 1 >= sheets.length) onOk(); else setI(i + 1);
+  };
+  return (
+    <div style={S.folkCard}>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>
+        Sheet {i + 1} of {sheets.length} — <b>{cur.ref}</b>
+        <br /><span style={{ opacity: 0.65, fontSize: 11 }}>"…to be lodged with the office of <b>{cur.dept}</b>, in triplicate…"</span>
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {FORM_DEPTS.map(d => (
+          <button key={d} style={{ ...S.smallBtn, flex: 1 }} onClick={() => pick(d)}>{d}</button>
+        ))}
+      </div>
+    </div>
+  );
+};
+/* cross-reference: four clauses, near enough identical, one carrying the quoted reference */
+const FormClause = ({ onOk, onSlip }) => {
+  const [{ opts, want }] = useState(() => {
+    const mk = () => `${rand("§¶")}${randInt([2, 9])}.${randInt([10, 99])}`;
+    const set = new Set(); while (set.size < 4) set.add(mk());
+    const opts = [...set];
+    return { opts, want: rand(opts) };
+  });
+  const body = "…save where the foregoing is varied by the schedule annexed hereto, in which case the schedule prevails…";
+  return (
+    <div style={S.folkCard}>
+      <div style={{ fontSize: 13, marginBottom: 8 }}>Quoted reference: <b>{want}</b></div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {opts.map(o => (
+          <button key={o} style={{ ...S.smallBtn, textAlign: "left", fontSize: 11, lineHeight: 1.35 }}
+            onClick={() => (o === want ? onOk() : onSlip("Wrong clause. The whole page is void."))}>
+            <b>{o}</b> {body}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+/* transcription: key a reference in, character by character, off a scrambled pad */
+const FormCode = ({ onOk, onSlip }) => {
+  const [code] = useState(() => Array.from({ length: 5 }, () => rand(CODE_CHARS.split(""))).join(""));
+  const [pad] = useState(() => {
+    const set = new Set(code.split(""));
+    while (set.size < 10) set.add(rand(CODE_CHARS.split("")));
+    return [...set].sort(() => Math.random() - 0.5);
+  });
+  const [at, setAt] = useState(0);
+  const tap = (c) => {
+    if (c !== code[at]) { onSlip("Transcription error. Start the block again."); setAt(0); return; }
+    if (at + 1 >= code.length) onOk(); else setAt(at + 1);
+  };
+  return (
+    <div style={S.folkCard}>
+      <div style={{ fontSize: 13, marginBottom: 6 }}>
+        Reference: <b style={{ letterSpacing: 3, fontFamily: "ui-monospace,monospace" }}>{code}</b>
+      </div>
+      <div style={{ fontSize: 15, letterSpacing: 4, fontFamily: "ui-monospace,monospace", marginBottom: 8, minHeight: 20 }}>
+        {code.slice(0, at)}<span style={{ opacity: 0.25 }}>{"_".repeat(code.length - at)}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 4 }}>
+        {pad.map(c => <button key={c} style={{ ...S.smallBtn, fontFamily: "ui-monospace,monospace" }} onClick={() => tap(c)}>{c}</button>)}
+      </div>
+    </div>
+  );
+};
+/* the press: a marker sweeps the bar, and the impression has to land in the box */
+const FormStamp = ({ onOk, onSlip }) => {
+  const [pos, setPos] = useState(0);
+  const [win] = useState(() => 18 + Math.random() * 44);
+  const dirRef = useRef(1);
+  useEffect(() => {
+    const id = setInterval(() => setPos(p => {
+      let n = p + dirRef.current * 2.6;
+      if (n > 100) { n = 100; dirRef.current = -1; }
+      if (n < 0) { n = 0; dirRef.current = 1; }
+      return n;
+    }), 16);
+    return () => clearInterval(id);
+  }, []);
+  const press = () => (pos >= win && pos <= win + 16 ? onOk() : onSlip("The seal landed off the box. Re-draft that page."));
+  return (
+    <div style={S.folkCard}>
+      <div style={{ position: "relative", height: 30, background: "#0001", borderRadius: 6, overflow: "hidden", marginBottom: 8 }}>
+        <div style={{ position: "absolute", left: `${win}%`, width: "16%", top: 0, bottom: 0, background: "#c9a84a55", border: "1px dashed #a8873a" }} />
+        <div style={{ position: "absolute", left: `${pos}%`, top: 2, bottom: 2, width: 4, background: "#7a3f3f", borderRadius: 2 }} />
+      </div>
+      <button style={{ ...S.smallBtn, width: "100%" }} onClick={press}>Bring the press down</button>
+    </div>
+  );
+};
+/* the countersignature: hold while the nib travels, let go on the line */
+const FormSign = ({ onOk, onSlip }) => {
+  const [x, setX] = useState(0);
+  const [held, setHeld] = useState(false);
+  const [end] = useState(() => 62 + Math.random() * 26);
+  useEffect(() => {
+    if (!held) return;
+    const id = setInterval(() => setX(v => Math.min(100, v + 1.7)), 16);
+    return () => clearInterval(id);
+  }, [held]);
+  const release = () => {
+    setHeld(false);
+    if (x >= end && x <= end + 12) onOk();
+    else onSlip(x < end ? "Signature short of the line. Void." : "Ran past the line and into the margin. Void.");
+  };
+  return (
+    <div style={S.folkCard}>
+      <div style={{ position: "relative", height: 30, background: "#0001", borderRadius: 6, overflow: "hidden", marginBottom: 8 }}>
+        <div style={{ position: "absolute", left: `${end}%`, width: "12%", top: 0, bottom: 0, background: "#6b8f5e55", border: "1px dashed #4e7042" }} />
+        <div style={{ position: "absolute", left: 0, width: `${x}%`, top: 12, height: 5, background: "#3a3f52", borderRadius: 3 }} />
+      </div>
+      <button style={{ ...S.smallBtn, width: "100%" }}
+        onMouseDown={() => setHeld(true)} onMouseUp={release} onMouseLeave={() => held && release()}
+        onTouchStart={(e) => { e.preventDefault(); setHeld(true); }} onTouchEnd={(e) => { e.preventDefault(); release(); }}>
+        {held ? "…keep the nib moving…" : "Hold to sign"}
+      </button>
+    </div>
+  );
+};
+
 /* MECHANIC MINIGAME 1 — plumbing: slide each highlighted slider fully left→right, N times
    each; it snaps back to the left when the next rep is up. Overcomplicated Simon says. */
 /* =====================================================================
@@ -5193,6 +5495,7 @@ export default function Alderbrook() {
   const [managePanel, setManagePanel] = useState(null);      // Stage 5: owner business-management panel {bId}
   const [hallPanel, setHallPanel] = useState(null);          // civic: {town} — ledger, taxes, elections, mayor tools
   const [bizOffer, setBizOffer] = useState(null);            // {bId, price, say} — the owner's asking price on the table
+  const [paperPanel, setPaperPanel] = useState(null);        // Stage 25: {where, filing?:{formId,subject,misses}} — the desk, and the form open on it
   const [placePanel, setPlacePanel] = useState(null);        // {furnId} — pick a home slot for a new piece
   const regRobArmRef = useRef(null);                         // Stage 5: two-tap confirm for robbing a register
   const printSurfRef = useRef(null);                         // Stage 6: printer minigame drag surface
@@ -5252,7 +5555,7 @@ export default function Alderbrook() {
   const giftDemandRef = useRef(null); giftDemandRef.current = giftDemand;
   const ballotRef = useRef(null); ballotRef.current = ballot;
   const modalRef = useRef(false);
-  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || ballot || counting || electionResult || rally || debate || pressPanel || pledgePick || tailorPanel || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel);
+  modalRef.current = !!(chat || shopPanel || payPanel || invOpen || cookPanel || travelPanel || settingsOpen || threat || ballot || counting || electionResult || rally || debate || pressPanel || pledgePick || tailorPanel || giftDemand || combat || deathScreen || jailScreen || partyPanel || caseBoard || folk || speakOpen || castPanel || managePanel || storagePanel || chestPanel || tradePanel || tradeOffer || picker || hallPanel || bizOffer || placePanel || paperPanel);
   const jailRef = useRef(false);
   jailRef.current = !!jailScreen;                        // Stage 3.5: jail time is REAL — the cell must not pause the sim
   const apiBusyRef = useRef(false);
@@ -5361,6 +5664,9 @@ export default function Alderbrook() {
       crime: { ticks: 0, blockedWatch: 0, blockedRoll: 0, blockedCap: 0, attempts: 0, arrests: 0 },   // the crime ledger (diagnosis + future town stats)
       foragedAt: {},    // v7 Stage 3: bush cooldowns (`t:town:x,y` → last foraged day)
       season: seasonOf(1), weather: { kind: "clear", day: 1 },   // Stage 16: the living year
+      filings: {},      // Stage 25: nothing lodged yet — not even your own certification
+      formRedo: {},     // ...and nothing rejected yet, so nothing owes a resubmission fee
+      formJob: null,    // today's commission, once you're certified enough to be offered one
       watchReq: null,   // Stage 11: an open Watch armoury order — the one way contraband is commissionable
       beasts: [], beastSeq: 0, lastBeastSpawn: 0,   // Stage 9: the wild — hares and stags, outside the social sim entirely
       approval: { alderbrook: CFG.APPROVAL.start, mossford: CFG.APPROVAL.start, stonecross: CFG.APPROVAL.start, ferndale: CFG.APPROVAL.start },   // Stage 8
@@ -5405,6 +5711,9 @@ export default function Alderbrook() {
       taxRate: sim.taxRate, playerMayor: !!sim.playerMayor, mayorFavor: sim.mayorFavor || 0,
       campaign: sim.campaign, pledges: sim.pledges, press: sim.press, debate: sim.debate,
       season: sim.season, weather: sim.weather,   // Stage 16: the year and the sky
+      filings: sim.filings || {},                 // Stage 25: what has actually been lodged
+      formRedo: sim.formRedo || {},               // ...and what was thrown back, still owing the redo fee
+      formJob: sim.formJob || null,               // ...and whose form you agreed to sit today
       party: sim.party || null,                   // a booked do survives a reload — you paid for the catering
       apiUsage: { calls: API_USAGE.calls, inTok: API_USAGE.inTok, outTok: API_USAGE.outTok, feat: API_USAGE.feat },
       opening: sim.opening, interviewBans: sim.interviewBans,
@@ -5474,6 +5783,9 @@ export default function Alderbrook() {
       API_USAGE.outTok = data.apiUsage.outTok || 0;
       API_USAGE.feat = data.apiUsage.feat || {};
     }
+    sim.filings = data.filings || {};
+    sim.formRedo = data.formRedo || {};
+    sim.formJob = data.formJob || null;
     sim.season = data.season || seasonOf(sim.day);                       // Stage 16: pre-season saves join the calendar
     sim.weather = data.weather || { kind: "clear", day: sim.day };
     /* NOTE: the wardrobe conversion CANNOT run here — the player and the NPCs
@@ -5488,7 +5800,12 @@ export default function Alderbrook() {
     sim.watchReq = data.watchReq || null;
     sim.lastBeastSpawn = 0;
     sim.ownerOverrides = data.ownerOverrides || {};
-    for (const [ob, oo] of Object.entries(sim.ownerOverrides)) OWNERS[ob] = oo;   // v7 Stage 5: deeds survive the save
+    /* v7 Stage 5: deeds survive the save. An override naming a building this build
+       doesn't have (an older save, a renamed id) is dropped rather than carried —
+       OWNERS keys are read straight into bld() all over, and an unresolvable one
+       takes the whole panel down with it. */
+    for (const ob of Object.keys(sim.ownerOverrides)) if (!bld(ob)) delete sim.ownerOverrides[ob];
+    for (const [ob, oo] of Object.entries(sim.ownerOverrides)) OWNERS[ob] = oo;
     sim.treeChops = data.treeChops || {};
     sim.playerFurniture = data.playerFurniture || [];
     sim.contracts = data.contracts || [];
@@ -9327,11 +9644,25 @@ export default function Alderbrook() {
         const ent = ownerEnt(simRef.current, bId); if (!ent) continue;
         taxed.add(ownerId);
         const gross = ent.grossThisPeriod || 0; if (gross <= 0) continue;
-        const due = Math.max(CFG.TAX.min, Math.ceil(gross * (sim.taxRate ?? CFG.TAX.rate)));   // the mayor sets the rate
+        let due = Math.max(CFG.TAX.min, Math.ceil(gross * (sim.taxRate ?? CFG.TAX.rate)));   // the mayor sets the rate
+        /* Stage 25: TL-6. The assessor reads the licence register before the ledger. An
+           unlicensed trader isn't shut down — they're simply assessed at the penalty rate,
+           every collection day, forever, which costs far more than sitting the form once.
+           Only the player is ever unlicensed; the NPC owners came with their file. */
+        let unlicensed = false;
+        if (ownerId === "player" && !hasFiling(sim, "licence")) {
+          unlicensed = true;
+          due += Math.max(CFG.PAPER.noLicenceMin, Math.ceil(gross * CFG.PAPER.noLicenceRate));
+        }
         fineCoins(ent, due); payTreasury(sim, bld(bId).town, due);
         ent.grossThisPeriod = 0;
-        if (ownerId === "player") showToast(`💸 Business tax: ${due}c on ${gross}c of takings.`);
-        else sim.dayLog.push(`${ent.name} paid ${due}c business tax`);
+        if (ownerId === "player") {
+          showToast(unlicensed
+            ? `💸 Business tax: ${due}c on ${gross}c — assessed at the UNLICENSED rate. File a Trading Licence (TL-6) at the hall.`
+            : `💸 Business tax: ${due}c on ${gross}c of takings.`);
+          /* the toast is gone in four seconds; the ledger is the record */
+          sim.dayLog.push(`${playerLabel()} paid ${due}c business tax on ${gross}c${unlicensed ? " — at the unlicensed rate, for want of a TL-6" : ""}`);
+        } else sim.dayLog.push(`${ent.name} paid ${due}c business tax`);
       }
     }
     /* THE OUTLANDS TRADE (dawn): four residents selling to each other is not an economy.
@@ -10631,7 +10962,9 @@ export default function Alderbrook() {
             const nearFolk = sim.npcs.filter(n => n.alive && !n.incap && !n.jailedUntil && n.scene === pp.scene && !n.hidden && dist(n, pp) < 3.5 && !n.activity.includes("sleep"));
             const civ = nearFolk.find(n => !n.enforcer && !n.outlaw && Math.random() < 0.25);
             if (civ && !civ.bubble) civ.bubble = { text: rand(["Is that a—?!", "Easy. EASY, friend.", "Put that away, would you?", "*backs off, hands up*"]), until: performance.now() / 1000 + 4 };
-            const officer = nearFolk.find(n => n.enforcer);
+            /* Stage 25: a filed Ordnance Handling Permit is the difference between
+               a citizen carrying and a citizen brandishing. Cole reads the form. */
+            const officer = hasFiling(sim, "armspermit") ? null : nearFolk.find(n => n.enforcer);
             if (officer) {
               const absNow = sim.time + sim.day * 1440;
               if (!pp._steelWarned) {
@@ -11438,6 +11771,12 @@ export default function Alderbrook() {
         if (stockOf(sim, "office", "files") < CFG.STOCK.printAt)
           out.push({ id: "print", label: `🖨️ Print run (+${CFG.ECON.office_print.wage}c) — tedious` });
       }
+      // Stage 25: the registry desk. Brightleaf handles deeds and certification;
+      // the halls take permits, writs and licences.
+      if (bId === "office" && at("desk_you"))
+        out.push({ id: "paperwork", label: "📋 Registry desk — file a form", paperWhere: "office" });
+      if (bId.startsWith("townhall") && (at("mayor") || at("tax")))
+        out.push({ id: "paperwork", label: "📋 Records counter — file a form", paperWhere: "hall" });
       if (bId === "fastfood" && hour >= 10 && hour < 20) {
         if (!sim.foodOrder && at("staff")) out.push({ id: "takeorder", label: "📋 Take an order" });
         if (sim.foodOrder?.stage === "serve" && at("staff")) out.push({ id: "serve", label: `🍽️ Serve order (+${CFG.PAY.food}c)` });
@@ -11721,6 +12060,7 @@ export default function Alderbrook() {
         break;
       }
       case "print": startPrint(); break;
+      case "paperwork": setPaperPanel({ where: a.paperWhere }); break;
       case "filing": {
         if (!takeStock(sim, "office", "files")) { showToast("The cabinet is EMPTY. Someone needs to print."); break; }
         const fk = fileKnobs();
@@ -12239,6 +12579,9 @@ export default function Alderbrook() {
     seedGossip(sim, sim.npcs.filter(n => n.alive && n.town === bld(bId).town).slice(0, 5), { text: `the newcomer BOUGHT ${bld(bId).name} off ${seller.name} for ${offer.price}c`, subjectId: null, bad: false });
     sim.dayLog.push(`the player bought ${bld(bId).name} from ${seller.name} for ${offer.price}c`);
     sfx.coin(); showToast(`💼 ${bld(bId).name} is YOURS. (Manage it at the counter.)`);
+    /* Stage 25: the handshake moved the keys, not the title. Say so plainly now,
+       or the first blocked upgrade reads as a bug rather than as paperwork. */
+    setTimeout(() => showToast(`🏷️ The keys are yours; the title isn't. File a Deed of Transfer (DT-9) at the Brightleaf registry desk before you improve the place.`), 2600);
     setBizOffer(null); bump();
   };
   // Stage 5: does a business own an upgrade? upgrades[bId] is a plain map { upgradeId: true }
@@ -12247,6 +12590,10 @@ export default function Alderbrook() {
     const up = CFG.UPGRADES[upId]; if (!up) return false;
     const reg = sim.registers[bId]; if (!reg) return false;          // register-gated
     if (hasUpgrade(sim, bId, upId)) return false;
+    /* Stage 25: a handshake moved the keys; only the deed moved the TITLE, and you
+       cannot improve a property that isn't legally yours. NPC-owned places came
+       with their paperwork long ago, so this only ever bites the player. */
+    if (OWNERS[bId] === "player" && !hasFiling(sim, "deed", bId)) return false;
     if (reg.cash < up.cost) return false;                            // paid from the till
     reg.cash -= up.cost;
     sim.upgrades[bId] = sim.upgrades[bId] || {}; sim.upgrades[bId][upId] = true;
@@ -12553,9 +12900,16 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
     if (round >= mg.rounds) {
       setMinigame(null);
       const paid = completeTask(sim, "office", "office", { econKey: "office_sort", note: "the player filed paperwork at Brightleaf Co.", xp: taskXp("office", FILE_TIER) });
+      /* Stage 25: Bruno pays over the odds for a certified hand, because an
+         uncertified one can't lodge anything and the firm needs someone who can. */
+      let bonus = 0;
+      if (hasFiling(sim, "clerkcert")) {
+        bonus = CFG.PAPER.clerkWageBonus;
+        p.coins = Math.min(9999, p.coins + bonus);
+      }
       p.energy = clamp(p.energy - CFG.WORK_COST.office.energy, 0, 100);
       sim.time += CFG.WORK_COST.office.min;
-      showToast(`Filing done. +${paid} coins. Bruno took credit anyway.`);
+      showToast(`Filing done. +${paid + bonus} coins${bonus ? ` (${bonus} of it your certification)` : ""}. Bruno took credit anyway.`);
     } else setMinigame({ type: "office", round, rounds: mg.rounds, cats: mg.cats, target: rand(mg.cats) });
   };
 
@@ -15332,6 +15686,15 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                 <button style={S.closeBtn} onClick={() => setManagePanel(null)}>✕</button>
               </div>
               <div style={S.chatBody}>
+                {/* Stage 25: unregistered means unimprovable. Say it at the top of the
+                    panel, not as a shrug when a Buy button does nothing. */}
+                {OWNERS[bId] === "player" && !hasFiling(simRef.current, "deed", bId) && (
+                  <div style={{ ...S.folkCard, background: "#5a4a3a", color: "#f0e6d6", fontSize: fs - 2 }}>
+                    <b>🏷️ Unregistered.</b> The keys changed hands; the title didn't. Until a
+                    <b> Deed of Transfer (DT-9)</b> is lodged at the Brightleaf registry desk you can trade
+                    here, but you can't improve the place — and the hall's ledger still shows the old name.
+                  </div>
+                )}
                 {/* ---- Register ---- */}
                 <div style={{ fontWeight: 700, opacity: 0.75 }}>💵 Cash Register</div>
                 {!reg ? (
@@ -15376,7 +15739,9 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
                             <span style={{ flex: 1 }}><b>{u.name}</b> · {u.cost}c<span style={{ fontSize: fs - 3, opacity: 0.6 }}> · {u.effect}</span></span>
                             {owned ? <span style={{ fontSize: fs - 2, opacity: 0.6 }}>owned</span>
                               : <button style={{ ...S.smallBtn, opacity: reg.cash >= u.cost ? 1 : 0.4 }} disabled={reg.cash < u.cost}
-                                  onClick={() => { if (buyUpgrade(simRef.current, bId, upId)) { sfx.purchase(); showToast(`${u.emoji} ${u.name} installed!`); bump(); setManagePanel({ bId }); } else showToast("Not enough in the till."); }}>Buy</button>}
+                                  onClick={() => { if (buyUpgrade(simRef.current, bId, upId)) { sfx.purchase(); showToast(`${u.emoji} ${u.name} installed!`); bump(); setManagePanel({ bId }); }
+                                                   else if (OWNERS[bId] === "player" && !hasFiling(simRef.current, "deed", bId)) showToast("🏷️ Not on paper, not yours to improve. File DT-9 for this place first.");
+                                                   else showToast("Not enough in the till."); }}>Buy</button>}
                           </div>
                         );
                       })}
@@ -15509,6 +15874,232 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
       })()}
 
       {/* 💼 the owner's asking price, on the table */}
+      {/* 📋 Stage 25 — the registry desk */}
+      {paperPanel && player && (() => {
+        const sim2 = simRef.current, p2 = sim2.player;
+        const lvl = skillLevel(p2, "office");
+        const certified = hasFiling(sim2, "clerkcert");
+        /* what this counter will take today, and what it is FOR — a deed names the
+           business it transfers, so an unregistered one of yours becomes its own row */
+        const rows = [];
+        for (const [id, F] of Object.entries(FORMS)) {
+          if (F.at !== paperPanel.where) continue;
+          if (F.mayorOnly && !sim2.playerMayor) continue;
+          if (F.ownerOnly && !Object.keys(OWNERS).some(b => OWNERS[b] === "player")) continue;
+          if (id === "clerkcert") { if (!certified) rows.push({ id, F, subject: null }); continue; }
+          if (id === "deed") {
+            for (const bId of Object.keys(OWNERS).filter(b => OWNERS[b] === "player"))
+              if (!hasFiling(sim2, "deed", bId)) rows.push({ id, F, subject: bId, note: bld(bId).name });
+            continue;
+          }
+          if (hasFiling(sim2, id)) continue;
+          rows.push({ id, F, subject: null });
+        }
+        /* TODAY'S COMMISSION. Rolled once a day and remembered, so it can't be rerolled
+           by shutting the panel. Only a certified hand is ever offered one — that is the
+           whole point of the certificate, and the reason an office keeps one on staff. */
+        if (certified && (sim2.formJob?.day !== sim2.day)) {
+          const pool = Object.entries(FORMS).filter(([id, F]) => F.at === paperPanel.where && id !== "clerkcert");
+          const here = sim2.npcs.filter(n => n.alive && !n.jailedUntil && n.town === bld(paperPanel.where === "office" ? "office" : "townhall_a").town);
+          /* whose form it is has to make sense — a deed belongs to somebody with keys to
+             transfer, a permit to somebody who carries. Fall back to anyone in town if
+             nobody fits, because the counter takes all comers. */
+          const fits = (id) => {
+            const owns = (n) => Object.values(OWNERS).includes(n.id);
+            if (id === "deed" || id === "licence") return here.filter(owns);
+            if (id === "armspermit") return here.filter(n => n.enforcer || n.occupation?.bId === "workshop_s" || n.hunter);
+            if (id === "writ") return here.filter(n => n.mayor);
+            return here;
+          };
+          const picked = pool.length && Math.random() < CFG.PAPER.commChance ? rand(pool)[0] : null;
+          const folk = picked ? (fits(picked).length ? fits(picked) : here) : [];
+          sim2.formJob = (picked && folk.length)
+            ? { day: sim2.day, formId: picked, clientId: rand(folk).id, where: paperPanel.where, done: false }
+            : { day: sim2.day, none: true };
+        }
+        const job = certified && sim2.formJob && !sim2.formJob.none && !sim2.formJob.done
+          && sim2.formJob.where === paperPanel.where && sim2.formJob.day === sim2.day ? sim2.formJob : null;
+        const jobF = job && FORMS[job.formId];
+        const jobClient = job && sim2.npcs.find(n => n.id === job.clientId);
+        const start = (row, self) => {
+          if (self && row.id !== "clerkcert" && !certified) { showToast("You aren't certified to file. Sit CC-1 first, or pay a clerk."); return; }
+          /* a form thrown back once owes the counter a resubmission fee before it will
+             take a second draft — the same on a clerk's desk as on your own */
+          const rk = filingKey(row.id, row.subject);
+          const redo = (sim2.formRedo || {})[rk] ? CFG.PAPER.redoFee : 0;
+          const fee = redo + (self ? (row.id === "clerkcert" ? CFG.PAPER.certFee : 0) : CFG.PAPER.hallFee);
+          if (fee > 0 && !spend(p2, fee)) { showToast(`That's ${fee}c you haven't got.`); return; }
+          if (redo) { showToast(`📎 ${CFG.PAPER.redoFee}c resubmission fee on the rejected draft.`); delete sim2.formRedo[rk]; }
+          if (!self) {                                   // a clerk does it for you, off-screen
+            recordFiling(sim2, row.id, row.subject, "clerk");
+            sim2.time += 40; onFiled(row, false);
+            setPaperPanel({ where: paperPanel.where }); bump(); return;
+          }
+          setPaperPanel({ where: paperPanel.where, filing: { formId: row.id, subject: row.subject, misses: formMisses(lvl) } });
+        };
+        const onFiled = (row, self) => {
+          const F = row.F;
+          sfx.chime();
+          showToast(`${F.emoji} ${F.name} filed${row.note ? ` — ${row.note}` : ""}. ${F.grants}`);
+          sim2.dayLog.push(`${playerLabel()} filed a ${F.short}${row.note ? ` for ${row.note}` : ""}`);
+          if (self) {
+            const before = skillLevel(p2, "office");
+            p2.skills.office = (p2.skills.office || 0) + taskXp("office", F.tier);
+            if (skillLevel(p2, "office") > before) showToast(`📈 Clerical — now ${skillTierName(p2, "office")}!`);
+          }
+        };
+        const F9 = paperPanel.filing && FORMS[paperPanel.filing.formId];
+        return (
+          <div style={S.chatOverlay} onClick={() => !paperPanel.filing && setPaperPanel(null)}>
+            <div style={{ ...S.chatPanel, maxWidth: 470, height: "84%" }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...S.chatHeader, background: "#6a6f7d" }}>
+                <span style={{ fontWeight: 700 }}>📋 {paperPanel.where === "office" ? "Brightleaf Registry" : "Records Counter"}</span>
+                {!paperPanel.filing && <button style={S.closeBtn} onClick={() => setPaperPanel(null)}>✕</button>}
+              </div>
+              <div style={S.chatBody}>
+                {paperPanel.filing ? (
+                  <FormGame form={F9} misses={paperPanel.filing.misses}
+                    onDone={() => {
+                      const cost = () => {
+                        sim2.time += F9.sections.length * CFG.PAPER.minPerSection;
+                        p2.energy = clamp(p2.energy - F9.sections.length * CFG.PAPER.energyPerSection, 0, 100);
+                      };
+                      if (paperPanel.filing.forClient) {          // somebody else's form, on their coin
+                        const cl = sim2.npcs.find(n => n.id === paperPanel.filing.forClient);
+                        const pay = commissionPay(F9);
+                        cost();
+                        p2.coins = Math.min(9999, p2.coins + pay);
+                        if (cl) {
+                          cl.coins = Math.max(0, cl.coins - pay);
+                          cl.memories = [...cl.memories, `${playerLabel()} sat my ${F9.short} for me at the counter. Saved me a day of it.`].slice(-CFG.MAX_MEMORIES);
+                          const cur = relIdx(cl.relationships.player || "neutral");
+                          cl.relationships.player = REL_ORDER[clamp(cur + 1, 0, REL_ORDER.length - 1)];
+                        }
+                        if (sim2.formJob) sim2.formJob.done = true;
+                        p2.skills.office = (p2.skills.office || 0) + taskXp("office", F9.tier);
+                        sfx.coin();
+                        showToast(`🧑‍💼 ${F9.name} lodged for ${cl?.name || "the client"}. +${pay}c — clerk's work, honestly paid.`);
+                        sim2.dayLog.push(`${playerLabel()} lodged a ${F9.short} on ${cl?.name || "a client"}'s behalf for ${pay}c`);
+                        setPaperPanel({ where: paperPanel.where }); bump(); return;
+                      }
+                      const row = { id: paperPanel.filing.formId, F: F9, subject: paperPanel.filing.subject,
+                                    note: paperPanel.filing.subject ? bld(paperPanel.filing.subject)?.name : null };
+                      recordFiling(sim2, row.id, row.subject, "player");
+                      cost();
+                      onFiled(row, true);
+                      setPaperPanel({ where: paperPanel.where }); bump();
+                    }}
+                    onFail={(why) => {
+                      sfx.alert();
+                      sim2.time += F9.sections.length * CFG.PAPER.minPerSection;
+                      p2.energy = clamp(p2.energy - F9.sections.length * CFG.PAPER.energyPerSection, 0, 100);
+                      p2.skills.office = (p2.skills.office || 0) + taskXp("office", 0);   // you learn something from a rejection
+                      if (paperPanel.filing.forClient) {          // you botched somebody else's day, and they know
+                        const cl = sim2.npcs.find(n => n.id === paperPanel.filing.forClient);
+                        if (sim2.formJob) sim2.formJob.done = true;
+                        if (cl) {
+                          cl.memories = [...cl.memories, `${playerLabel()} botched my ${F9.short} at the counter. I have to start it over.`].slice(-CFG.MAX_MEMORIES);
+                          const cur = relIdx(cl.relationships.player || "neutral");
+                          cl.relationships.player = REL_ORDER[clamp(cur - 1, 0, REL_ORDER.length - 1)];
+                        }
+                        showToast(`❌ REJECTED. ${why} ${cl?.name || "The client"} isn't paying for that.`);
+                        setPaperPanel({ where: paperPanel.where }); bump(); return;
+                      }
+                      (sim2.formRedo = sim2.formRedo || {})[filingKey(paperPanel.filing.formId, paperPanel.filing.subject)] = true;
+                      showToast(`❌ REJECTED. ${why} Resubmission costs ${CFG.PAPER.redoFee}c.`);
+                      setPaperPanel({ where: paperPanel.where }); bump();
+                    }} />
+                ) : (<>
+                  <div style={{ ...S.folkCard, fontSize: fs - 2, opacity: 0.85 }}>
+                    {certified
+                      ? <>You hold a <b>Clerk's Certification</b>, so you may file on your own account — and Brightleaf pays you {CFG.PAPER.clerkWageBonus}c more a shift for it.</>
+                      : <>You are <b>not certified</b>. An uncertified hand can't lodge a form, so anything here has to go through a clerk at {CFG.PAPER.hallFee}c a time — which is precisely why an office keeps one on the payroll.</>}
+                    <br /><span style={{ opacity: 0.7 }}>Clerical: {skillTierName(p2, "office")} · errors tolerated per form: {formMisses(lvl)}</span>
+                  </div>
+                  {/* the work itself: somebody else's form, on somebody else's coin */}
+                  {job && jobF && jobClient && (
+                    <div style={{ ...S.folkCard, background: "#3f4a3a", color: "#eee8d8" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ background: "#efe9d8", borderRadius: 5, padding: 2, display: "flex" }}><ItemIcon id={`form_${job.formId}`} size={22} /></span>
+                        <span style={{ flex: 1, fontSize: fs - 1 }}>
+                          <b>Commission — {jobF.name}</b>
+                          <br /><span style={{ opacity: 0.85, fontSize: fs - 3 }}>
+                            {jobClient.name} needs it lodged and hasn't the certificate to lodge it. {jobF.sections.length} sections, and they're paying {commissionPay(jobF)}c for someone who has.
+                          </span>
+                        </span>
+                      </div>
+                      <button style={{ ...S.smallBtn, width: "100%", marginTop: 8, background: "#5a8a4a" }}
+                        onClick={() => setPaperPanel({ where: paperPanel.where, filing: { formId: job.formId, subject: null, forClient: job.clientId, misses: formMisses(lvl) } })}>
+                        🧑‍💼 Sit it for {jobClient.name} ({commissionPay(jobF)}c)
+                      </button>
+                    </div>
+                  )}
+                  {rows.length === 0 && (
+                    <div style={{ ...S.folkCard, opacity: 0.75, fontSize: fs - 2 }}>
+                      Nothing outstanding at this counter.
+                      <br /><span style={{ opacity: 0.7 }}>
+                        {paperPanel.where === "office"
+                          ? "Brightleaf lodges certifications and deeds of transfer. Buy a business and its deed appears here."
+                          : "The hall takes trading licences, ordnance permits and mayoral writs. A licence is due once you own a shop; a writ, once you hold the chain."}
+                      </span>
+                    </div>
+                  )}
+                  {/* what you already hold — a counter clerk can always read your file back to you */}
+                  {(() => {
+                    const held = Object.entries(sim2.filings || {})
+                      .filter(([k]) => FORMS[k.split(":")[0]] && FORMS[k.split(":")[0]].at === paperPanel.where);
+                    if (!held.length) return null;
+                    return (
+                      <div style={{ ...S.folkCard, fontSize: fs - 3, opacity: 0.7 }}>
+                        <b>On file here</b>
+                        {held.map(([k, rec]) => {
+                          const [fid, subj] = k.split(":"), F = FORMS[fid];
+                          return (
+                            <div key={k} style={{ marginTop: 3 }}>
+                              {F.emoji} {F.name}{subj ? ` — ${bld(subj)?.name || subj}` : ""} · lodged day {rec.day}
+                              {rec.by === "clerk" ? " by a clerk" : ""}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                  {rows.map(row => {
+                    const redo = (sim2.formRedo || {})[filingKey(row.id, row.subject)] ? CFG.PAPER.redoFee : 0;
+                    const selfFee = redo + (row.id === "clerkcert" ? CFG.PAPER.certFee : 0);
+                    return (
+                    <div key={row.id + (row.subject || "")} style={S.folkCard}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <ItemIcon id={`form_${row.id}`} size={22} />
+                        <span style={{ flex: 1, fontSize: fs - 1 }}>
+                          <b>{row.F.name}</b>{row.note ? ` — ${row.note}` : ""}
+                          <br /><span style={{ opacity: 0.65, fontSize: fs - 3 }}>{row.F.blurb}</span>
+                          <br /><span style={{ opacity: 0.6, fontSize: fs - 3 }}>{row.F.sections.length} sections · {row.F.grants}</span>
+                          {redo > 0 && <><br /><span style={{ fontSize: fs - 3, color: "#a05252" }}>📎 Thrown back once — resubmission carries a {CFG.PAPER.redoFee}c fee.</span></>}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button style={{ ...S.smallBtn, flex: 1, background: "#4a6a5a", opacity: (certified || row.id === "clerkcert") ? 1 : 0.4 }}
+                          disabled={!certified && row.id !== "clerkcert"}
+                          onClick={() => start(row, true)}>
+                          ✍️ File it yourself{selfFee ? ` (${selfFee}c)` : ""}
+                        </button>
+                        {row.id !== "clerkcert" && (
+                          <button style={{ ...S.smallBtn, flex: 1 }} onClick={() => start(row, false)}>
+                            🧑‍💼 Have a clerk do it ({CFG.PAPER.hallFee + redo}c)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    );
+                  })}
+                </>)}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {bizOffer && player && (() => {
         const sim2 = simRef.current, seller = sim2.npcs.find(n => n.id === OWNERS[bizOffer.bId]);
         return (
@@ -15560,6 +16151,13 @@ Adjust price at most ±20% and days by at most +1 (good rep can shave a coin; ru
         const fund = (id) => {
           const u = TOWN_UPGRADES[id], owned = (sim2.townUpgrades[t] = sim2.townUpgrades[t] || {});
           if (!u || owned[id] || (sim2.treasury[t] || 0) < u.cost) return;
+          /* Stage 25: public money doesn't move on a mayor's say-so. A writ has to be
+             filed first, and it is spent on the act it authorises. */
+          if (!hasFiling(sim2, "writ")) {
+            showToast("📜 No writ on file. Public money moves on paper or it doesn't move — file MW-2 at the records counter.");
+            return;
+          }
+          delete sim2.filings[filingKey("writ", null)];   // one writ, one act
           sim2.treasury[t] -= u.cost; owned[id] = true;
           sim2.approval[t] = clamp((sim2.approval[t] ?? 65) + CFG.APPROVAL.upgradeBoost, 0, 100);
           sim2.mayorFavor = Math.min(CFG.MAYOR.favorCap, (sim2.mayorFavor || 0) + CFG.MAYOR.favorPerUpgrade);   // funding the town banks goodwill
